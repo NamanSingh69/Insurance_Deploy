@@ -22,7 +22,18 @@ load_dotenv()
 # --- Flask App Setup ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key_for_dev") # CHANGE FOR PRODUCTION
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///reports.db'
+
+    
+    # Database Configuration
+    database_url = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL")
+    if database_url:
+        # Vercel provides 'postgres://', but SQLAlchemy requires 'postgresql://'
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+    else:
+        # Fallback to SQLite for local development
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///reports.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
