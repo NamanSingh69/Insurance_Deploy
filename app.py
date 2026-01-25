@@ -2170,7 +2170,8 @@ def save_report():
 @login_required
 def get_saved_reports():
     try:
-        reports = sheets_db.get_user_reports(current_user.id)
+        # Optimized: Fetch only metadata columns (faster, less data)
+        reports = sheets_db.get_user_reports_metadata_only(current_user.id)
         
         # Search functionality (In-memory filtering for MVP)
         search_query = request.args.get('q')

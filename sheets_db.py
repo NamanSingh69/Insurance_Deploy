@@ -175,6 +175,7 @@ class SheetsDB:
             return new_id
 
     def get_user_reports(self, user_id):
+        # Optimization: Fetch full records is heavy. Keeping this for compatibility or specific needs.
         if not self.reports_worksheet: self.connect()
         try:
             records = self.reports_worksheet.get_all_records()
@@ -185,6 +186,36 @@ class SheetsDB:
             return user_reports
         except Exception as e:
             print(f"Error getting reports: {e}")
+            return []
+
+    def get_user_reports_metadata_only(self, user_id):
+        """Fetches only metadata columns (A to I), skipping the heavy JSON data (Column J)."""
+        if not self.reports_worksheet: self.connect()
+        try:
+            # Metadata columns: id(A), user_id(B), report_no(C), insured_name(D), vehicle_no(E), 
+            # claim_no(F), policy_no(G), saved_at(H), include_in_consolidated(I)
+            # JSON Data is Column J. We fetch A:I.
+            # get_values returns list of lists, including header.
+            rows = self.reports_worksheet.get('A:I') 
+            
+            headers = rows[0]
+            data_rows = rows[1:]
+            
+            user_reports = []
+            for row in data_rows:
+                # Row might be shorter than headers if empty cells at end
+                # Ensure we have enough columns to check user_id (index 1)
+                if len(row) > 1 and str(row[1]) == str(user_id):
+                    # Construct dict manually or zip. 
+                    # Row might not have all columns if empty, pad it.
+                    record = {}
+                    for i, header in enumerate(headers):
+                        val = row[i] if i < len(row) else ''
+                        record[header] = val
+                    user_reports.append(record)
+            return user_reports
+        except Exception as e:
+            print(f"Error getting metadata reports: {e}")
             return []
 
     def get_report_by_id(self, report_id):
