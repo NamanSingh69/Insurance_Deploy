@@ -1605,7 +1605,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const page3Data = {
             customer_gstin: page3CustomerGstinInput?.value.trim() || '',
             company_gstin: getVal('page3-company-gstin'),
-            estimated_amount: page3EstimatedAmountInput?.value.trim() || '0',
+            estimated_amount: document.getElementById('page3-estimated-amount')?.value.trim() || '0',
             photo_copies_count: page3PhotoCopiesCountInput?.value.trim() || '0',
             fee_items: page3FeeItems,
             include_in_consolidated: includeInConsolidatedCheckbox ? includeInConsolidatedCheckbox.checked : false,

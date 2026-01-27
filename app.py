@@ -2168,10 +2168,9 @@ def generate_files():
             pdf.set_font("Helvetica", '', base_font_size_page3); label_text_raw = "Rupees ( In Words)-"; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
             pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.multi_cell(usable_width_page3 - current_label_width, line_h_page3, p3_grand_total_in_words, 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
         pdf.ln(line_h_page3 * 0.5); pdf.set_font("Helvetica", '', base_font_size_page3)
-        if p3_estimated_amount != 0:
-            if pdf.get_y() + line_h_page3 > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
-            label_text_raw = "Estimated Amount = Rs."; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
-            pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(p3_estimated_amount), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.set_font("Helvetica", '', base_font_size_page3); pdf.ln(line_h_page3 * 0.25) 
+        if pdf.get_y() + line_h_page3 > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
+        label_text_raw = "Estimated Amount = Rs."; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
+        pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(p3_estimated_amount), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.set_font("Helvetica", '', base_font_size_page3); pdf.ln(line_h_page3 * 0.25) 
         # --- Final Assessed Amount & Signature Block ---
         # Calculate combined height for "Assessed Amount" + Gap + Signature to keep them together
         sig_block_width = usable_width_page3 * 0.5
