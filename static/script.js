@@ -719,6 +719,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let salvageDropdownHtml = `<select name="part_salvage_${slNo}" class="part-input part-salvage-select" data-sl-no="${slNo}">
             <option value="YES" ${salvageProduce === 'YES' ? 'selected' : ''}>YES</option>
             <option value="NO" ${salvageProduce === 'NO' ? 'selected' : ''}>NO</option>
+            <option value="NA" ${salvageProduce === 'NA' ? 'selected' : ''}>NA</option>
         </select>`;
 
         // Remarks Dropdown
@@ -1642,6 +1643,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const imt23Checkbox = document.getElementById('assessment-labour-imt-23');
         const imposeExcessInput = document.getElementById('assessment-impose-excess');
+        // Collect Estimate Overrides
+        const estLabourOverride = document.getElementById('assessment-est-labour')?.value.trim();
+        const estPaintOverride = document.getElementById('assessment-est-paint')?.value.trim();
+        const estPartsOverride = document.getElementById('assessment-est-parts')?.value.trim();
 
         const assessmentDataForGeneration = {
             header_gst: assessmentHeaderGstInput.value.trim(),
@@ -1657,9 +1662,14 @@ document.addEventListener('DOMContentLoaded', () => {
             impose_excess: parseFormattedNumber(imposeExcessInput?.value || 0),
             salvage: assessmentSalvageInput.value.trim() || '-',
             user_labour_rows: collectedUserLabourRows,
-            reinspection_note: document.getElementById('input-reinspection_note').value.trim(),
-            enclosures_text: document.getElementById('input-enclosures_text').value.trim(),
-            parts_table_note: document.getElementById('input-parts_table_note').value.trim(),
+            note_text: document.getElementById('input-note_text')?.value.trim() || '',
+            payment_to_text: document.getElementById('input-payment_to_text')?.value.trim() || '',
+            reinspection_note: document.getElementById('input-reinspection_note')?.value.trim() || '',
+            enclosures_text: document.getElementById('input-enclosures_text')?.value.trim() || '',
+            parts_table_note: document.getElementById('input-parts_table_note')?.value.trim() || '',
+            est_labour_override: estLabourOverride,
+            est_paint_override: estPaintOverride,
+            est_parts_override: estPartsOverride,
             spot_report_text: document.getElementById('input-spot_report_text').value.trim(),
             spot_report_enclosures: document.getElementById('input-spot_report_enclosures').value.trim(),
             page3_details: page3Data,

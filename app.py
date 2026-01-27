@@ -1113,6 +1113,11 @@ def generate_files():
         payment_to_text_final_raw = assessment_data.get('payment_to_text', "REPAIRER")
         salvage_raw_data = assessment_data.get('salvage', '0') 
 
+        # Estimate Overrides
+        est_labour_override = assessment_data.get('est_labour_override', '')
+        est_paint_override = assessment_data.get('est_paint_override', '')
+        est_parts_override = assessment_data.get('est_parts_override', '')
+
         final_survey_data = {key: survey_data.get(key, '') for key in EXPECTED_FIELDS}
         
         def get_survey_val(key):
@@ -1860,11 +1865,17 @@ def generate_files():
             pdf.set_font("Helvetica", 'B', base_font_size_page2)
             pdf.cell(left_col_width/2, line_h_page2, "Estimates", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, "Amount", 1, 1, 'R')
             pdf.set_font("Helvetica", '', base_font_size_page2)
-            pdf.cell(left_col_width/2, line_h_page2, "Labour Charges", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(labour_rr_dent_sum), 1, 1, 'R')
-            pdf.cell(left_col_width/2, line_h_page2, "Paint cost", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(labour_sum_painting), 1, 1, 'R')
-            pdf.cell(left_col_width/2, line_h_page2, "Cost of Parts", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(parts_total_estimate), 1, 1, 'R') 
+            
+            # Determine values to use (Override or Calculated)
+            est_labour_val = float(est_labour_override) if est_labour_override and is_number(est_labour_override) else labour_rr_dent_sum
+            est_paint_val = float(est_paint_override) if est_paint_override and is_number(est_paint_override) else labour_sum_painting
+            est_parts_val = float(est_parts_override) if est_parts_override and is_number(est_parts_override) else parts_total_estimate
+            
+            pdf.cell(left_col_width/2, line_h_page2, "Labour Charges", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(est_labour_val), 1, 1, 'R')
+            pdf.cell(left_col_width/2, line_h_page2, "Paint cost", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(est_paint_val), 1, 1, 'R')
+            pdf.cell(left_col_width/2, line_h_page2, "Cost of Parts", 1, 0, 'L'); pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(est_parts_val), 1, 1, 'R') 
             pdf.set_font("Helvetica", 'B', base_font_size_page2)
-            approx_total = labour_rr_dent_sum + labour_sum_painting + parts_total_estimate
+            approx_total = est_labour_val + est_paint_val + est_parts_val
             pdf.cell(left_col_width/2, line_h_page2, "Approximate Total", 1, 0, 'L'); pdf.set_fill_color(255, 255, 0)
             pdf.cell(left_col_width/2, line_h_page2, format_pdf_number(approx_total), 1, 1, 'R', fill=True)
             left_col_end_y = pdf.get_y()
@@ -2016,6 +2027,7 @@ def generate_files():
             
             if parts_table_note:
                 pdf.set_y(final_y)
+                pdf.set_x(pdf.l_margin) # Reset X to left margin
                 pdf.set_font("Helvetica", 'B', base_font_size_page2)
                 pdf.multi_cell(0, line_h_page2, parts_table_note, 0, 'L')
                 final_y = pdf.get_y() + 2
