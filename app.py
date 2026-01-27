@@ -2035,6 +2035,7 @@ def generate_files():
             if enclosures_text:
                 # Calculate needed height for enclosures
                 pdf.set_font("Helvetica", '', base_font_size_page2)
+                pdf.set_x(pdf.l_margin) # Reset X explicitly for dry run
                 lines = pdf.multi_cell(0, line_h_page2, enclosures_text, dry_run=True, output="LINES")
                 enc_h = len(lines) * line_h_page2 + 10 # Title + Lines
                 
@@ -2044,9 +2045,11 @@ def generate_files():
                     final_y = pdf.get_y() + 5
                 
                 pdf.set_y(final_y)
+                pdf.set_x(pdf.l_margin)
                 pdf.set_font("Helvetica", 'B', base_font_size_page2)
                 pdf.cell(0, line_h_page2, "Enclosures:", 0, 1, 'L')
                 pdf.set_font("Helvetica", '', base_font_size_page2)
+                pdf.set_x(pdf.l_margin)
                 pdf.multi_cell(0, line_h_page2, enclosures_text, 0, 'L')
                 final_y = pdf.get_y() + 5
             
