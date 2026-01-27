@@ -2054,7 +2054,16 @@ def generate_files():
                 final_y = pdf.get_y() + 5
             
             # Print Signature (Guaranteed to have content above it now)
-            pdf.set_y(final_y)
+            # Add gap for Stamp (Requested by User)
+            gap_stamp = 40
+            sig_lines_height = line_h_page2 * 3
+            
+            if pdf.get_y() + gap_stamp + sig_lines_height > pdf.page_break_trigger:
+                pdf.add_page(orientation='L')
+                add_pdf_header(pdf)
+                pdf.set_y(pdf.get_y() + 30) # Gap on new page
+            else:
+                pdf.set_y(pdf.get_y() + gap_stamp)
             pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.cell(60, line_h_page2, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C')
             pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.cell(60, line_h_page2, "( Surveyor and Loss Assessor )", 0, 1, 'C')
 
