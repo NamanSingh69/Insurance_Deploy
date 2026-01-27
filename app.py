@@ -2172,14 +2172,33 @@ def generate_files():
             if pdf.get_y() + line_h_page3 > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
             label_text_raw = "Estimated Amount = Rs."; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
             pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(p3_estimated_amount), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.set_font("Helvetica", '', base_font_size_page3); pdf.ln(line_h_page3 * 0.25) 
-        if net_liability_final != 0: 
-            if pdf.get_y() + line_h_page3 > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
-            label_text_raw = "Assessed Amount = Rs."; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
-            pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(net_liability_final), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(line_h_page3 * 6); sig_block_width = usable_width_page3 * 0.5; sig_start_x = pdf.w - pdf.r_margin - sig_block_width; sig_height_est = line_h_page3 * 3
-        if pdf.get_y() + sig_height_est > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf)
+        # --- Final Assessed Amount & Signature Block ---
+        # Calculate combined height for "Assessed Amount" + Gap + Signature to keep them together
+        sig_block_width = usable_width_page3 * 0.5
+        sig_start_x = pdf.w - pdf.r_margin - sig_block_width
+        sig_height_est = line_h_page3 * 4 # Signature block height approx
         
-        # Updated Signature Block
+        # Check if we need to print "Assessed Amount"
+        assessed_amt_height = line_h_page3 if net_liability_final != 0 else 0
+        
+        # Total logic block height: Assessed Amt (if any) + Gap (2 lines) + Signature
+        gap_lines = 2
+        total_block_needed = assessed_amt_height + (line_h_page3 * gap_lines) + sig_height_est
+        
+        # Check page break trigger for the WHOLE block
+        if pdf.get_y() + total_block_needed > pdf.page_break_trigger: 
+            pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
+        
+        # 1. Print Assessed Amount (if applicable)
+        if net_liability_final != 0: 
+            pdf.set_font("Helvetica", '', base_font_size_page3)
+            label_text_raw = "Net settlement Amount Round off:"; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
+            pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(net_liability_final), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        
+        # 2. Gap
+        pdf.ln(line_h_page3 * gap_lines)
+        
+        # 3. Signature
         pdf.set_x(sig_start_x); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(sig_block_width, line_h_page3, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C')
         pdf.set_x(sig_start_x); pdf.set_font("Helvetica", '', base_font_size_page3); pdf.cell(sig_block_width, line_h_page3, "( Surveyor and Loss Assessor )", 0, 1, 'C')
 
