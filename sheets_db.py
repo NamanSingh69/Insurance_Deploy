@@ -4,6 +4,11 @@ import os
 import json
 from datetime import datetime
 import uuid
+import base64
+import io
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+import requests
 
 # Scope required for accessing Google Sheets and Drive
 SCOPE = [
@@ -17,6 +22,8 @@ class SheetsDB:
         self.sheet = None
         self.users_worksheet = None
         self.reports_worksheet = None
+        self.drive_service = None
+        self.creds = None
 
     def connect(self):
         """Connects to Google Sheets using credentials from environment."""
@@ -27,8 +34,11 @@ class SheetsDB:
 
         try:
             creds_dict = json.loads(creds_json)
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-            self.client = gspread.authorize(creds)
+            self.creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+            self.client = gspread.authorize(self.creds)
+            
+            # Build Drive Service
+            self.drive_service = build('drive', 'v3', credentials=self.creds)
             
             # Open the spreadsheet (assumes name is 'InsuranceAppDB' by default, or env var)
             sheet_name = os.getenv("GOOGLE_SHEET_NAME", "InsuranceAppDB")
@@ -112,6 +122,110 @@ class SheetsDB:
         self.users_worksheet.append_row(row)
         return new_id
 
+    # --- Drive Methods ---
+    def get_resumable_upload_url(self, filename, mime_type='application/pdf'):
+        """
+        Generates a resumable upload session URL for direct frontend upload.
+        """
+        if not self.creds: self.connect()
+        try:
+            import httplib2
+            # Ensure token is fresh
+            if self.creds.access_token_expired or not self.creds.access_token:
+                self.creds.refresh(httplib2.Http())
+
+            access_token = self.creds.access_token
+            
+            # 2. Initiate Resumable Upload via HTTP (using requests for simplicity)
+            import requests # Ensure imported
+            
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+                'X-Upload-Content-Type': mime_type,
+                'X-Upload-Content-Length': '' # Unknown/Variable is fine for initiation usually, or we can skip
+            }
+            
+            metadata = {
+                'name': filename,
+                'mimeType': mime_type
+            }
+            
+            response = requests.post(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+                headers=headers,
+                json=metadata
+            )
+            
+            if response.status_code == 200:
+                upload_url = response.headers.get('Location')
+                return upload_url
+            else:
+                print(f"Failed to initiate resumable upload: {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"Error getting resumable upload URL: {e}")
+            return None
+
+    def get_file_content(self, file_id):
+        """Downloads file content as bytes from Drive."""
+        if not self.drive_service: self.connect()
+        try:
+            request = self.drive_service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+            return fh.getvalue()
+        except Exception as e:
+            print(f"Error downloading file {file_id}: {e}")
+            return None
+
+    def upload_image_to_drive(self, file_content, filename, mime_type='image/jpeg'):
+        """Uploads an image to Google Drive and returns the webViewLink."""
+        if not self.drive_service: self.connect()
+        try:
+            file_metadata = {
+                'name': filename,
+                'mimeType': mime_type
+                # 'parents': ['FOLDER_ID'] # Optional: Add specific folder ID if needed
+            }
+            
+            # Create media upload
+            fh = io.BytesIO(file_content)
+            media = MediaIoBaseUpload(fh, mimetype=mime_type, resumable=True)
+            
+            file = self.drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, webViewLink, webContentLink'
+            ).execute()
+            
+            # Make file readable by anyone with the link (so frontend can display it)
+            # Alternatively, we could just rely on Service Account if we proxied, but direct link is requested.
+            # IMPORTANT: This makes the image public to anyone with the link.
+            permission = {
+                'type': 'anyone',
+                'role': 'reader',
+            }
+            self.drive_service.permissions().create(
+                fileId=file.get('id'),
+                body=permission,
+                fields='id',
+            ).execute()
+            
+            return {
+                'id': file.get('id'),
+                'view_link': file.get('webViewLink'),
+                'download_link': file.get('webContentLink') # Use this for embedding in PDF if needed
+            }
+            
+        except Exception as e:
+            print(f"Error uploading to Drive: {e}")
+            return None
+
     # --- Report Methods ---
     def save_report(self, user_id, report_data_dict):
         if not self.reports_worksheet: self.connect()
@@ -124,7 +238,8 @@ class SheetsDB:
         row_idx_to_update = None
         
         for idx, record in enumerate(records):
-            if str(record['user_id']) == str(user_id) and record['report_no'] == report_no:
+            # Fix: Ensure strict string comparison for User ID and Report No to avoid duplicates
+            if str(record.get('user_id', '')) == str(user_id) and str(record.get('report_no', '')).strip() == str(report_no).strip():
                 row_idx_to_update = idx + 2 # +2 because 1-based index and header row
                 break
         

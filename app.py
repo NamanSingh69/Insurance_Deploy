@@ -2,6 +2,7 @@ import os
 import io
 import csv
 import json
+import requests
 import uuid
 from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
 # from flask_sqlalchemy import SQLAlchemy # REMOVED for Sheets
@@ -23,7 +24,8 @@ load_dotenv()
 # --- Flask App Setup ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key_for_dev") 
-# app.config['SQLALCHEMY_DATABASE_URI'] ... REMOVED
+# Update: Increased to 16MB to allow larger uploads on backend side
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 # app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] ... REMOVED
 
 # db = SQLAlchemy(app) # REMOVED
@@ -544,80 +546,112 @@ def logout():
 def index():
     return render_template('index.html')
 
+@app.route('/get_upload_url', methods=['POST'])
+@login_required
+def get_upload_url():
+    data = request.get_json()
+    filename = data.get('filename')
+    mime_type = data.get('mime_type', 'application/pdf')
+    
+    if not filename:
+         return jsonify({"error": "Filename required"}), 400
+         
+    upload_url = sheets_db.get_resumable_upload_url(filename, mime_type)
+    
+    if upload_url:
+        return jsonify({"url": upload_url})
+    else:
+        return jsonify({"error": "Failed to generate upload URL"}), 500
+
 @app.route('/process_pdf', methods=['POST'])
 @login_required
 def process_pdf():
-    if 'pdf_file' not in request.files:
-        return jsonify({"error": "No PDF file provided"}), 400
-
-    file = request.files['pdf_file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-
-    if file and file.mimetype == 'application/pdf':
-        try:
+    # Handle multipart/form-data (Standard) OR JSON (Direct Drive Upload)
+    pdf_content = None
+    
+    if request.content_type == 'application/json':
+        data = request.get_json()
+        drive_file_id = data.get('drive_file_id')
+        if not drive_file_id:
+            return jsonify({"error": "No drive_file_id provided"}), 400
+        
+        # Fetch content from Drive
+        pdf_content = sheets_db.get_file_content(drive_file_id)
+        if not pdf_content:
+             return jsonify({"error": "Failed to retrieve file content from Drive"}), 500
+             
+    elif 'pdf_file' in request.files:
+        file = request.files['pdf_file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+        if file and file.mimetype == 'application/pdf':
             pdf_content = file.read()
-            prompt = build_gemini_prompt()
-            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-            prompt_part = {"text": prompt}
-
-            # Generate content using the configured model
-            response = model.generate_content([prompt_part, pdf_part], stream=False)
-
-            # Handle potential lack of response parts or blocked content
-            if not response.parts:
-                 if response.prompt_feedback and response.prompt_feedback.block_reason:
-                     reason = response.prompt_feedback.block_reason.name
-                     print(f"Gemini response blocked. Reason: {reason}")
-                     return jsonify({"error": f"Content generation blocked due to safety settings ({reason}). Please check the input document."}), 400
-                 else:
-                     # Sometimes Gemini might just return no parts without a specific block reason
-                     print("Gemini returned an empty response with no specific block reason.")
-                     # Attempt to get text from the response object directly if possible
-                     try:
-                         response_text = response.text
-                         if not response_text:
-                             return jsonify({"error": "Received an empty response from the AI model. Please try again or check the document."}), 500
-                         # If we got text, try parsing it anyway
-                         print("Received text despite no parts, attempting parse...")
-                     except Exception: # Broad exception if .text access fails
-                          return jsonify({"error": "Received an empty or invalid response from the AI model. Please try again or check the document."}), 500
-            else:
-                 response_text = response.text # Get text from the first part
-
-            # Parse the combined data
-            combined_data = parse_gemini_response(response_text)
-
-            # --- Apply Defaults to Survey Report Data if field is empty ---
-            survey_data = combined_data.get('survey_report', {})
-            if not survey_data.get('vehicle_pre_accident_condition'): survey_data['vehicle_pre_accident_condition'] = "Average"
-            if not survey_data.get('dl_endorsement'): survey_data['dl_endorsement'] = "Not Known"
-            if not survey_data.get('police_reported_to'): survey_data['police_reported_to'] = "Not Reported"
-            if not survey_data.get('police_diary_case_no'): survey_data['police_diary_case_no'] = "N/A"
-            # police_date_reported default is handled by AI returning ""
-            if not survey_data.get('tp_details'): survey_data['tp_details'] = "No ( As Per Claim Form )"
-            if not survey_data.get('damages_extent'): survey_data['damages_extent'] = "The Spare Parts which are included in Assessment column, found pressed/deformed/torn/ distorted &/or broken."
-            if not survey_data.get('remark'): survey_data['remark'] = "The declaration of the accident appeared consistent with the nature of the damages sustained"
-            # --- End Apply Defaults ---
-
-            return jsonify(combined_data)
-
-        except ValueError as ve:
-             print(f"Value Error during processing: {ve}")
-             if "Failed to parse JSON response" in str(ve) or "unexpected error occurred during response parsing" in str(ve):
-                 return jsonify({"error": str(ve)}), 500
-             else:
-                 return jsonify({"error": f"An error occurred: {ve}"}), 400
-        except genai.types.BlockedPromptException as bpe:
-             print(f"Gemini API Error - Blocked Prompt: {bpe}")
-             return jsonify({"error": f"Content generation blocked by API. Please check the document content or safety settings. Reason: {bpe}"}), 400
-        except Exception as e:
-            print(f"Error processing PDF with Gemini: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": f"An unexpected error occurred during AI processing: {e}"}), 500
+        else:
+             return jsonify({"error": "Invalid file type. Please upload a PDF."}), 400
     else:
-        return jsonify({"error": "Invalid file type. Please upload a PDF."}), 400
+         return jsonify({"error": "No file provided"}), 400
+
+    # Common Processing
+    try:
+        prompt = build_gemini_prompt()
+        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
+        prompt_part = {"text": prompt}
+
+        # Generate content using the configured model
+        response = model.generate_content([prompt_part, pdf_part], stream=False)
+
+        # Handle potential lack of response parts or blocked content
+        if not response.parts:
+                if response.prompt_feedback and response.prompt_feedback.block_reason:
+                    reason = response.prompt_feedback.block_reason.name
+                    print(f"Gemini response blocked. Reason: {reason}")
+                    return jsonify({"error": f"Content generation blocked due to safety settings ({reason}). Please check the input document."}), 400
+                else:
+                    # Sometimes Gemini might just return no parts without a specific block reason
+                    print("Gemini returned an empty response with no specific block reason.")
+                    # Attempt to get text from the response object directly if possible
+                    try:
+                        response_text = response.text
+                        if not response_text:
+                            return jsonify({"error": "Received an empty response from the AI model. Please try again or check the document."}), 500
+                        # If we got text, try parsing it anyway
+                        print("Received text despite no parts, attempting parse...")
+                    except Exception: # Broad exception if .text access fails
+                            return jsonify({"error": "Received an empty or invalid response from the AI model. Please try again or check the document."}), 500
+        else:
+                response_text = response.text # Get text from the first part
+
+        # Parse the combined data
+        combined_data = parse_gemini_response(response_text)
+
+        # --- Apply Defaults to Survey Report Data if field is empty ---
+        survey_data = combined_data.get('survey_report', {})
+        if not survey_data.get('vehicle_pre_accident_condition'): survey_data['vehicle_pre_accident_condition'] = "Average"
+        if not survey_data.get('dl_endorsement'): survey_data['dl_endorsement'] = "Not Known"
+        if not survey_data.get('police_reported_to'): survey_data['police_reported_to'] = "Not Reported"
+        if not survey_data.get('police_diary_case_no'): survey_data['police_diary_case_no'] = "N/A"
+        # police_date_reported default is handled by AI returning ""
+        if not survey_data.get('tp_details'): survey_data['tp_details'] = "No ( As Per Claim Form )"
+        if not survey_data.get('damages_extent'): survey_data['damages_extent'] = "The Spare Parts which are included in Assessment column, found pressed/deformed/torn/ distorted &/or broken."
+        if not survey_data.get('remark'): survey_data['remark'] = "The declaration of the accident appeared consistent with the nature of the damages sustained"
+        # --- End Apply Defaults ---
+
+        return jsonify(combined_data)
+
+    except ValueError as ve:
+            print(f"Value Error during processing: {ve}")
+            if "Failed to parse JSON response" in str(ve) or "unexpected error occurred during response parsing" in str(ve):
+                return jsonify({"error": str(ve)}), 500
+            else:
+                return jsonify({"error": f"An error occurred: {ve}"}), 400
+    except genai.types.BlockedPromptException as bpe:
+            print(f"Gemini API Error - Blocked Prompt: {bpe}")
+            return jsonify({"error": f"Content generation blocked by API. Please check the document content or safety settings. Reason: {bpe}"}), 400
+    except Exception as e:
+        print(f"Error processing PDF with Gemini: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"An unexpected error occurred during AI processing: {e}"}), 500
 
 # --- Depreciation Calculation Helper ---
 def get_backend_depreciation_rate(part_type, vehicle_year_str):
@@ -651,57 +685,69 @@ def get_backend_depreciation_rate(part_type, vehicle_year_str):
 @app.route('/process_invoice', methods=['POST'])
 @login_required
 def process_invoice():
-    if 'invoice_pdf_file' not in request.files:
-        return jsonify({"error": "No invoice PDF file provided"}), 400
+    pdf_content = None
 
-    file = request.files['invoice_pdf_file']
-    if file.filename == '':
-        return jsonify({"error": "No selected invoice file"}), 400
-
-    if file and file.mimetype == 'application/pdf':
-        try:
+    if request.content_type == 'application/json':
+        data = request.get_json()
+        drive_file_id = data.get('drive_file_id')
+        if not drive_file_id:
+             return jsonify({"error": "No drive_file_id provided"}), 400
+        
+        pdf_content = sheets_db.get_file_content(drive_file_id)
+        if not pdf_content:
+             return jsonify({"error": "Failed to retrieve file content from Drive"}), 500
+             
+    elif 'invoice_pdf_file' in request.files:
+        file = request.files['invoice_pdf_file']
+        if file.filename == '':
+            return jsonify({"error": "No selected invoice file"}), 400
+        if file and file.mimetype == 'application/pdf':
             pdf_content = file.read()
-            prompt = build_invoice_gemini_prompt() # Use the NEW invoice-specific prompt
-            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-            prompt_part = {"text": prompt}
-
-            # Generate content using the same model configuration
-            response = model.generate_content([prompt_part, pdf_part], stream=False)
-
-            # Handle potential blocked content or empty response (similar to process_pdf)
-            if not response.parts:
-                if response.prompt_feedback and response.prompt_feedback.block_reason:
-                    reason = response.prompt_feedback.block_reason.name
-                    print(f"Invoice Gemini response blocked. Reason: {reason}")
-                    return jsonify({"error": f"Invoice content generation blocked ({reason})."}), 400
-                else:
-                    try:
-                        response_text = response.text
-                        if not response_text:
-                            return jsonify({"error": "Received empty response from AI for invoice."}), 500
-                    except Exception:
-                         return jsonify({"error": "Received invalid response from AI for invoice."}), 500
-            else:
-                response_text = response.text
-
-            # Parse using the NEW invoice-specific parser
-            invoice_parts_data = parse_invoice_gemini_response(response_text)
-
-            return jsonify(invoice_parts_data) # Return only the parts data
-
-        except ValueError as ve:
-            print(f"Value Error during invoice processing: {ve}")
-            return jsonify({"error": str(ve)}), 500
-        except genai.types.BlockedPromptException as bpe:
-            print(f"Gemini API Error - Blocked Invoice Prompt: {bpe}")
-            return jsonify({"error": f"Invoice content generation blocked by API. Reason: {bpe}"}), 400
-        except Exception as e:
-            print(f"Error processing invoice PDF with Gemini: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": f"An unexpected error occurred during invoice AI processing: {e}"}), 500
+        else:
+             return jsonify({"error": "Invalid file type. Please upload a PDF for the invoice."}), 400
     else:
-        return jsonify({"error": "Invalid file type. Please upload a PDF for the invoice."}), 400
+         return jsonify({"error": "No invoice file provided"}), 400
+
+    try:
+        prompt = build_invoice_gemini_prompt() # Use the NEW invoice-specific prompt
+        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
+        prompt_part = {"text": prompt}
+
+        # Generate content using the same model configuration
+        response = model.generate_content([prompt_part, pdf_part], stream=False)
+
+        # Handle potential blocked content or empty response (similar to process_pdf)
+        if not response.parts:
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                reason = response.prompt_feedback.block_reason.name
+                print(f"Invoice Gemini response blocked. Reason: {reason}")
+                return jsonify({"error": f"Invoice content generation blocked ({reason})."}), 400
+            else:
+                try:
+                    response_text = response.text
+                    if not response_text:
+                        return jsonify({"error": "Received empty response from AI for invoice."}), 500
+                except Exception:
+                        return jsonify({"error": "Received invalid response from AI for invoice."}), 500
+        else:
+            response_text = response.text
+
+        # Parse using the NEW invoice-specific parser
+        invoice_parts_data = parse_invoice_gemini_response(response_text)
+
+        return jsonify(invoice_parts_data) # Return only the parts data
+
+    except ValueError as ve:
+        print(f"Value Error during invoice processing: {ve}")
+        return jsonify({"error": str(ve)}), 500
+    except genai.types.BlockedPromptException as bpe:
+        print(f"Gemini API Error - Blocked Invoice Prompt: {bpe}")
+        return jsonify({"error": f"Invoice content generation blocked by API. Reason: {bpe}"}), 400
+    except Exception as e:
+        print(f"Error processing invoice PDF with Gemini: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"An unexpected error occurred during invoice AI processing: {e}"}), 500
     
 def number_to_words_indian(number_val):
     """
@@ -980,6 +1026,35 @@ def update_user_profile():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# --- Photo Upload Route ---
+@app.route('/upload_photo', methods=['POST'])
+@login_required
+def upload_photo():
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    if file:
+        filename = secure_filename(f"{uuid.uuid4()}_{file.filename}")
+        # Read file content
+        content = file.read()
+        # Upload to Drive
+        result = db.upload_image_to_drive(content, filename, file.mimetype)
+        
+        if result and result.get('download_link'): # Use download link for direct access/embedding likelihood
+             # Note: webContentLink (download_link) usually forces download. 
+             # For <img> tag, we might need a direct ID-based URL or the webViewLink.
+             # Actually, for FPDF embedding, we need the raw bytes, so we'll fetch whatever URL we save.
+             # For Frontend <img> display, 'webViewLink' might not embed well if it's a wrapper page.
+             # 'thumbnailLink' or constructing a direct export link is better.
+             # Let's try to construct a direct link:
+             direct_link = f"https://drive.google.com/uc?export=view&id={result.get('id')}"
+             return jsonify({'success': True, 'url': direct_link})
+        else:
+            return jsonify({'error': 'Failed to upload to Drive'}), 500
+
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])
 @login_required
@@ -1053,6 +1128,7 @@ def generate_files():
         salvage_raw = normalize_pdf_text_for_fpdf(salvage_raw_data)
         report_type = normalize_pdf_text_for_fpdf(report_type_raw)
         claim_type = normalize_pdf_text_for_fpdf(claim_type_raw)
+        # Fix: Normalize potentially long/special char texts
         enclosures_text = normalize_pdf_text_for_fpdf(enclosures_text_raw)
         parts_table_note = normalize_pdf_text_for_fpdf(parts_table_note_raw)
         spot_report_text = normalize_pdf_text_for_fpdf(spot_report_text_raw)
@@ -1478,10 +1554,35 @@ def generate_files():
                 
                 pos_in_page = i % photos_per_page; row = pos_in_page // cols; col = pos_in_page % cols
                 x = pdf_obj.l_margin + (col * (img_width + 5)); y = start_y + (row * (img_height + 5))
+                x = pdf_obj.l_margin + (col * (img_width + 5)); y = start_y + (row * (img_height + 5))
                 try:
-                    if ',' in photo_b64: photo_b64 = photo_b64.split(',')[1]
-                    img_data = base64.b64decode(photo_b64); img_stream = io.BytesIO(img_data)
-                    pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
+                    img_stream = None
+                    if photo_b64.startswith('http'):
+                        # It is a URL (Drive Link)
+                        try:
+                            # If it's a Drive View Link, simple get might return a HTML page not image.
+                            # We constructed a direct link (export=view) in upload_photo.
+                            headers = {'User-Agent': 'Mozilla/5.0'} # Fake UA just in case
+                            response = requests.get(photo_b64, headers=headers)
+                            response.raise_for_status()
+                            img_stream = io.BytesIO(response.content)
+                        except Exception as e:
+                            print(f"Failed to download image from URL: {photo_b64} - {e}")
+                            # Draw error placeholder
+                            pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", 1, 0, 'C')
+                            continue
+                            
+                    elif ',' in photo_b64: 
+                        # Base64
+                        photo_b64_data = photo_b64.split(',')[1]
+                        img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)
+                    else:
+                        # Raw Base64 or cleanup
+                        img_data = base64.b64decode(photo_b64); img_stream = io.BytesIO(img_data)
+                    
+                    if img_stream:
+                        pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
+                        
                 except Exception as e:
                     pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", 1, 0, 'C')
 
@@ -1749,7 +1850,9 @@ def generate_files():
 
             # --- Summary Section (Landscape) ---
             summary_start_y = pdf.get_y()
-            if pdf.h - summary_start_y < 80: pdf.add_page(orientation='L'); add_pdf_header(pdf); summary_start_y = pdf.get_y()
+            # INCREASED THRESHOLD: Was 80, now 110 to ensure meaningful summary fits or start new page
+            if pdf.h - summary_start_y < 110: 
+                pdf.add_page(orientation='L'); add_pdf_header(pdf); summary_start_y = pdf.get_y()
             
             # Left Column: Estimates
             left_col_x = pdf.l_margin; left_col_width = 80
@@ -1896,7 +1999,8 @@ def generate_files():
             # If not, break page here so this row travels with the signature.
             sig_height_block = 35 # Height for signature block
             
-            if pdf.get_y() + line_h_page2 + sig_height_block > pdf.page_break_trigger:
+            # FIXED: Added logic to break page if not enough space for Round Off + Signature
+            if pdf.get_y() + line_h_page2 + sig_height_block + 15 > pdf.page_break_trigger:
                 pdf.add_page(orientation='L')
                 add_pdf_header(pdf)
                 # Keep X alignment on new page

@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const partsTotalBaseFooter = document.getElementById('parts-total-base-footer');
     const partsTotalGstFooter = document.getElementById('parts-total-gst-footer');
     const partsGrandTotalFooter = document.getElementById('parts-grand-total-footer');
-    const partsDeprSumFooter = document.getElementById('parts-depr-sum-footer'); 
+    const partsDeprSumFooter = document.getElementById('parts-depr-sum-footer');
     const partsNetTotalFooter = document.getElementById('parts-net-total-footer');
     const summaryAddLabour = document.getElementById('summary-add-labour');
     const summaryAddParts = document.getElementById('summary-add-parts');
@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateSteps(activeStep) {
         [stepUpload, stepReview, stepDownload].forEach(step => step.classList.remove('active', 'completed'));
-        switch(activeStep) {
+        switch (activeStep) {
             case 'upload': stepUpload.classList.add('active'); break;
             case 'review': stepUpload.classList.add('completed'); stepReview.classList.add('active'); break;
             case 'download': stepUpload.classList.add('completed'); stepReview.classList.add('completed'); stepDownload.classList.add('active'); break;
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function formatCurrency(value) {
         const number = parseFloat(value);
-        if (isNaN(number)) return '0'; 
+        if (isNaN(number)) return '0';
         if (number === 0) return '0';
         return number.toFixed(2);
     }
@@ -150,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function parseFormattedNumber(value) {
         if (typeof value !== 'string') return parseFloat(value) || 0.0;
-        const cleanedValue = value.replace(/[^0-9.-]+/g,"");
+        const cleanedValue = value.replace(/[^0-9.-]+/g, "");
         return parseFloat(cleanedValue) || 0.0;
     }
     function formatInputOnBlur(event, formatter = formatCurrency) { // Default to formatCurrency
@@ -252,27 +252,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const dt = e.dataTransfer;
         const file = dt.files[0];
         if (file) {
-            invoiceFileInput.files = dt.files; 
-            updateInvoiceFileUI(file);     
+            invoiceFileInput.files = dt.files;
+            updateInvoiceFileUI(file);
         }
-    }    
+    }
 
     // --- Display Preview Data ---
-function displayPreview(combinedData, loadedReportId = null) {
+    function displayPreview(combinedData, loadedReportId = null) {
         previewForm.reset();
-        labourDetailsTbody.innerHTML = ''; 
+        labourDetailsTbody.innerHTML = '';
         partsDetailsTbody.innerHTML = '';
         if (page3FeeItemsTbody) page3FeeItemsTbody.innerHTML = '';
-        currentReportId = loadedReportId; 
-    
+        currentReportId = loadedReportId;
+
         // --- FIX: Reset Global Photo State ---
         uploadedPhotos.first_inspection = [];
         uploadedPhotos.dismantling = [];
         uploadedPhotos.reinspection = [];
-        
+
         // --- FIX: Load Photos from Data ---
         const loadedPhotos = combinedData.photos || {};
-        
+
         if (loadedPhotos.first_inspection) {
             uploadedPhotos.first_inspection = Array.isArray(loadedPhotos.first_inspection.images) ? [...loadedPhotos.first_inspection.images] : [];
             const layoutSelect = document.getElementById('photos-layout-first');
@@ -298,38 +298,38 @@ function displayPreview(combinedData, loadedReportId = null) {
 
         const surveyData = combinedData.survey_report || {};
         const assessmentData = combinedData.assessment || {};
-        currentAssessmentData = JSON.parse(JSON.stringify(assessmentData)); 
-        
+        currentAssessmentData = JSON.parse(JSON.stringify(assessmentData));
+
         currentAssessmentData.parts = currentAssessmentData.parts || [];
         currentAssessmentData.user_labour_rows = currentAssessmentData.user_labour_rows || [];
         currentAssessmentData.user_labour_rows.forEach(row => {
             if (typeof row.labour_row_gst_pc === 'undefined') {
-                row.labour_row_gst_pc = 18; 
+                row.labour_row_gst_pc = 18;
             }
         });
 
         currentAssessmentData.note_text = currentAssessmentData.note_text ?? "Note :- The subject policy covered with Depn. waiver";
         currentAssessmentData.payment_to_text = currentAssessmentData.payment_to_text ?? "REPAIRER";
         const loadedPaintDepn = currentAssessmentData.labour_paint_depn;
-        currentAssessmentData.labour_paint_depn = loadedPaintDepn ?? null; 
+        currentAssessmentData.labour_paint_depn = loadedPaintDepn ?? null;
         currentAssessmentData.policy_type = currentAssessmentData.policy_type || 'NORMAL';
         currentAssessmentData.report_type = currentAssessmentData.report_type || 'Final Survey Report';
         currentAssessmentData.claim_type = currentAssessmentData.claim_type || 'Cashless';
         currentAssessmentData.labour_tax_type = currentAssessmentData.labour_tax_type || 'CGST/SGST';
-        
+
         const imt23Checkbox = document.getElementById('assessment-labour-imt-23');
         if (imt23Checkbox) {
             imt23Checkbox.checked = currentAssessmentData.labour_imt_applied === true;
         }
-    
+
         const loadedSalvage = currentAssessmentData.salvage;
         const salvageIsNumeric = !isNaN(parseFloat(loadedSalvage));
-        currentAssessmentData.salvage = salvageIsNumeric ? parseFloat(loadedSalvage) : 0.0; 
+        currentAssessmentData.salvage = salvageIsNumeric ? parseFloat(loadedSalvage) : 0.0;
 
         currentAssessmentData.page3_details = currentAssessmentData.page3_details || {
             customer_gstin: '',
             company_gstin: '',
-            fee_items: [], 
+            fee_items: [],
             estimated_amount: '',
             photo_copies_count: '',
             include_in_consolidated: false,
@@ -338,7 +338,7 @@ function displayPreview(combinedData, loadedReportId = null) {
         if (typeof currentAssessmentData.page3_details.include_in_consolidated === 'undefined') {
             currentAssessmentData.page3_details.include_in_consolidated = false;
         }
-        
+
         const defaultFeeItems = [
             { name: "Final Survey Fees", amount: 0 },
             { name: "Conveyance for Final Survey", amount: 0 },
@@ -352,7 +352,7 @@ function displayPreview(combinedData, loadedReportId = null) {
         if (!currentAssessmentData.page3_details.fee_items || currentAssessmentData.page3_details.fee_items.length === 0) {
             currentAssessmentData.page3_details.fee_items = JSON.parse(JSON.stringify(defaultFeeItems));
         }
-    
+
         for (const key in surveyData) {
             if (surveyData.hasOwnProperty(key)) {
                 const inputElement = document.getElementById(`input-${key}`);
@@ -361,7 +361,7 @@ function displayPreview(combinedData, loadedReportId = null) {
                 }
             }
         }
-    
+
         assessmentHeaderGstInput.value = currentAssessmentData.header_gst || '';
         assessmentHeaderVehicleYearInput.value = currentAssessmentData.header_vehicle_year || '';
         document.getElementById('input-enclosures_text').value = currentAssessmentData.enclosures_text || '';
@@ -373,70 +373,70 @@ function displayPreview(combinedData, loadedReportId = null) {
         assessmentReportTypeDropdown.value = currentAssessmentData.report_type;
         assessmentClaimTypeDropdown.value = currentAssessmentData.claim_type;
         assessmentLabourTaxTypeDropdown.value = currentAssessmentData.labour_tax_type;
-    
+
         if (currentAssessmentData.user_labour_rows && currentAssessmentData.user_labour_rows.length > 0) {
             currentAssessmentData.user_labour_rows.forEach(row => addLabourRow(row));
         } else {
-            addLabourRow(); 
+            addLabourRow();
         }
-    
+
         currentAssessmentData.parts.forEach(part => addPartRowToTable(part));
-    
+
         const deductiblesValue = currentAssessmentData.deductibles;
         assessmentDeductiblesInput.value = (deductiblesValue === null || typeof deductiblesValue === 'undefined')
-                                            ? '' 
-                                            : formatCurrency(deductiblesValue);        
-        assessmentSalvageInput.value = formatCurrency(currentAssessmentData.salvage); 
+            ? ''
+            : formatCurrency(deductiblesValue);
+        assessmentSalvageInput.value = formatCurrency(currentAssessmentData.salvage);
 
         const imposeExcessValue = currentAssessmentData.impose_excess;
         const imposeExcessInput = document.getElementById('assessment-impose-excess');
         if (imposeExcessInput) {
             imposeExcessInput.value = (imposeExcessValue === null || typeof imposeExcessValue === 'undefined')
-                                    ? ''
-                                    : formatCurrency(imposeExcessValue);
+                ? ''
+                : formatCurrency(imposeExcessValue);
         }
 
         if (page3CustomerGstinInput) page3CustomerGstinInput.value = currentAssessmentData.page3_details.customer_gstin || '';
         const page3CompanyGstinInput = document.getElementById('page3-company-gstin');
         if (page3CompanyGstinInput) page3CompanyGstinInput.value = currentAssessmentData.page3_details.company_gstin || '';
-        
+
         if (page3EstimatedAmountInput) page3EstimatedAmountInput.value = formatCurrency(currentAssessmentData.page3_details.estimated_amount || 0);
         if (page3PhotoCopiesCountInput) page3PhotoCopiesCountInput.value = currentAssessmentData.page3_details.photo_copies_count || '';
-        
+
         const includeInConsolidatedCheckbox = document.getElementById('page3-include-in-consolidated');
         if (includeInConsolidatedCheckbox) {
             includeInConsolidatedCheckbox.checked = currentAssessmentData.page3_details.include_in_consolidated === true;
         }
-        
+
         // Populate Surveyor Bank Details
         const surveyor = currentAssessmentData.page3_details.surveyor_details || {};
-        const setVal = (id, val) => { const el = document.getElementById(id); if(el && val) el.value = val; };
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
         setVal('surveyor-gstin', surveyor.gstin);
         setVal('surveyor-pan', surveyor.pan);
         setVal('surveyor-bank-name', surveyor.bank_name);
         setVal('surveyor-account-no', surveyor.account_no);
         setVal('surveyor-micr', surveyor.micr);
         setVal('surveyor-ifsc', surveyor.ifsc);
-        setVal('surveyor-state-code', surveyor.state_code || '(19)'); 
-        setVal('surveyor-code', surveyor.surveyor_code || '2075995'); 
+        setVal('surveyor-state-code', surveyor.state_code || '(19)');
+        setVal('surveyor-code', surveyor.surveyor_code || '2075995');
 
         if (currentAssessmentData.page3_details.fee_items && currentAssessmentData.page3_details.fee_items.length > 0) {
             currentAssessmentData.page3_details.fee_items.forEach(item => addPage3FeeItemRow(item));
         }
-        else if (page3FeeItemsTbody && page3FeeItemsTbody.rows.length === 0) { 
+        else if (page3FeeItemsTbody && page3FeeItemsTbody.rows.length === 0) {
             addPage3FeeItemRow();
         }
-    
-        addRecalculationListeners(); 
+
+        addRecalculationListeners();
         assessmentSalvageInput.addEventListener('blur', formatInputOnBlurWrapper);
         if (page3EstimatedAmountInput) page3EstimatedAmountInput.addEventListener('blur', formatInputOnBlurWrapper);
-    
-        updateDepreciationFieldStates(); 
-        updateLabourTaxDisplay();      
+
+        updateDepreciationFieldStates();
+        updateLabourTaxDisplay();
         handleReportTypeChange(); // Trigger Spot Report UI logic
-    
-        recalculateAll(); 
-    
+
+        recalculateAll();
+
         uploadSection.classList.add('hidden');
         previewSection.classList.remove('hidden');
         downloadSection.classList.add('hidden');
@@ -450,18 +450,18 @@ function displayPreview(combinedData, loadedReportId = null) {
         const spotSection = document.getElementById('spot-report-section');
         const claimTypeGroup = document.getElementById('claim-type-group');
         const assessmentWrapper = document.getElementById('assessment-details-wrapper');
-        
+
         // Ensure Bill details are always visible (page3-details-wrapper is not toggled here)
 
         if (reportType === 'Spot Report') {
             if (assessmentWrapper) assessmentWrapper.classList.add('hidden');
             spotSection.classList.remove('hidden');
             // Hide Claim Type dropdown as requested (only display Spot/Preliminary Report at top)
-            if(claimTypeGroup) claimTypeGroup.classList.add('hidden');
+            if (claimTypeGroup) claimTypeGroup.classList.add('hidden');
         } else {
             if (assessmentWrapper) assessmentWrapper.classList.remove('hidden');
             spotSection.classList.add('hidden');
-            if(claimTypeGroup) claimTypeGroup.classList.remove('hidden');
+            if (claimTypeGroup) claimTypeGroup.classList.remove('hidden');
         }
     }
 
@@ -469,17 +469,17 @@ function displayPreview(combinedData, loadedReportId = null) {
     if (assessmentReportTypeDropdown) {
         assessmentReportTypeDropdown.addEventListener('change', handleReportTypeChange);
     }
-    
-function addRecalculationListeners() {
+
+    function addRecalculationListeners() {
         const triggerInputs = [
-            assessmentLabourPaintDepnInput, 
+            assessmentLabourPaintDepnInput,
             assessmentSalvageInput,
             assessmentDeductiblesInput,
             document.getElementById('assessment-impose-excess'), // New listener
             assessmentHeaderVehicleYearInput,
             assessmentPolicyTypeDropdown,
             assessmentLabourTaxTypeDropdown,
-            document.getElementById('assessment-labour-imt-23'), 
+            document.getElementById('assessment-labour-imt-23'),
             page3EstimatedAmountInput,
             page3PhotoCopiesCountInput,
             document.getElementById('input-vehicle_regn_date'),
@@ -491,11 +491,11 @@ function addRecalculationListeners() {
             if (input) {
                 const eventType = (input.tagName === 'SELECT' || input.type === 'checkbox') ? 'change' : 'input';
                 // Remove existing listener before adding
-                input.removeEventListener(eventType, recalculateAll); 
+                input.removeEventListener(eventType, recalculateAll);
                 input.addEventListener(eventType, recalculateAll);
 
                 if (input.classList.contains('number-input')) {
-                    input.removeEventListener('blur', formatInputOnBlurWrapper); 
+                    input.removeEventListener('blur', formatInputOnBlurWrapper);
                     input.addEventListener('blur', formatInputOnBlurWrapper);
                 }
             }
@@ -504,16 +504,16 @@ function addRecalculationListeners() {
 
     function updateDepreciationFieldStates() {
         const isNilDepn = assessmentPolicyTypeDropdown.value === 'NIL_DEPN';
-    
+
         // Labour Paint Depreciation
         assessmentLabourPaintDepnInput.readOnly = isNilDepn;
         if (isNilDepn) {
             assessmentLabourPaintDepnInput.value = formatCurrency(0);
             // Ensure data model is also updated if changed by UI state
-            if (currentAssessmentData) currentAssessmentData.labour_paint_depn_user_override = 0; 
+            if (currentAssessmentData) currentAssessmentData.labour_paint_depn_user_override = 0;
         }
         // If NORMAL, it will be recalculated or use user input in recalculateLabourTotals
-    
+
         // Parts Depreciation
         partsDetailsTbody.querySelectorAll('tr').forEach(row => {
             const deprInput = row.querySelector('.part-depr-input');
@@ -533,7 +533,7 @@ function addRecalculationListeners() {
 
     function updateLabourTaxDisplay() {
         const selectedTaxType = assessmentLabourTaxTypeDropdown ? assessmentLabourTaxTypeDropdown.value : 'CGST/SGST';
-        
+
         // Update label for the new flat GST input
         const labourGstInput = document.getElementById('assessment-labour_gst');
         if (labourGstInput) {
@@ -577,18 +577,18 @@ function addRecalculationListeners() {
             <td><input type="text" name="labour_painting" class="number-input labour-cost-input labour-painting-input" placeholder="0" value="${painting}"></td>
             <td><button type="button" class="btn btn-danger btn-sm remove-labour-row"><i class="fas fa-trash-alt"></i></button></td>
         `;
-        
+
         newRow.querySelectorAll('.labour-cost-input').forEach(input => {
             input.addEventListener('input', () => {
-                recalculateAll(); 
+                recalculateAll();
             });
             if (input.classList.contains('number-input')) {
-                 input.addEventListener('blur', formatInputOnBlurWrapper);
+                input.addEventListener('blur', formatInputOnBlurWrapper);
             }
         });
-        newRow.querySelector('.remove-labour-row').addEventListener('click', function() {
+        newRow.querySelector('.remove-labour-row').addEventListener('click', function () {
             this.closest('tr').remove();
-            recalculateAll(); 
+            recalculateAll();
         });
     }
 
@@ -621,7 +621,7 @@ function addRecalculationListeners() {
 
     addLabourRowButton.addEventListener('click', () => addLabourRow()); // Pass no data for new row
 
-    labourDetailsTbody.addEventListener('click', function(e) { // Event delegation for remove
+    labourDetailsTbody.addEventListener('click', function (e) { // Event delegation for remove
         if (e.target.closest('.remove-labour-row')) {
             e.target.closest('tr').remove();
             recalculateAll(); // Recalculate when row removed
@@ -640,7 +640,7 @@ function addRecalculationListeners() {
             <td><input type="text" name="page3_fee_amount" class="number-input page3-fee-input" placeholder="0.00" value="${feeAmount}"></td>
             <td><button type="button" class="btn btn-danger btn-sm remove-page3-fee-row"><i class="fas fa-trash-alt"></i></button></td>
         `;
-        
+
         newRow.querySelectorAll('.page3-fee-input').forEach(input => {
             input.addEventListener('input', recalculateAll); // Recalculate on any change
             if (input.classList.contains('number-input')) {
@@ -648,9 +648,9 @@ function addRecalculationListeners() {
             }
         });
 
-        newRow.querySelector('.remove-page3-fee-row').addEventListener('click', function() {
+        newRow.querySelector('.remove-page3-fee-row').addEventListener('click', function () {
             this.closest('tr').remove();
-            recalculateAll(); 
+            recalculateAll();
         });
     }
 
@@ -659,7 +659,7 @@ function addRecalculationListeners() {
     }
 
     if (page3FeeItemsTbody) {
-        page3FeeItemsTbody.addEventListener('click', function(e) {
+        page3FeeItemsTbody.addEventListener('click', function (e) {
             if (e.target.closest('.remove-page3-fee-row')) {
                 e.target.closest('tr').remove();
                 recalculateAll();
@@ -685,10 +685,10 @@ function addRecalculationListeners() {
         const vehicleYearStr = assessmentHeaderVehicleYearInput.value.trim();
         const gstApplicableInitial = parseFloat(gstPcValue) > 0;
         const totalPartsAmtInitial = parseFormattedNumber(rawQty) * parseFormattedNumber(rawPartAmt);
-        const grossAmtInitial = totalPartsAmtInitial * (1 + (gstApplicableInitial ? (parseFloat(gstPcValue || 0)/100) : 0));
+        const grossAmtInitial = totalPartsAmtInitial * (1 + (gstApplicableInitial ? (parseFloat(gstPcValue || 0) / 100) : 0));
         const calculatedDeprInitial = getJsDepreciationRate(partType, vehicleYearStr) * grossAmtInitial / 100.0;
         const initialDeprValue = part.depr ?? calculatedDeprInitial;
-        
+
         // IMT Calculation Logic for Initial Display
         let imt23Amt = 0;
         if (imtApplied) {
@@ -761,13 +761,13 @@ function addRecalculationListeners() {
         // --- Add event listeners ---
         const typeSelect = newRow.querySelector('.part-type-select');
         if (typeSelect) typeSelect.addEventListener('change', () => { recalculateAll(); });
-        
+
         const imtCheckbox = newRow.querySelector('.part-imt-checkbox');
         if (imtCheckbox) imtCheckbox.addEventListener('change', () => { recalculateAll(); });
 
         newRow.querySelectorAll('input.part-input, select.part-salvage-select, select.part-remarks-select').forEach(input => {
             input.addEventListener('input', (e) => {
-                recalculatePartRow(slNo, null); 
+                recalculatePartRow(slNo, null);
                 updatePartsTotals();
                 updateSummaryCalculations();
             });
@@ -775,7 +775,7 @@ function addRecalculationListeners() {
             if (input.classList.contains('number-input')) {
                 let formatter;
                 if (input.classList.contains('part-qty-input')) { formatter = formatQty; }
-                else if (input.classList.contains('part-slno-input') || input.classList.contains('part-gst-pc-input')) { formatter = (v => v.replace(/[^0-9.]/g,'')); }
+                else if (input.classList.contains('part-slno-input') || input.classList.contains('part-gst-pc-input')) { formatter = (v => v.replace(/[^0-9.]/g, '')); }
                 else { formatter = formatCurrency; }
                 input.addEventListener('blur', (e) => formatInputOnBlur(e, formatter));
             }
@@ -812,7 +812,7 @@ function addRecalculationListeners() {
         recalculateAll();
     });
 
-    partsDetailsTbody.addEventListener('click', function(e) {
+    partsDetailsTbody.addEventListener('click', function (e) {
         if (e.target.closest('.remove-part-row')) {
             const button = e.target.closest('.remove-part-row');
             const slNoToRemove = button.dataset.slNo;
@@ -844,115 +844,115 @@ function addRecalculationListeners() {
         partsNetTotalFooter.textContent = formatCurrency(totalNet);
 
         if (currentAssessmentData) {
-             currentAssessmentData.parts_total_base = totalBase;
-             currentAssessmentData.parts_total_gst = totalGst;
-             currentAssessmentData.parts_grand_total = totalGross;
-             currentAssessmentData.parts_depr_sum = totalDepr;
-             currentAssessmentData.parts_net_total = totalNet;
+            currentAssessmentData.parts_total_base = totalBase;
+            currentAssessmentData.parts_total_gst = totalGst;
+            currentAssessmentData.parts_grand_total = totalGross;
+            currentAssessmentData.parts_depr_sum = totalDepr;
+            currentAssessmentData.parts_net_total = totalNet;
         }
     }
 
     // --- Recalculation Logic ---
     function recalculateAll() {
         updateVehicleAge();
-        updateDepreciationFieldStates(); 
+        updateDepreciationFieldStates();
         updateLabourTaxDisplay();
-        recalculateLabourTotals(); 
-        recalculateAllParts();     
-        updatePartsTotals();       
+        recalculateLabourTotals();
+        recalculateAllParts();
+        updatePartsTotals();
         updateSummaryCalculations();
         recalculatePage3Totals();
     }
 
     function recalculateLabourTotals() {
-            if (!currentAssessmentData) return;
-        
-            let sumOfAllR = 0;
-            let sumOfAllD = 0;
-            let sumOfAllP = 0;
+        if (!currentAssessmentData) return;
 
-            labourDetailsTbody.querySelectorAll('tr').forEach(row => {
-                const rVal = parseFormattedNumber(row.querySelector('input[name="labour_removing_refitting"]')?.value);
-                const dVal = parseFormattedNumber(row.querySelector('input[name="labour_denting_repairing"]')?.value);
-                const pVal = parseFormattedNumber(row.querySelector('input[name="labour_painting"]')?.value);
-        
-                sumOfAllR += rVal;
-                sumOfAllD += dVal;
-                sumOfAllP += pVal;
-            });
-            
-            // Paint Depreciation (Default 12.5%)
-            const paintDepnInput = assessmentLabourPaintDepnInput;
-            let finalPaintDepnToUse;
-        
-            if (assessmentPolicyTypeDropdown.value === 'NIL_DEPN') {
-                finalPaintDepnToUse = 0.0;
-                paintDepnInput.value = formatCurrency(0);
-            } else {
-                const newDefaultPaintDepn = sumOfAllP * 0.125; // 12.5% Default
-                paintDepnInput.value = formatCurrency(newDefaultPaintDepn);
-                finalPaintDepnToUse = newDefaultPaintDepn;
-            }
-            
-            const netPaintAfterDep = sumOfAllP - finalPaintDepnToUse;
+        let sumOfAllR = 0;
+        let sumOfAllD = 0;
+        let sumOfAllP = 0;
 
-            // IMT-23 Calculation for Labour (50% on Net Paint)
-            const imt23Checkbox = document.getElementById('assessment-labour-imt-23');
-            const imt23Display = document.getElementById('assessment-labour-imt-23-amt');
-            let labourImt23Amount = 0.0;
+        labourDetailsTbody.querySelectorAll('tr').forEach(row => {
+            const rVal = parseFormattedNumber(row.querySelector('input[name="labour_removing_refitting"]')?.value);
+            const dVal = parseFormattedNumber(row.querySelector('input[name="labour_denting_repairing"]')?.value);
+            const pVal = parseFormattedNumber(row.querySelector('input[name="labour_painting"]')?.value);
 
-            if (imt23Checkbox && imt23Checkbox.checked && netPaintAfterDep > 0) {
-                labourImt23Amount = netPaintAfterDep * 0.5;
-            }
+            sumOfAllR += rVal;
+            sumOfAllD += dVal;
+            sumOfAllP += pVal;
+        });
 
-            if (imt23Display) {
-                imt23Display.value = formatCurrency(labourImt23Amount);
-            }
-            
-            const netPaintLiability = netPaintAfterDep - labourImt23Amount;
-            
-            // Taxable Labour = R&R + Dent + Net Paint Liability
-            const taxableLabour = sumOfAllR + sumOfAllD + netPaintLiability;
-            
-            // GST Calculation
-            let labourGstAmount = 0.0;
-            const taxType = assessmentLabourTaxTypeDropdown.value;
-            
-            if (taxType !== 'Zero') {
-                labourGstAmount = taxableLabour * 0.18;
-            }
-            
-            const labourGrandTotalAdjusted = taxableLabour + labourGstAmount;
-        
-            // Update Data Model
-            currentAssessmentData.labour_removing_total = sumOfAllR;
-            currentAssessmentData.labour_denting_total = sumOfAllD;
-            currentAssessmentData.labour_painting_total = sumOfAllP;
-            currentAssessmentData.labour_total_base = taxableLabour;
-            currentAssessmentData.labour_paint_depn = finalPaintDepnToUse;
-            currentAssessmentData.labour_imt_23_amt = labourImt23Amount;
-            currentAssessmentData.labour_grand_total_adjusted = labourGrandTotalAdjusted;
-        
-            // Update UI
-            const displayPaintTotal = document.getElementById('display-labour-painting-total');
-            if(displayPaintTotal) displayPaintTotal.value = formatCurrency(sumOfAllP);
-            
-            const displayNetPaint = document.getElementById('display-net-paint-liability');
-            if(displayNetPaint) displayNetPaint.value = formatCurrency(netPaintLiability);
-            
-            const displayRRDent = document.getElementById('display-labour-rr-dent-total');
-            if(displayRRDent) displayRRDent.value = formatCurrency(sumOfAllR + sumOfAllD);
+        // Paint Depreciation (Default 12.5%)
+        const paintDepnInput = assessmentLabourPaintDepnInput;
+        let finalPaintDepnToUse;
 
-            document.getElementById('assessment-labour_total_base').value = formatCurrency(taxableLabour);
-            
-            const displayGst = document.getElementById('assessment-labour_gst');
-            if(displayGst) displayGst.value = formatCurrency(labourGstAmount);
-            
-            document.getElementById('assessment-labour_grand_total_adjusted').value = formatCurrency(labourGrandTotalAdjusted);
-            
-            // Hidden fields for compatibility
-            document.getElementById('display-labour-removing-total').value = formatCurrency(sumOfAllR);
-            document.getElementById('display-labour-denting-total').value = formatCurrency(sumOfAllD);
+        if (assessmentPolicyTypeDropdown.value === 'NIL_DEPN') {
+            finalPaintDepnToUse = 0.0;
+            paintDepnInput.value = formatCurrency(0);
+        } else {
+            const newDefaultPaintDepn = sumOfAllP * 0.125; // 12.5% Default
+            paintDepnInput.value = formatCurrency(newDefaultPaintDepn);
+            finalPaintDepnToUse = newDefaultPaintDepn;
+        }
+
+        const netPaintAfterDep = sumOfAllP - finalPaintDepnToUse;
+
+        // IMT-23 Calculation for Labour (50% on Net Paint)
+        const imt23Checkbox = document.getElementById('assessment-labour-imt-23');
+        const imt23Display = document.getElementById('assessment-labour-imt-23-amt');
+        let labourImt23Amount = 0.0;
+
+        if (imt23Checkbox && imt23Checkbox.checked && netPaintAfterDep > 0) {
+            labourImt23Amount = netPaintAfterDep * 0.5;
+        }
+
+        if (imt23Display) {
+            imt23Display.value = formatCurrency(labourImt23Amount);
+        }
+
+        const netPaintLiability = netPaintAfterDep - labourImt23Amount;
+
+        // Taxable Labour = R&R + Dent + Net Paint Liability
+        const taxableLabour = sumOfAllR + sumOfAllD + netPaintLiability;
+
+        // GST Calculation
+        let labourGstAmount = 0.0;
+        const taxType = assessmentLabourTaxTypeDropdown.value;
+
+        if (taxType !== 'Zero') {
+            labourGstAmount = taxableLabour * 0.18;
+        }
+
+        const labourGrandTotalAdjusted = taxableLabour + labourGstAmount;
+
+        // Update Data Model
+        currentAssessmentData.labour_removing_total = sumOfAllR;
+        currentAssessmentData.labour_denting_total = sumOfAllD;
+        currentAssessmentData.labour_painting_total = sumOfAllP;
+        currentAssessmentData.labour_total_base = taxableLabour;
+        currentAssessmentData.labour_paint_depn = finalPaintDepnToUse;
+        currentAssessmentData.labour_imt_23_amt = labourImt23Amount;
+        currentAssessmentData.labour_grand_total_adjusted = labourGrandTotalAdjusted;
+
+        // Update UI
+        const displayPaintTotal = document.getElementById('display-labour-painting-total');
+        if (displayPaintTotal) displayPaintTotal.value = formatCurrency(sumOfAllP);
+
+        const displayNetPaint = document.getElementById('display-net-paint-liability');
+        if (displayNetPaint) displayNetPaint.value = formatCurrency(netPaintLiability);
+
+        const displayRRDent = document.getElementById('display-labour-rr-dent-total');
+        if (displayRRDent) displayRRDent.value = formatCurrency(sumOfAllR + sumOfAllD);
+
+        document.getElementById('assessment-labour_total_base').value = formatCurrency(taxableLabour);
+
+        const displayGst = document.getElementById('assessment-labour_gst');
+        if (displayGst) displayGst.value = formatCurrency(labourGstAmount);
+
+        document.getElementById('assessment-labour_grand_total_adjusted').value = formatCurrency(labourGrandTotalAdjusted);
+
+        // Hidden fields for compatibility
+        document.getElementById('display-labour-removing-total').value = formatCurrency(sumOfAllR);
+        document.getElementById('display-labour-denting-total').value = formatCurrency(sumOfAllD);
     }
 
     // --- Vehicle Age & Depreciation Calculation (JS) ---
@@ -968,7 +968,7 @@ function addRecalculationListeners() {
         let endDate = parseDate(surveyDateStr);
 
         if (!startDate || !endDate) return { years: 0, months: 0, days: 0, totalMonths: 0, display: "Invalid Dates" };
-        
+
         // Handle cases where survey date might have time, strip it
         endDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
 
@@ -987,7 +987,7 @@ function addRecalculationListeners() {
             years--;
             months += 12;
         }
-        
+
         const totalMonths = (years * 12) + months + (days > 0 ? 1 : 0); // Add 1 month if any days have passed
         const display = `${years} yrs ${months} month ${days} days`;
 
@@ -1005,7 +1005,7 @@ function addRecalculationListeners() {
         return 11; // Year 11+
     }
 
-function updateVehicleAge() {
+    function updateVehicleAge() {
         const regnDateInput = document.getElementById('input-vehicle_regn_date');
         const surveyDateInput = document.getElementById('input-accident_survey_date');
         const assignDateInput = document.getElementById('input-accident_assign_received');
@@ -1018,12 +1018,12 @@ function updateVehicleAge() {
         if (!surveyDateStr) {
             surveyDateStr = reportDateInput.value.trim();
         }
-        
+
         const age = calculateVehicleAge(regnDateInput.value, surveyDateStr);
         const deprYear = getDepreciationYear(age.totalMonths);
 
         displayVehicleAge.value = age.display;
-        
+
         // Only update the editable year field if it hasn't been manually changed by the user
         // or if the dates that calculate it have changed.
         const currentYearValue = assessmentHeaderVehicleYearInput.value;
@@ -1060,16 +1060,16 @@ function updateVehicleAge() {
         if (!part && partIndex !== -1 && currentAssessmentData?.parts) {
             part = currentAssessmentData.parts[partIndex];
         } else if (!part && (partIndex === -1 || !currentAssessmentData?.parts)) {
-            return; 
+            return;
         } else if (part && partIndex !== -1 && currentAssessmentData?.parts) {
-            currentAssessmentData.parts[partIndex] = part; 
+            currentAssessmentData.parts[partIndex] = part;
         }
 
         const row = document.getElementById(`part_row_${slNo}`);
 
         const slNoInput = row?.querySelector(`.part-slno-input`);
         const nameInput = row?.querySelector(`.part-name-input`);
-        const typeSelect = row?.querySelector(`.part-type-select`); 
+        const typeSelect = row?.querySelector(`.part-type-select`);
         const gstPcInput = row?.querySelector(`.part-gst-pc-input`);
         const qtyInput = row?.querySelector(`.part-qty-input`);
         const amtInput = row?.querySelector(`.part-amt-input`);
@@ -1080,7 +1080,7 @@ function updateVehicleAge() {
 
         const currentSlNo = parseInt(slNoInput?.value || part.sl_no);
         const partName = (nameInput?.value || part.part_name || '').trim();
-        const partType = (typeSelect?.value || part.type_part || '').trim().toUpperCase(); 
+        const partType = (typeSelect?.value || part.type_part || '').trim().toUpperCase();
         const gstPc = parseFloat(gstPcInput?.value || part.original_gst_pc || 0);
         const qty = parseFormattedNumber(qtyInput?.value || part.qty);
         const partAmt = parseFormattedNumber(amtInput?.value || part.part_amt);
@@ -1096,12 +1096,12 @@ function updateVehicleAge() {
 
         part.sl_no = currentSlNo;
         part.part_name = partName;
-        part.type_part = partType; 
+        part.type_part = partType;
         part.original_gst_pc = gstPc;
         part.qty = qty;
         part.part_amt = partAmt;
         part.gst_applicable = gstApplicable;
-        part.lastCalculatedYear = vehicleYearStr; 
+        part.lastCalculatedYear = vehicleYearStr;
         part.imt_applied = imtApplied;
         part.salvage_produce = salvageSelect ? salvageSelect.value : 'YES';
         part.remarks = remarksSelect ? remarksSelect.value : 'REPLACED BY NEW';
@@ -1123,13 +1123,13 @@ function updateVehicleAge() {
             const currentDeprInputValueStr = deprInput?.value?.trim() || '';
             const currentDeprInputValue = parseFormattedNumber(currentDeprInputValueStr || '0');
 
-            if (deprInput) { 
-                row.dataset.calculatedDepr = formatCurrency(calculatedDepr); 
-                deprInput.placeholder = `Calc: ${formatCurrency(calculatedDepr)}`; 
+            if (deprInput) {
+                row.dataset.calculatedDepr = formatCurrency(calculatedDepr);
+                deprInput.placeholder = `Calc: ${formatCurrency(calculatedDepr)}`;
 
                 if (dependenciesChanged) {
-                    finalDeprAmount = calculatedDepr; 
-                    if (document.activeElement !== deprInput) { 
+                    finalDeprAmount = calculatedDepr;
+                    if (document.activeElement !== deprInput) {
                         deprInput.value = formatCurrency(finalDeprAmount);
                     }
                 } else if (currentDeprInputValueStr !== '') {
@@ -1137,7 +1137,7 @@ function updateVehicleAge() {
                 } else {
                     finalDeprAmount = calculatedDepr;
                     if (document.activeElement !== deprInput) {
-                        deprInput.value = formatCurrency(finalDeprAmount); 
+                        deprInput.value = formatCurrency(finalDeprAmount);
                     }
                 }
             } else {
@@ -1147,13 +1147,13 @@ function updateVehicleAge() {
 
         // Net Base (Assessed - Dep)
         const netBase = totalPartsAmt - finalDeprAmount;
-        
+
         // GST on Net Base
         const totalGst = gstApplicable ? (netBase * (gstPc / 100.0)) : 0.0;
-        
+
         // Gross Post-Dep (Net Base + GST)
         const grossPostDep = netBase + totalGst;
-        
+
         // For UI display "Gross Amt" column, we show Gross Post-Dep
         // (Note: HTML table header says "Gross Amt", logic changed from Base+GST to NetBase+GST)
         const grossAmtForUI = grossPostDep;
@@ -1180,21 +1180,21 @@ function updateVehicleAge() {
             const grossAmtCell = row.querySelector(`#part_gross_amt_${slNo}`);
             const netAmtCell = row.querySelector(`#part_net_amt_${slNo}`);
 
-            if(totalAmtCell) totalAmtCell.textContent = formatCurrency(totalPartsAmt);
-            if(totalGstCell) totalGstCell.textContent = formatCurrency(totalGst);
-            if(grossAmtCell) grossAmtCell.textContent = formatCurrency(grossAmtForUI);
-            if(netAmtCell) netAmtCell.textContent = formatCurrency(netAmt);
+            if (totalAmtCell) totalAmtCell.textContent = formatCurrency(totalPartsAmt);
+            if (totalGstCell) totalGstCell.textContent = formatCurrency(totalGst);
+            if (grossAmtCell) grossAmtCell.textContent = formatCurrency(grossAmtForUI);
+            if (netAmtCell) netAmtCell.textContent = formatCurrency(netAmt);
         }
     }
 
     function recalculateAllParts() {
         if (currentAssessmentData?.parts) {
-           const slNosToRecalculate = currentAssessmentData.parts.map(p => p.sl_no);
-           slNosToRecalculate.forEach(slNo => {
-                 const partObject = currentAssessmentData.parts.find(p => p.sl_no == slNo);
-                 if (partObject) {
-                     recalculatePartRow(slNo, partObject);
-                 }
+            const slNosToRecalculate = currentAssessmentData.parts.map(p => p.sl_no);
+            slNosToRecalculate.forEach(slNo => {
+                const partObject = currentAssessmentData.parts.find(p => p.sl_no == slNo);
+                if (partObject) {
+                    recalculatePartRow(slNo, partObject);
+                }
             });
         }
     }
@@ -1207,21 +1207,21 @@ function updateVehicleAge() {
         const lessExcess = parseFormattedNumber(lessExcessInput?.value || 0);
         const salvageInput = assessmentSalvageInput;
         const salvageValue = parseFormattedNumber(salvageInput?.value || 0);
-        
+
         const imposeExcessInput = document.getElementById('assessment-impose-excess');
         const imposeExcess = parseFormattedNumber(imposeExcessInput?.value || 0);
-   
+
         currentAssessmentData.deductibles = lessExcess;
         currentAssessmentData.salvage = salvageValue;
         currentAssessmentData.impose_excess = imposeExcess;
-   
+
         const netLiability = (addLabour + addPartsNet) - lessExcess - imposeExcess - salvageValue;
-   
+
         summaryAddLabour.value = formatCurrency(addLabour);
         summaryAddParts.value = formatCurrency(addPartsNet);
         summaryLessExcess.value = formatCurrency(lessExcess);
         summaryNetLiability.value = formatCurrency(netLiability);
-   
+
         currentAssessmentData.net_liability = netLiability;
     }
 
@@ -1234,19 +1234,33 @@ function updateVehicleAge() {
             return;
         }
 
-        showInvoiceStatus('Uploading and processing invoice...', 'processing');
+        const FILE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5 MB
+        const isLargeFile = file.size > FILE_SIZE_LIMIT;
+
+        showInvoiceStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing invoice...', 'processing');
         uploadInvoiceButton.disabled = true;
         uploadInvoiceButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Invoice...';
 
-        const formData = new FormData();
-        formData.append('invoice_pdf_file', file);
-
         try {
-            const response = await fetch('/process_invoice', { method: 'POST', body: formData });
+            let response;
+
+            if (isLargeFile) {
+                // Direct Upload
+                const driveFileId = await uploadFileDirectly(file);
+                response = await fetch('/process_invoice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ drive_file_id: driveFileId })
+                });
+            } else {
+                // Standard Upload
+                const formData = new FormData(); formData.append('invoice_pdf_file', file);
+                response = await fetch('/process_invoice', { method: 'POST', body: formData });
+            }
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status}`;
-                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) {}
+                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                 throw new Error(errorMsg);
             }
 
@@ -1255,7 +1269,7 @@ function updateVehicleAge() {
             if (!responseData || typeof responseData.parts === 'undefined') {
                 throw new Error("Invalid response format received from invoice processing.");
             }
-            
+
             if (page3CustomerGstinInput && typeof responseData.customer_gstin !== 'undefined') {
                 page3CustomerGstinInput.value = responseData.customer_gstin;
                 if (currentAssessmentData && currentAssessmentData.page3_details) {
@@ -1273,12 +1287,12 @@ function updateVehicleAge() {
             console.error('Error processing invoice:', error);
             showInvoiceStatus(`Error processing invoice: ${error.message}`, 'error');
         } finally {
-            uploadInvoiceButton.disabled = false; 
+            uploadInvoiceButton.disabled = false;
             uploadInvoiceButton.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload & Merge Invoice Parts';
             if (!invoiceFileInput.files[0]) uploadInvoiceButton.disabled = true;
 
             setTimeout(() => {
-                if (!invoiceStatusDiv.classList.contains('status-processing')) { 
+                if (!invoiceStatusDiv.classList.contains('status-processing')) {
                     invoiceStatusDiv.classList.add('hidden');
                 }
             }, 5000);
@@ -1303,12 +1317,12 @@ function updateVehicleAge() {
     function simpleNumberToWordsForUI(num) {
         if (isNaN(num) || num === null) return "Invalid Amount";
         if (num === 0) return "Zero";
-        return `Approx. ${formatCurrency(num)}`; 
+        return `Approx. ${formatCurrency(num)}`;
     }
 
     function recalculatePage3Totals() {
         if (!currentAssessmentData || !page3PhotoCopiesCountInput || !page3SubtotalDisplay) return;
-        
+
         updatePage3TaxDisplay();
 
         const photoCopiesCount = parseInt(page3PhotoCopiesCountInput.value) || 0;
@@ -1358,10 +1372,10 @@ function updateVehicleAge() {
     function mergeInvoiceParts(invoiceParts) {
         if (!currentAssessmentData) {
             console.error("Cannot merge parts, current assessment data is missing.");
-            currentAssessmentData = { parts: [] }; 
+            currentAssessmentData = { parts: [] };
         }
-        if (!currentAssessmentData.parts) { 
-             currentAssessmentData.parts = [];
+        if (!currentAssessmentData.parts) {
+            currentAssessmentData.parts = [];
         }
         if (!Array.isArray(invoiceParts)) {
             console.error("Invoice parts data is not an array.");
@@ -1375,7 +1389,7 @@ function updateVehicleAge() {
         const newMasterList = [];
 
         oldMasterList.forEach(existingPart => {
-            newMasterList.push(existingPart); 
+            newMasterList.push(existingPart);
         });
 
         invoiceParts.forEach(invoicePart => {
@@ -1395,7 +1409,7 @@ function updateVehicleAge() {
                 part_amt: partAmt,
                 gst_applicable: gstApplicable,
                 original_gst_pc: !isNaN(gstPc) ? gstPc : 0,
-                total_parts_amt: 0, 
+                total_parts_amt: 0,
                 total_gst: 0,
                 gross_amt: 0,
                 depr: null,
@@ -1418,7 +1432,7 @@ function updateVehicleAge() {
         console.log("Merge complete (always append). Final parts state:", JSON.parse(JSON.stringify(currentAssessmentData.parts)));
     }
 
-// --- Global Photo Storage ---
+    // --- Global Photo Storage ---
     const uploadedPhotos = {
         first_inspection: [],
         dismantling: [],
@@ -1435,10 +1449,10 @@ function updateVehicleAge() {
         uploadedPhotos[category].forEach((photoData, index) => {
             const photoItem = document.createElement('div');
             photoItem.className = 'photo-item';
-            
+
             const img = document.createElement('img');
             img.src = photoData;
-            
+
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'photo-delete-btn';
             deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
@@ -1457,19 +1471,43 @@ function updateVehicleAge() {
         // Reset file input value so the same file can be selected again if needed
         const inputId = `photos-input-${category === 'first_inspection' ? 'first' : category}`;
         const input = document.getElementById(inputId);
-        if (input) input.value = ''; 
+        if (input) input.value = '';
     }
 
     function handlePhotoSelection(event, category) {
         const files = event.target.files;
         if (files.length > 0) {
             Array.from(files).forEach(file => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    uploadedPhotos[category].push(e.target.result); // Append to array
-                    renderPhotos(category);
-                };
-                reader.readAsDataURL(file);
+                // Show placeholder or loading state
+                const tempId = 'temp-' + Date.now();
+                // Simple Loading placeholder could be added here if needed, 
+                // but for now we'll just wait for upload.
+
+                // Upload to Backend
+                const formData = new FormData();
+                formData.append('photo', file);
+
+                // Show a global status or local
+                showStatus('Uploading photo...', 'processing');
+
+                fetch('/upload_photo', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success && data.url) {
+                            uploadedPhotos[category].push(data.url); // Append URL
+                            renderPhotos(category);
+                            showStatus('Photo uploaded!', 'success');
+                        } else {
+                            showStatus('Photo upload failed: ' + (data.error || 'Unknown'), 'error');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Photo upload error:', err);
+                        showStatus('Error uploading photo.', 'error');
+                    });
             });
         }
     }
@@ -1486,10 +1524,10 @@ function updateVehicleAge() {
 
     // --- Collect Final Data for Backend ---
     function collectFinalData() {
-        recalculateAll(); 
+        recalculateAll();
 
         const surveyData = {};
-        const EXPECTED_SURVEY_KEYS = [ 
+        const EXPECTED_SURVEY_KEYS = [
             "report_no", "report_date", "policy_no", "claim_no", "policy_validity", "insurer", "insured", "insured_contact_name", "insured_contact_no", "hypothecation", "idv", "policy_type_label", "vehicle_regn_no", "vehicle_regn_date", "vehicle_chassis_no", "vehicle_engine_no", "vehicle_make_model", "vehicle_type_body", "vehicle_cf_validity", "vehicle_seating", "vehicle_bhp_cc", "vehicle_pre_accident_condition", "vehicle_ulw", "vehicle_rlw", "vehicle_permit_no", "vehicle_permit_type", "vehicle_permit_validity", "vehicle_route_area", "vehicle_tax_token", "vehicle_tax_validity", "vehicle_odometer", "vehicle_colour", "class_of_vehicle", "regn_cert_no", "vehicle_cc", "dl_name", "dl_no", "dl_issue_date", "dl_validity", "dl_issuing_authority", "dl_endorsement", "dl_type", "dl_dob", "doc_regn_cert", "doc_dl", "doc_tax_token", "doc_permit_compared", "doc_fitness_certificate", "doc_load_challan", "load_nature_packing", "load_weight_goods", "load_origin_destination", "load_lr_invoice_no", "load_transport_name", "load_date", "accident_datetime", "accident_assign_received", "accident_survey_date", "accident_place", "accident_survey_place", "police_reported_to", "police_diary_case_no", "police_date_reported", "tp_details", "accident_cause", "damages_extent", "remark", "tp_injury_loss", "injury_driver_occupant", "damages_consistent"
         ];
         EXPECTED_SURVEY_KEYS.forEach(key => {
@@ -1503,7 +1541,7 @@ function updateVehicleAge() {
             const estSlNoInput = row.querySelector('.part-est-slno-input');
             const billSlNoInput = row.querySelector('.part-bill-slno-input');
             const nameInput = row.querySelector('.part-name-input');
-            const typeSelect = row.querySelector('.part-type-select'); 
+            const typeSelect = row.querySelector('.part-type-select');
             const gstPcInput = row.querySelector('.part-gst-pc-input');
             const qtyInput = row.querySelector('.part-qty-input');
             const amtInput = row.querySelector('.part-amt-input');
@@ -1515,29 +1553,29 @@ function updateVehicleAge() {
             const originalSlNo = slNoInput ? slNoInput.dataset.slNo : null;
             const partDataFromStore = currentAssessmentData?.parts?.find(p => p.sl_no == originalSlNo);
 
-            const slNo = parseInt(slNoInput?.value) || 0; 
+            const slNo = parseInt(slNoInput?.value) || 0;
             const gstPc = parseFloat(gstPcInput?.value || 0);
             const gstApplicable = gstPc > 0;
             const finalDeprAmount = parseFormattedNumber(deprInput?.value || 0);
-            const partType = typeSelect?.value || ''; 
+            const partType = typeSelect?.value || '';
             const hnsInput = row.querySelector('.part-hns-input');
             const estimateInput = row.querySelector('.part-estimate-input');
             const billInput = row.querySelector('.part-bill-input');
-            
-             collectedParts.push({
-                sl_no: slNo, 
+
+            collectedParts.push({
+                sl_no: slNo,
                 est_sl_no: estSlNoInput?.value.trim() || '',
                 bill_sl_no: billSlNoInput?.value.trim() || '',
                 part_name: nameInput?.value.trim() || '',
                 hns_code: hnsInput?.value.trim() || '',
                 estimate_amt: parseFormattedNumber(estimateInput?.value || 0),
                 bill_amt: parseFormattedNumber(billInput?.value || 0),
-                type_part: partType, 
+                type_part: partType,
                 gst_applicable: gstApplicable,
                 original_gst_pc: gstPc,
                 qty: parseFormattedNumber(qtyInput?.value || 0),
                 part_amt: parseFormattedNumber(amtInput?.value || 0),
-                depr: !isNaN(finalDeprAmount) ? finalDeprAmount : -1, 
+                depr: !isNaN(finalDeprAmount) ? finalDeprAmount : -1,
                 imt_applied: imtCheckbox ? imtCheckbox.checked : false,
                 imt_23_amt: parseFormattedNumber(partDataFromStore?.imt_23_amt || 0),
                 salvage_produce: salvageSelect ? salvageSelect.value : 'YES',
@@ -1546,7 +1584,7 @@ function updateVehicleAge() {
                 gross_amt: parseFormattedNumber(partDataFromStore?.gross_amt || 0),
                 total_gst: parseFormattedNumber(partDataFromStore?.total_gst || 0),
                 total_parts_amt: parseFormattedNumber(partDataFromStore?.total_parts_amt || 0),
-             });
+            });
         });
 
         const page3FeeItems = [];
@@ -1556,14 +1594,14 @@ function updateVehicleAge() {
                 const amountInput = row.querySelector('input[name="page3_fee_amount"]');
                 page3FeeItems.push({
                     name: nameInput?.value.trim() || '',
-                    amount: amountInput?.value.trim() || '0' 
+                    amount: amountInput?.value.trim() || '0'
                 });
             });
         }
-        
+
         const includeInConsolidatedCheckbox = document.getElementById('page3-include-in-consolidated');
         const getVal = (id) => document.getElementById(id)?.value.trim() || '';
-        
+
         const page3Data = {
             customer_gstin: page3CustomerGstinInput?.value.trim() || '',
             company_gstin: getVal('page3-company-gstin'),
@@ -1579,7 +1617,7 @@ function updateVehicleAge() {
                 micr: getVal('surveyor-micr'),
                 ifsc: getVal('surveyor-ifsc'),
                 state_code: getVal('surveyor-state-code'),
-                surveyor_code: getVal('surveyor-code')     
+                surveyor_code: getVal('surveyor-code')
             }
         };
 
@@ -1597,11 +1635,11 @@ function updateVehicleAge() {
                 labour_row_gst_pc: gstSelect ? parseInt(gstSelect.value) : 0,
                 removing_refitting: removingInput?.value.trim() || '0',
                 denting_repairing: dentingInput?.value.trim() || '0',
-                painting: paintingInput?.value.trim() || '0', 
+                painting: paintingInput?.value.trim() || '0',
                 total: totalInput?.value.trim() || '0'
             });
         });
-        
+
         const imt23Checkbox = document.getElementById('assessment-labour-imt-23');
         const imposeExcessInput = document.getElementById('assessment-impose-excess');
 
@@ -1613,21 +1651,21 @@ function updateVehicleAge() {
             claim_type: assessmentClaimTypeDropdown.value,
             labour_tax_type: assessmentLabourTaxTypeDropdown.value,
             labour_paint_depn: parseFormattedNumber(assessmentLabourPaintDepnInput.value || 0),
-            labour_imt_applied: imt23Checkbox ? imt23Checkbox.checked : false, 
+            labour_imt_applied: imt23Checkbox ? imt23Checkbox.checked : false,
             parts: collectedParts,
             deductibles: parseFormattedNumber(assessmentDeductiblesInput.value || 1000),
-            impose_excess: parseFormattedNumber(imposeExcessInput?.value || 0), 
-            salvage: assessmentSalvageInput.value.trim() || '-', 
-            user_labour_rows: collectedUserLabourRows, 
+            impose_excess: parseFormattedNumber(imposeExcessInput?.value || 0),
+            salvage: assessmentSalvageInput.value.trim() || '-',
+            user_labour_rows: collectedUserLabourRows,
             reinspection_note: document.getElementById('input-reinspection_note').value.trim(),
             enclosures_text: document.getElementById('input-enclosures_text').value.trim(),
             parts_table_note: document.getElementById('input-parts_table_note').value.trim(),
             spot_report_text: document.getElementById('input-spot_report_text').value.trim(),
-            spot_report_enclosures: document.getElementById('input-spot_report_enclosures').value.trim(), 
+            spot_report_enclosures: document.getElementById('input-spot_report_enclosures').value.trim(),
             page3_details: page3Data,
-            net_liability: currentAssessmentData.net_liability 
+            net_liability: currentAssessmentData.net_liability
         };
-        
+
         // Collect Photos Data
         const photosData = {
             first_inspection: {
@@ -1651,14 +1689,54 @@ function updateVehicleAge() {
         };
     }
 
+    // --- Direct Drive Upload Helper ---
+    async function uploadFileDirectly(file) {
+        // 1. Get Resumable Upload URL from Backend
+        const getUrlResponse = await fetch('/get_upload_url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, mime_type: file.type })
+        });
+
+        if (!getUrlResponse.ok) {
+            throw new Error('Failed to get upload URL from server.');
+        }
+
+        const { url } = await getUrlResponse.json();
+
+        // 2. Upload directly to Drive (PUT)
+        // No Authorization header needed here, it's embedded in the signed URL? 
+        // Actually, for resumable upload session obtained via service account, 
+        // we might just PUT to it. The session URL usually contains the necessary tokens.
+
+        const uploadResponse = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': file.type
+            },
+            body: file
+        });
+
+        if (!uploadResponse.ok) {
+            throw new Error('Direct upload to Drive failed.');
+        }
+
+        const uploadData = await uploadResponse.json();
+        return uploadData.id; // Drive File ID
+    }
+
     // --- Process PDF ---
     processButton.addEventListener('click', async () => {
         const file = pdfFileInput.files[0];
         if (!file) { showStatus('Please select a PDF file first.', 'error'); return; }
 
-        showStatus('Uploading and processing PDF...', 'processing');
+        const FILE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5 MB
+        const isLargeFile = file.size > FILE_SIZE_LIMIT;
+
+        showStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing PDF...', 'processing');
         processButton.disabled = true; processButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
         uploadProgressContainer.classList.remove('hidden'); uploadProgress.style.width = `0%`;
+
         let progressValue = 0;
         const progressInterval = setInterval(() => {
             progressValue += Math.random() * 15; progressValue = Math.min(progressValue, 95);
@@ -1666,16 +1744,31 @@ function updateVehicleAge() {
             if (progressValue >= 95) clearInterval(progressInterval);
         }, 300);
 
-        const formData = new FormData(); formData.append('pdf_file', file);
         let responseData = null;
 
         try {
-            const response = await fetch('/process_pdf', { method: 'POST', body: formData });
+            let response;
+
+            if (isLargeFile) {
+                // Direct Upload Strategy
+                const driveFileId = await uploadFileDirectly(file);
+                // Trigger Processing with File ID
+                response = await fetch('/process_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ drive_file_id: driveFileId })
+                });
+            } else {
+                // Standard Upload
+                const formData = new FormData(); formData.append('pdf_file', file);
+                response = await fetch('/process_pdf', { method: 'POST', body: formData });
+            }
+
             clearInterval(progressInterval); uploadProgress.style.width = '100%';
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status} ${response.statusText}`;
-                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) {}
+                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                 throw new Error(errorMsg);
             }
             responseData = await response.json();
@@ -1685,9 +1778,9 @@ function updateVehicleAge() {
             try {
                 displayPreview(responseData);
             } catch (displayError) {
-                 console.error('Error occurred *inside* displayPreview:', displayError);
-                 showStatus(`Error displaying preview: ${displayError.message}. Check console.`, 'error');
-                 uploadSection.classList.remove('hidden'); previewSection.classList.add('hidden'); updateSteps('upload');
+                console.error('Error occurred *inside* displayPreview:', displayError);
+                showStatus(`Error displaying preview: ${displayError.message}. Check console.`, 'error');
+                uploadSection.classList.remove('hidden'); previewSection.classList.add('hidden'); updateSteps('upload');
             }
         } catch (error) {
             console.error('Error processing PDF:', error);
@@ -1710,11 +1803,11 @@ function updateVehicleAge() {
 
         try {
             const response = await fetch('/generate_files', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(finalDataToSend)
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalDataToSend)
             });
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status} ${response.statusText}`;
-                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) {}
+                try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                 throw new Error(errorMsg);
             }
             const result = await response.json();
@@ -1738,6 +1831,9 @@ function updateVehicleAge() {
             return;
         }
 
+        // Debounce: Prevent double clicks
+        if (saveProgressButton.disabled) return;
+
         showStatus('Saving report data...', 'processing', true);
         saveProgressButton.disabled = true; saveProgressButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
         generateButton.disabled = true;
@@ -1746,7 +1842,7 @@ function updateVehicleAge() {
 
         try {
             const response = await fetch('/save_report', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(finalDataToSend)
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalDataToSend)
             });
             const result = await response.json();
 
@@ -1792,7 +1888,7 @@ function updateVehicleAge() {
 
     startNewButton.addEventListener('click', () => {
         previewForm.reset();
-        
+
         uploadedPhotos.first_inspection = [];
         uploadedPhotos.dismantling = [];
         uploadedPhotos.reinspection = [];
@@ -1840,7 +1936,7 @@ function updateVehicleAge() {
             console.error("Error fetching saved reports:", error);
             savedReportsTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--danger); padding: 1rem;">Could not load saved reports.</td></tr>';
         } finally {
-             loadingSpinner.classList.add('hidden');
+            loadingSpinner.classList.add('hidden');
         }
     }
 
@@ -1879,7 +1975,7 @@ function updateVehicleAge() {
         });
     }
 
-async function handleLoadReport(event) {
+    async function handleLoadReport(event) {
         const button = event.currentTarget;
         const reportId = button.dataset.reportId;
         showStatus('Loading report data...', 'processing');
@@ -1888,9 +1984,9 @@ async function handleLoadReport(event) {
         try {
             const response = await fetch(`/load_report/${reportId}`);
             if (!response.ok) {
-                 let errorMsg = `Error ${response.status}`;
-                 try { const errData = await response.json(); errorMsg = errData.error || errorMsg; } catch(e){}
-                 throw new Error(errorMsg);
+                let errorMsg = `Error ${response.status}`;
+                try { const errData = await response.json(); errorMsg = errData.error || errorMsg; } catch (e) { }
+                throw new Error(errorMsg);
             }
             const reportData = await response.json();
             displayPreview(reportData, reportId);
@@ -1917,10 +2013,10 @@ async function handleLoadReport(event) {
         showStatus('Deleting report...', 'processing', true);
         button.disabled = true; button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
         const loadButton = button.closest('tr')?.querySelector('.load-report-btn');
-        if(loadButton) loadButton.disabled = true;
+        if (loadButton) loadButton.disabled = true;
 
         try {
-            const response = await fetch(`/delete_report/${reportId}`, { 
+            const response = await fetch(`/delete_report/${reportId}`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: password })
@@ -1933,14 +2029,14 @@ async function handleLoadReport(event) {
             showStatus(result.message || 'Report deleted successfully.', 'success', true);
             button.closest('tr')?.remove();
             if (savedReportsTbody.rows.length === 0) {
-                 savedReportsTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1rem; color: var(--text-muted);">No saved reports found.</td></tr>';
+                savedReportsTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1rem; color: var(--text-muted);">No saved reports found.</td></tr>';
             }
 
         } catch (error) {
             console.error("Error deleting report:", error);
             showStatus(`Failed to delete report: ${error.message}`, 'error', true);
-             button.disabled = false; button.innerHTML = '<i class="fas fa-trash-alt"></i> Delete';
-             if(loadButton) loadButton.disabled = false;
+            button.disabled = false; button.innerHTML = '<i class="fas fa-trash-alt"></i> Delete';
+            if (loadButton) loadButton.disabled = false;
         }
     }
 
@@ -2027,15 +2123,15 @@ async function handleLoadReport(event) {
 
             try {
                 const response = await fetch('/generate_files', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(finalDataToSend)
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(finalDataToSend)
                 });
                 if (!response.ok) {
                     let errorMsg = `Server error: ${response.status}`;
-                    try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) {}
+                    try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                     throw new Error(errorMsg);
                 }
                 const result = await response.json();
-                
+
                 // Open Modal with PDF
                 previewIframe.src = `/download/report_pdf/${result.request_id}?preview=true`;
                 previewModal.classList.remove('hidden');
