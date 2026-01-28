@@ -2361,7 +2361,7 @@ def get_saved_reports():
         return jsonify({"error": f"Failed to fetch reports: {e}"}), 500
     
 
-@app.route('/load_report/<int:report_id>', methods=['GET'])
+@app.route('/load_report/<report_id>', methods=['GET'])
 @login_required
 def load_report(report_id):
     try:
@@ -2391,7 +2391,7 @@ def load_report(report_id):
         print(f"Error loading report {report_id}: {e}")
         return jsonify({"error": f"Failed to load report: {e}"}), 500
 
-@app.route('/delete_report/<int:report_id>', methods=['DELETE'])
+@app.route('/delete_report/<report_id>', methods=['DELETE'])
 @login_required
 def delete_report(report_id):
     try:
