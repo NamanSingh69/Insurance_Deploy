@@ -19,13 +19,21 @@ import click
 import base64
 from sheets_db import db as sheets_db # Import our Sheets Helper
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
 load_dotenv()
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key_for_dev") 
 # Update: Increased to 16MB to allow larger uploads on backend side
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+# Update: Increased to 100MB as requested
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 # app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] ... REMOVED
 
 # db = SQLAlchemy(app) # REMOVED
@@ -2401,7 +2409,10 @@ def delete_report(report_id):
         # Deletion in Sheets is risky (shifting rows). 
         # For MVP, we will NOT delete to prevent data corruption.
         # Alternatively, we could clear the row content or mark as "deleted" column.
-        return jsonify({"error": "Deletion not supported in Google Sheets Storage Mode (safety precaution)."}), 403
+        if sheets_db.delete_report(report_id, current_user.id):
+             return jsonify({"message": "Report deleted successfully"}), 200
+        else:
+             return jsonify({"error": "Failed to delete report or not found"}), 404
         
     except Exception as e:
         print(f"Error deleting report {report_id}: {e}")

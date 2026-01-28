@@ -230,7 +230,8 @@ class SheetsDB:
     def save_report(self, user_id, report_data_dict):
         if not self.reports_worksheet: self.connect()
         
-        report_no = report_data_dict.get('report_no')
+        # Fix: report_no is inside survey_report, not at top level
+        report_no = report_data_dict.get('survey_report', {}).get('report_no', '')
         json_data = json.dumps(report_data_dict)
         
         # Check if exists to update
@@ -274,8 +275,8 @@ class SheetsDB:
             return original_id
             
         else:
-            # Create New
-            new_id = len(self.reports_worksheet.col_values(1))
+            # Create New - Use UUID for concurrent-safe unique IDs
+            new_id = str(uuid.uuid4())
             row_data = [
                  new_id, user_id, report_no,
                  report_data_dict.get('survey_report', {}).get('insured', ''),
@@ -336,5 +337,31 @@ class SheetsDB:
     def get_report_by_id(self, report_id):
          # Helper if needed
          pass
+
+    def delete_report(self, report_id, user_id):
+        """Deletes a report by ID and User ID."""
+        if not self.reports_worksheet: self.connect()
+        try:
+            records = self.reports_worksheet.get_all_records()
+            row_idx_to_delete = None
+            
+            # Find the row to delete
+            for idx, record in enumerate(records):
+                # Check both ID and User ID for security
+                if str(record.get('id', '')) == str(report_id) and str(record.get('user_id', '')) == str(user_id):
+                    row_idx_to_delete = idx + 2 # +2 because 1-based index and header row
+                    break
+            
+            if row_idx_to_delete:
+                self.reports_worksheet.delete_rows(row_idx_to_delete)
+                print(f"Deleted report {report_id} at row {row_idx_to_delete}")
+                return True
+            else:
+                print(f"Report {report_id} not found for deletion.")
+                return False
+
+        except Exception as e:
+            print(f"Error deleting report: {e}")
+            return False
 
 db = SheetsDB()
