@@ -1539,23 +1539,51 @@ document.addEventListener('DOMContentLoaded', () => {
         if (input) input.value = '';
     }
 
+    function compressImage(file, maxWidth = 1024, quality = 0.7) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = event => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > maxWidth) {
+                        height = Math.round(height * maxWidth / width);
+                        width = maxWidth;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.onerror = error => reject(error);
+            };
+            reader.onerror = error => reject(error);
+        });
+    }
+
     function handlePhotoSelection(event, category) {
         const files = event.target.files;
         if (files.length > 0) {
-            Array.from(files).forEach(file => {
-                // Read file as base64 data URL directly in the browser
-                // This avoids Drive upload issues and ensures reliable preview/PDF embedding
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    const base64Data = e.target.result; // This is a data URL like "data:image/jpeg;base64,..."
+            showStatus('Processing photos...', 'processing');
+
+            const promises = Array.from(files).map(file => compressImage(file));
+
+            Promise.all(promises).then(base64Images => {
+                base64Images.forEach(base64Data => {
                     uploadedPhotos[category].push(base64Data);
-                    renderPhotos(category);
-                    showStatus('Photo added!', 'success');
-                };
-                reader.onerror = function () {
-                    showStatus('Error reading photo file.', 'error');
-                };
-                reader.readAsDataURL(file);
+                });
+                renderPhotos(category);
+                showStatus('Photos added!', 'success');
+            }).catch(err => {
+                console.error("Compression error:", err);
+                showStatus('Error processing photos', 'error');
             });
         }
     }
