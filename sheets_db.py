@@ -9,6 +9,12 @@ import io
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import requests
+import math
+
+# Google Sheets has a 50,000 character limit per cell
+# We use 45,000 to be safe and account for potential encoding overhead
+MAX_CELL_CHARS = 45000
+MAX_JSON_CHUNKS = 5  # Maximum number of chunks (J, K, L, M, N columns)
 
 # Scope required for accessing Google Sheets and Drive
 SCOPE = [
@@ -66,10 +72,13 @@ class SheetsDB:
             try:
                 self.reports_worksheet = self.sheet.worksheet("Reports")
             except gspread.WorksheetNotFound:
-                self.reports_worksheet = self.sheet.add_worksheet(title="Reports", rows=100, cols=10)
+                # cols=15 to accommodate JSON chunks (J, K, L, M, N)
+                self.reports_worksheet = self.sheet.add_worksheet(title="Reports", rows=100, cols=15)
                 self.reports_worksheet.append_row([
                     "id", "user_id", "report_no", "insured_name", "vehicle_no", 
-                    "claim_no", "policy_no", "saved_at", "include_in_consolidated", "report_data_json"
+                    "claim_no", "policy_no", "saved_at", "include_in_consolidated", 
+                    "report_data_json", "report_data_json_2", "report_data_json_3", 
+                    "report_data_json_4", "report_data_json_5"
                 ])
 
         except Exception as e:
@@ -241,12 +250,47 @@ class SheetsDB:
             return None
 
     # --- Report Methods ---
+    def _chunk_json_data(self, json_string):
+        """
+        Splits a JSON string into chunks that fit within Google Sheets' cell limit.
+        Returns a list of chunks.
+        """
+        if len(json_string) <= MAX_CELL_CHARS:
+            return [json_string]
+        
+        chunks = []
+        for i in range(0, len(json_string), MAX_CELL_CHARS):
+            chunks.append(json_string[i:i + MAX_CELL_CHARS])
+        
+        if len(chunks) > MAX_JSON_CHUNKS:
+            raise ValueError(f"Report data too large: requires {len(chunks)} chunks, max is {MAX_JSON_CHUNKS}")
+        
+        return chunks
+    
+    def _reassemble_json_chunks(self, chunks):
+        """
+        Reassembles JSON chunks back into a single JSON string.
+        Chunks is a list of strings (may contain empty strings for padding).
+        """
+        return ''.join([c for c in chunks if c])
+
     def save_report(self, user_id, report_data_dict):
         if not self.reports_worksheet: self.connect()
         
         # Fix: report_no is inside survey_report, not at top level
         report_no = report_data_dict.get('survey_report', {}).get('report_no', '')
         json_data = json.dumps(report_data_dict)
+        
+        # Chunk the JSON data to fit within cell limits
+        try:
+            json_chunks = self._chunk_json_data(json_data)
+            print(f"DEBUG: JSON size = {len(json_data)}, chunks = {len(json_chunks)}")
+        except ValueError as e:
+            raise ValueError(f"Report data too large to save: {e}")
+        
+        # Pad chunks to always have MAX_JSON_CHUNKS elements
+        while len(json_chunks) < MAX_JSON_CHUNKS:
+            json_chunks.append('')
         
         # Check if exists to update
         records = self.reports_worksheet.get_all_records()
@@ -261,10 +305,7 @@ class SheetsDB:
         saved_at = datetime.utcnow().isoformat()
         
         if row_idx_to_update:
-            # Update existing
-            # Update specific cells or replace row. Replacing row is safer for column alignment
-            # Columns: id, user_id, report_no, insured_name, vehicle_no, claim_no, policy_no, saved_at, include, json
-            # We preserve the original ID
+            # Update existing - preserve the original ID
             original_id = records[row_idx_to_update - 2]['id']
             row_data = [
                  original_id, user_id, report_no,
@@ -274,17 +315,10 @@ class SheetsDB:
                  report_data_dict.get('survey_report', {}).get('policy_no', ''),
                  saved_at,
                  False, # include_in_consolidated default
-                 json_data
-            ]
-            # gspread update range
-            # A2:J2 example
-            # This is complex to target exact cells dynamically efficiently. 
-            # Simple approach: Delete old row, append new (Changes ID order/reference potential issues)
-            # Better approach: Update the cells.
+            ] + json_chunks  # Append all JSON chunks (columns J-N)
             
-            # For this MVP, let's just append new and ignore old in 'get' logic? No, that bloats.
-            # Let's use `update` with range.
-            rng = f"A{row_idx_to_update}:J{row_idx_to_update}"
+            # Update range: A to N (14 columns)
+            rng = f"A{row_idx_to_update}:N{row_idx_to_update}"
             self.reports_worksheet.update(range_name=rng, values=[row_data])
             return original_id
             
@@ -299,19 +333,29 @@ class SheetsDB:
                  report_data_dict.get('survey_report', {}).get('policy_no', ''),
                  saved_at,
                  False,
-                 json_data
-            ]
+            ] + json_chunks  # Append all JSON chunks (columns J-N)
             self.reports_worksheet.append_row(row_data)
             return new_id
 
     def get_user_reports(self, user_id):
-        # Optimization: Fetch full records is heavy. Keeping this for compatibility or specific needs.
+        """Fetches full reports for a user, reassembling JSON chunks."""
         if not self.reports_worksheet: self.connect()
         try:
             records = self.reports_worksheet.get_all_records()
             user_reports = []
             for record in records:
                 if str(record['user_id']) == str(user_id):
+                    # Reassemble JSON chunks if they exist
+                    json_chunks = [
+                        record.get('report_data_json', ''),
+                        record.get('report_data_json_2', ''),
+                        record.get('report_data_json_3', ''),
+                        record.get('report_data_json_4', ''),
+                        record.get('report_data_json_5', '')
+                    ]
+                    # Combine chunks and update the record
+                    full_json = self._reassemble_json_chunks(json_chunks)
+                    record['report_data_json'] = full_json
                     user_reports.append(record)
             return user_reports
         except Exception as e:
