@@ -127,6 +127,13 @@ class SheetsDB:
         """
         Generates a resumable upload session URL for direct frontend upload.
         """
+        result = self.get_resumable_upload_url_with_token(filename, mime_type)
+        return result['url'] if result else None
+    
+    def get_resumable_upload_url_with_token(self, filename, mime_type='application/pdf'):
+        """
+        Generates a resumable upload session URL and returns it with the access token.
+        """
         if not self.creds: self.connect()
         try:
             import httplib2
@@ -136,14 +143,10 @@ class SheetsDB:
 
             access_token = self.creds.access_token
             
-            # 2. Initiate Resumable Upload via HTTP (using requests for simplicity)
-            import requests # Ensure imported
-            
             headers = {
                 'Authorization': f'Bearer {access_token}',
                 'Content-Type': 'application/json',
                 'X-Upload-Content-Type': mime_type,
-                'X-Upload-Content-Length': '' # Unknown/Variable is fine for initiation usually, or we can skip
             }
             
             metadata = {
@@ -159,7 +162,7 @@ class SheetsDB:
             
             if response.status_code == 200:
                 upload_url = response.headers.get('Location')
-                return upload_url
+                return {'url': upload_url, 'access_token': access_token}
             else:
                 print(f"Failed to initiate resumable upload: {response.text}")
                 return None

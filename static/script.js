@@ -1716,7 +1716,7 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error('Failed to get upload URL from server.');
         }
 
-        const { url: uploadUrl } = await getUrlResponse.json();
+        const { url: uploadUrl, access_token: accessToken } = await getUrlResponse.json();
 
         // 2. Upload in chunks via backend proxy
         let fileId = null;
@@ -1742,7 +1742,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     upload_url: uploadUrl,
                     chunk_data: chunkBase64,
                     content_range: contentRange,
-                    content_type: file.type
+                    content_type: file.type,
+                    access_token: accessToken
                 })
             });
 

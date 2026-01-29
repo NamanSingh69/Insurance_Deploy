@@ -569,11 +569,12 @@ def get_upload_url():
     
     if not filename:
          return jsonify({"error": "Filename required"}), 400
-         
-    upload_url = sheets_db.get_resumable_upload_url(filename, mime_type)
     
-    if upload_url:
-        return jsonify({"url": upload_url})
+    # Get upload URL and access token
+    result = sheets_db.get_resumable_upload_url_with_token(filename, mime_type)
+    
+    if result:
+        return jsonify({"url": result['url'], "access_token": result['access_token']})
     else:
         return jsonify({"error": "Failed to generate upload URL"}), 500
 
@@ -592,6 +593,7 @@ def proxy_upload_chunk():
     chunk_data_b64 = data.get('chunk_data')  # Base64 encoded chunk
     content_range = data.get('content_range')  # e.g., "bytes 0-2097151/5000000"
     content_type = data.get('content_type', 'application/pdf')
+    access_token = data.get('access_token')  # Auth token for Drive API
     
     if not upload_url or not chunk_data_b64 or not content_range:
         return jsonify({"error": "Missing required fields: upload_url, chunk_data, content_range"}), 400
@@ -604,6 +606,10 @@ def proxy_upload_chunk():
             'Content-Range': content_range,
             'Content-Type': content_type
         }
+        
+        # Add authorization if provided
+        if access_token:
+            headers['Authorization'] = f'Bearer {access_token}'
         
         response = http_requests.put(upload_url, headers=headers, data=chunk_bytes)
         
