@@ -77,11 +77,69 @@ document.addEventListener('DOMContentLoaded', () => {
     // Store assessment data globally
     let currentAssessmentData = null;
     let currentReportId = null; // To track if we loaded a report
+    let isGoogleDriveConnected = false; // Track Google Drive connection status
+
+    // Google Drive button
+    const googleDriveBtn = document.getElementById('google-drive-btn');
+    const googleDriveStatus = document.getElementById('google-drive-status');
 
     // Step indicators
     const stepUpload = document.getElementById('step-upload');
     const stepReview = document.getElementById('step-review');
     const stepDownload = document.getElementById('step-download');
+
+    // --- Check Google Drive Connection Status ---
+    async function checkGoogleDriveStatus() {
+        try {
+            const response = await fetch('/auth/google/status');
+            if (response.ok) {
+                const data = await response.json();
+                isGoogleDriveConnected = data.connected;
+                updateGoogleDriveUI();
+            }
+        } catch (e) {
+            console.log('Could not check Google Drive status');
+        }
+    }
+
+    function updateGoogleDriveUI() {
+        if (googleDriveBtn && googleDriveStatus) {
+            if (isGoogleDriveConnected) {
+                googleDriveStatus.textContent = 'Drive Connected';
+                googleDriveBtn.classList.add('btn-success');
+                googleDriveBtn.classList.remove('btn-secondary');
+            } else {
+                googleDriveStatus.textContent = 'Connect Drive';
+                googleDriveBtn.classList.remove('btn-success');
+                googleDriveBtn.classList.add('btn-secondary');
+            }
+        }
+    }
+
+    // Google Drive button click handler
+    if (googleDriveBtn) {
+        googleDriveBtn.addEventListener('click', async () => {
+            if (isGoogleDriveConnected) {
+                // Disconnect
+                if (confirm('Disconnect from Google Drive?')) {
+                    try {
+                        await fetch('/auth/google/disconnect', { method: 'POST' });
+                        isGoogleDriveConnected = false;
+                        updateGoogleDriveUI();
+                        showStatus('Disconnected from Google Drive', 'info', true);
+                    } catch (e) {
+                        showStatus('Failed to disconnect', 'error', true);
+                    }
+                }
+            } else {
+                // Connect - redirect to OAuth
+                window.location.href = '/auth/google';
+            }
+        });
+    }
+
+    // Check status on page load
+    checkGoogleDriveStatus();
 
     // --- Helper Functions ---
     function showStatus(message, type = 'processing', isFlash = false) {
@@ -1238,22 +1296,32 @@ document.addEventListener('DOMContentLoaded', () => {
         const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        if (isLargeFile) {
+        if (isLargeFile && !isGoogleDriveConnected) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            showInvoiceStatus(`File is too large (${fileSizeMB}MB). Maximum file size is 4MB. Please compress the PDF.`, 'error');
+            showInvoiceStatus(`File is too large (${fileSizeMB}MB). Connect Google Drive to upload files larger than 4MB.`, 'error');
             return;
         }
 
-        showInvoiceStatus('Uploading and processing invoice...', 'processing');
+        showInvoiceStatus(isLargeFile ? 'Uploading to your Google Drive...' : 'Uploading and processing invoice...', 'processing');
         uploadInvoiceButton.disabled = true;
         uploadInvoiceButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Invoice...';
 
         try {
             let response;
 
-            // Standard Upload (no large file handling for now)
-            const formData = new FormData(); formData.append('invoice_pdf_file', file);
-            response = await fetch('/process_invoice', { method: 'POST', body: formData });
+            if (isLargeFile && isGoogleDriveConnected) {
+                // Upload to user's Drive
+                const driveFileId = await uploadFileToUserDrive(file);
+                response = await fetch('/process_invoice', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ drive_file_id: driveFileId })
+                });
+            } else {
+                // Standard Upload
+                const formData = new FormData(); formData.append('invoice_pdf_file', file);
+                response = await fetch('/process_invoice', { method: 'POST', body: formData });
+            }
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status}`;
@@ -1764,6 +1832,79 @@ document.addEventListener('DOMContentLoaded', () => {
         return fileId;
     }
 
+    // --- Upload to User's Drive (using their OAuth token) ---
+    async function uploadFileToUserDrive(file) {
+        const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunks
+        const totalSize = file.size;
+        const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+
+        // 1. Get Resumable Upload URL using user's token
+        const getUrlResponse = await fetch('/get_user_upload_url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, mime_type: file.type })
+        });
+
+        if (!getUrlResponse.ok) {
+            const errorData = await getUrlResponse.json().catch(() => ({}));
+            if (getUrlResponse.status === 401) {
+                isGoogleDriveConnected = false;
+                updateGoogleDriveUI();
+                throw new Error('Google Drive connection expired. Please reconnect.');
+            }
+            throw new Error(errorData.error || 'Failed to get upload URL.');
+        }
+
+        const { url: uploadUrl, access_token: accessToken } = await getUrlResponse.json();
+
+        // 2. Upload in chunks via backend proxy
+        let fileId = null;
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, totalSize);
+            const chunk = file.slice(start, end);
+
+            // Convert chunk to base64
+            const chunkArrayBuffer = await chunk.arrayBuffer();
+            const chunkBase64 = btoa(
+                new Uint8Array(chunkArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+
+            const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
+
+            const proxyResponse = await fetch('/proxy_upload_chunk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    upload_url: uploadUrl,
+                    chunk_data: chunkBase64,
+                    content_range: contentRange,
+                    content_type: file.type,
+                    access_token: accessToken
+                })
+            });
+
+            if (!proxyResponse.ok) {
+                const errorData = await proxyResponse.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Chunk upload failed.');
+            }
+
+            const result = await proxyResponse.json();
+
+            if (result.complete) {
+                fileId = result.file_id;
+                break;
+            }
+        }
+
+        if (!fileId) {
+            throw new Error('Upload completed but no file ID received.');
+        }
+
+        return fileId;
+    }
+
     // --- Process PDF ---
     processButton.addEventListener('click', async () => {
         const file = pdfFileInput.files[0];
@@ -1772,13 +1913,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        if (isLargeFile) {
+        if (isLargeFile && !isGoogleDriveConnected) {
             const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            showStatus(`File is too large (${fileSizeMB}MB). Maximum file size is 4MB. Please compress the PDF or split it into smaller parts.`, 'error');
+            showStatus(`File is too large (${fileSizeMB}MB). Connect Google Drive to upload files larger than 4MB, or compress the PDF.`, 'error');
             return;
         }
 
-        showStatus('Uploading and processing PDF...', 'processing');
+        showStatus(isLargeFile ? 'Large file detected. Uploading to your Google Drive...' : 'Uploading and processing PDF...', 'processing');
         processButton.disabled = true; processButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
         uploadProgressContainer.classList.remove('hidden'); uploadProgress.style.width = `0%`;
 
@@ -1794,9 +1935,19 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             let response;
 
-            // Standard Upload (no large file handling for now)
-            const formData = new FormData(); formData.append('pdf_file', file);
-            response = await fetch('/process_pdf', { method: 'POST', body: formData });
+            if (isLargeFile && isGoogleDriveConnected) {
+                // Upload to user's Drive
+                const driveFileId = await uploadFileToUserDrive(file);
+                response = await fetch('/process_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ drive_file_id: driveFileId })
+                });
+            } else {
+                // Standard Upload
+                const formData = new FormData(); formData.append('pdf_file', file);
+                response = await fetch('/process_pdf', { method: 'POST', body: formData });
+            }
 
             clearInterval(progressInterval); uploadProgress.style.width = '100%';
 

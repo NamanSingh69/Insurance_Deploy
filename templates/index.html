@@ -19,6 +19,9 @@
              {% if current_user.is_authenticated %}
                 <div style="position: absolute; top: 1rem; right: 1rem; display: flex; align-items: center; gap: 1rem;">
                     <span style="color: var(--text-secondary); font-size: 0.9rem;">Welcome, {{ current_user.username }}</span>
+                    <button id="google-drive-btn" class="btn btn-secondary btn-sm" style="min-width: auto;" title="Connect Google Drive for large file uploads">
+                        <i class="fab fa-google-drive"></i> <span id="google-drive-status">Connect Drive</span>
+                    </button>
                     <button id="open-profile-modal" class="btn btn-secondary btn-sm" style="min-width: auto;">
                         <i class="fas fa-user-cog"></i> Settings
                     </button>

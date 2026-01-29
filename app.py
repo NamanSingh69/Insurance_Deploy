@@ -554,6 +554,174 @@ def logout():
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
 
+# --- Google OAuth2 Configuration ---
+GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
+GOOGLE_OAUTH_SCOPES = ['https://www.googleapis.com/auth/drive.file']
+
+@app.route('/auth/google')
+@login_required
+def google_auth():
+    """Initiate Google OAuth2 flow for Drive access."""
+    if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
+        return jsonify({'error': 'Google OAuth not configured'}), 500
+    
+    # Determine redirect URI based on request
+    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
+        redirect_uri = url_for('google_auth_callback', _external=True)
+    else:
+        redirect_uri = f"https://{request.host}/auth/google/callback"
+    
+    auth_url = (
+        'https://accounts.google.com/o/oauth2/v2/auth?'
+        f'client_id={GOOGLE_OAUTH_CLIENT_ID}&'
+        f'redirect_uri={redirect_uri}&'
+        'response_type=code&'
+        f'scope={" ".join(GOOGLE_OAUTH_SCOPES)}&'
+        'access_type=offline&'
+        'prompt=consent'
+    )
+    return redirect(auth_url)
+
+@app.route('/auth/google/callback')
+@login_required
+def google_auth_callback():
+    """Handle OAuth2 callback and store tokens."""
+    from flask import session
+    
+    code = request.args.get('code')
+    error = request.args.get('error')
+    
+    if error:
+        flash(f'Google authorization failed: {error}', 'error')
+        return redirect(url_for('index'))
+    
+    if not code:
+        flash('No authorization code received', 'error')
+        return redirect(url_for('index'))
+    
+    # Determine redirect URI (must match the one used in auth request)
+    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
+        redirect_uri = url_for('google_auth_callback', _external=True)
+    else:
+        redirect_uri = f"https://{request.host}/auth/google/callback"
+    
+    # Exchange code for tokens
+    token_response = requests.post(
+        'https://oauth2.googleapis.com/token',
+        data={
+            'client_id': GOOGLE_OAUTH_CLIENT_ID,
+            'client_secret': GOOGLE_OAUTH_CLIENT_SECRET,
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': redirect_uri
+        }
+    )
+    
+    if token_response.status_code != 200:
+        flash('Failed to get access token from Google', 'error')
+        return redirect(url_for('index'))
+    
+    tokens = token_response.json()
+    
+    # Store tokens in session
+    session['google_access_token'] = tokens.get('access_token')
+    session['google_refresh_token'] = tokens.get('refresh_token')
+    session['google_token_expiry'] = tokens.get('expires_in', 3600)
+    
+    flash('Successfully connected to Google Drive!', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/auth/google/status')
+@login_required
+def google_auth_status():
+    """Check if user has connected Google Drive."""
+    from flask import session
+    has_token = 'google_access_token' in session and session['google_access_token']
+    return jsonify({'connected': has_token})
+
+@app.route('/auth/google/disconnect', methods=['POST'])
+@login_required
+def google_auth_disconnect():
+    """Disconnect Google Drive."""
+    from flask import session
+    session.pop('google_access_token', None)
+    session.pop('google_refresh_token', None)
+    session.pop('google_token_expiry', None)
+    return jsonify({'success': True, 'message': 'Disconnected from Google Drive'})
+
+@app.route('/get_user_upload_url', methods=['POST'])
+@login_required
+def get_user_upload_url():
+    """Get upload URL using user's OAuth token (for large files)."""
+    from flask import session
+    
+    access_token = session.get('google_access_token')
+    if not access_token:
+        return jsonify({'error': 'Not connected to Google Drive. Please connect first.'}), 401
+    
+    data = request.get_json()
+    filename = data.get('filename')
+    mime_type = data.get('mime_type', 'application/pdf')
+    
+    if not filename:
+        return jsonify({'error': 'Filename required'}), 400
+    
+    # Initiate resumable upload with user's token
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+        'X-Upload-Content-Type': mime_type,
+    }
+    
+    metadata = {
+        'name': filename,
+        'mimeType': mime_type
+    }
+    
+    response = requests.post(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+        headers=headers,
+        json=metadata
+    )
+    
+    if response.status_code == 200:
+        upload_url = response.headers.get('Location')
+        return jsonify({'url': upload_url, 'access_token': access_token})
+    elif response.status_code == 401:
+        # Token expired, try to refresh
+        refresh_token = session.get('google_refresh_token')
+        if refresh_token:
+            # Attempt token refresh
+            refresh_response = requests.post(
+                'https://oauth2.googleapis.com/token',
+                data={
+                    'client_id': GOOGLE_OAUTH_CLIENT_ID,
+                    'client_secret': GOOGLE_OAUTH_CLIENT_SECRET,
+                    'refresh_token': refresh_token,
+                    'grant_type': 'refresh_token'
+                }
+            )
+            if refresh_response.status_code == 200:
+                new_tokens = refresh_response.json()
+                session['google_access_token'] = new_tokens.get('access_token')
+                # Retry upload URL request
+                headers['Authorization'] = f"Bearer {new_tokens.get('access_token')}"
+                retry_response = requests.post(
+                    'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+                    headers=headers,
+                    json=metadata
+                )
+                if retry_response.status_code == 200:
+                    upload_url = retry_response.headers.get('Location')
+                    return jsonify({'url': upload_url, 'access_token': new_tokens.get('access_token')})
+        
+        session.pop('google_access_token', None)
+        return jsonify({'error': 'Google Drive authorization expired. Please reconnect.'}), 401
+    else:
+        print(f"Failed to get user upload URL: {response.text}")
+        return jsonify({'error': f'Failed to initiate upload: {response.status_code}'}), 500
+
 # --- Main Application Routes ---
 @app.route('/')
 @login_required
