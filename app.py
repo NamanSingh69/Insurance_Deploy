@@ -1294,17 +1294,40 @@ def upload_photo():
         # Upload to Drive
         result = db.upload_image_to_drive(content, filename, file.mimetype)
         
-        if result and result.get('download_link'): # Use download link for direct access/embedding likelihood
-             # Note: webContentLink (download_link) usually forces download. 
-             # For <img> tag, we might need a direct ID-based URL or the webViewLink.
-             # Actually, for FPDF embedding, we need the raw bytes, so we'll fetch whatever URL we save.
-             # For Frontend <img> display, 'webViewLink' might not embed well if it's a wrapper page.
-             # 'thumbnailLink' or constructing a direct export link is better.
-             # Let's try to construct a direct link:
-             direct_link = f"https://drive.google.com/uc?export=view&id={result.get('id')}"
-             return jsonify({'success': True, 'url': direct_link})
+        if result and result.get('id'):
+             # Return a proxy URL that goes through our backend
+             # This avoids CORS issues and Google's anti-hotlinking for frontend preview
+             # Store the Drive file ID for later retrieval
+             file_id = result.get('id')
+             proxy_url = f"/proxy_image/{file_id}"
+             return jsonify({'success': True, 'url': proxy_url, 'file_id': file_id})
         else:
             return jsonify({'error': 'Failed to upload to Drive'}), 500
+
+# --- Image Proxy Route (for frontend preview and PDF generation) ---
+@app.route('/proxy_image/<file_id>')
+@login_required
+def proxy_image(file_id):
+    """Serves an image from Google Drive through the backend to avoid CORS issues."""
+    try:
+        # Use Drive API to get the image content directly
+        content = sheets_db.get_file_content(file_id)
+        if content:
+            # Try to detect image type from content
+            import imghdr
+            img_type = imghdr.what(None, h=content)
+            mime_type = f'image/{img_type}' if img_type else 'image/jpeg'
+            
+            return send_file(
+                io.BytesIO(content),
+                mimetype=mime_type,
+                as_attachment=False
+            )
+        else:
+            abort(404)
+    except Exception as e:
+        print(f"Error proxying image {file_id}: {e}")
+        abort(500)
 
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])
@@ -1813,18 +1836,30 @@ def generate_files():
                 x = pdf_obj.l_margin + (col * (img_width + 5)); y = start_y + (row * (img_height + 5))
                 try:
                     img_stream = None
-                    if photo_b64.startswith('http'):
-                        # It is a URL (Drive Link)
+                    if photo_b64.startswith('/proxy_image/'):
+                        # It's a proxy URL - extract file_id and use Drive API directly
+                        file_id = photo_b64.replace('/proxy_image/', '')
                         try:
-                            # If it's a Drive View Link, simple get might return a HTML page not image.
-                            # We constructed a direct link (export=view) in upload_photo.
-                            headers = {'User-Agent': 'Mozilla/5.0'} # Fake UA just in case
+                            content = sheets_db.get_file_content(file_id)
+                            if content:
+                                img_stream = io.BytesIO(content)
+                            else:
+                                print(f"Failed to get image content for file_id: {file_id}")
+                                pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Image not found", 1, 0, 'C')
+                                continue
+                        except Exception as e:
+                            print(f"Failed to download image from Drive: {file_id} - {e}")
+                            pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", 1, 0, 'C')
+                            continue
+                    elif photo_b64.startswith('http'):
+                        # It is a URL (Legacy Drive Link or external)
+                        try:
+                            headers = {'User-Agent': 'Mozilla/5.0'}
                             response = requests.get(photo_b64, headers=headers)
                             response.raise_for_status()
                             img_stream = io.BytesIO(response.content)
                         except Exception as e:
                             print(f"Failed to download image from URL: {photo_b64} - {e}")
-                            # Draw error placeholder
                             pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", 1, 0, 'C')
                             continue
                             
@@ -2822,3 +2857,4 @@ if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
 
  # .\\.venv\Scripts\activate 
+ # pytest tests/ -v --cov=. --cov-report=term-missing

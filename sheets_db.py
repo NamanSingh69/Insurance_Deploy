@@ -213,8 +213,12 @@ class SheetsDB:
             file_metadata = {
                 'name': filename,
                 'mimeType': mime_type
-                # 'parents': ['FOLDER_ID'] # Optional: Add specific folder ID if needed
             }
+            
+            # Use shared folder if configured (required for service account quota)
+            drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+            if drive_folder_id:
+                file_metadata['parents'] = [drive_folder_id]
             
             # Create media upload
             fh = io.BytesIO(file_content)
