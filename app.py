@@ -10,6 +10,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.errors import FPDFException
@@ -108,6 +109,11 @@ model = genai.GenerativeModel(
 
 # gemini-2.5-pro
 # gemini-2.5-flash
+secondary_model = genai.GenerativeModel(
+    model_name='gemini-2.5-pro',
+    safety_settings=safety_settings,
+    generation_config=generation_config
+)
 
 # --- In-memory storage for generated files (Temporary before download) ---
 generated_data_store = {}
@@ -606,7 +612,11 @@ def process_pdf():
         prompt_part = {"text": prompt}
 
         # Generate content using the configured model
-        response = model.generate_content([prompt_part, pdf_part], stream=False)
+        try:
+            response = model.generate_content([prompt_part, pdf_part], stream=False)
+        except ResourceExhausted as e:
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model (gemini-2.5-pro).")
+            response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential lack of response parts or blocked content
         if not response.parts:
@@ -722,7 +732,11 @@ def process_invoice():
         prompt_part = {"text": prompt}
 
         # Generate content using the same model configuration
-        response = model.generate_content([prompt_part, pdf_part], stream=False)
+        try:
+            response = model.generate_content([prompt_part, pdf_part], stream=False)
+        except ResourceExhausted as e:
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model (gemini-2.5-pro) for invoice.")
+            response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential blocked content or empty response (similar to process_pdf)
         if not response.parts:
