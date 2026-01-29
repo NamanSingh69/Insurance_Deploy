@@ -1296,39 +1296,32 @@ def upload_photo():
         result = sheets_db.upload_image_to_drive(content, filename, file.mimetype)
         
         if result and result.get('id'):
-             # Return a proxy URL that goes through our backend
-             # This avoids CORS issues and Google's anti-hotlinking for frontend preview
-             # Store the Drive file ID for later retrieval
-             file_id = result.get('id')
-             proxy_url = f"/proxy_image/{file_id}"
-             return jsonify({'success': True, 'url': proxy_url, 'file_id': file_id})
+            # Return a proxy URL that will serve the image through the backend
+            # This avoids CORS issues and Google Drive redirect problems
+            proxy_url = f"/proxy_image/{result.get('id')}"
+            return jsonify({'success': True, 'url': proxy_url})
         else:
             return jsonify({'error': 'Failed to upload to Drive'}), 500
 
-# --- Image Proxy Route (for frontend preview and PDF generation) ---
+# --- Photo Proxy Route ---
 @app.route('/proxy_image/<file_id>')
 @login_required
 def proxy_image(file_id):
-    """Serves an image from Google Drive through the backend to avoid CORS issues."""
-    try:
-        # Use Drive API to get the image content directly
-        content = sheets_db.get_file_content(file_id)
-        if content:
-            # Try to detect image type from content
-            import imghdr
-            img_type = imghdr.what(None, h=content)
-            mime_type = f'image/{img_type}' if img_type else 'image/jpeg'
-            
-            return send_file(
-                io.BytesIO(content),
-                mimetype=mime_type,
-                as_attachment=False
-            )
-        else:
-            abort(404)
-    except Exception as e:
-        print(f"Error proxying image {file_id}: {e}")
-        abort(500)
+    """Serves images from Google Drive through the backend proxy."""
+    content = sheets_db.get_file_content(file_id)
+    if content:
+        # Detect image type from content (basic check for common types)
+        mime_type = 'image/jpeg'  # default
+        if content[:8] == b'\x89PNG\r\n\x1a\n':
+            mime_type = 'image/png'
+        elif content[:4] == b'GIF8':
+            mime_type = 'image/gif'
+        elif content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+            mime_type = 'image/webp'
+        
+        return send_file(io.BytesIO(content), mimetype=mime_type)
+    else:
+        abort(404)
 
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])
@@ -1838,22 +1831,17 @@ def generate_files():
                 try:
                     img_stream = None
                     if photo_b64.startswith('/proxy_image/'):
-                        # It's a proxy URL - extract file_id and use Drive API directly
+                        # It is a proxy URL - extract file ID and fetch directly
                         file_id = photo_b64.replace('/proxy_image/', '')
-                        try:
-                            content = sheets_db.get_file_content(file_id)
-                            if content:
-                                img_stream = io.BytesIO(content)
-                            else:
-                                print(f"Failed to get image content for file_id: {file_id}")
-                                pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Image not found", 1, 0, 'C')
-                                continue
-                        except Exception as e:
-                            print(f"Failed to download image from Drive: {file_id} - {e}")
-                            pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", 1, 0, 'C')
+                        img_data = sheets_db.get_file_content(file_id)
+                        if img_data:
+                            img_stream = io.BytesIO(img_data)
+                        else:
+                            print(f"Failed to fetch image from Drive: {file_id}")
+                            pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", 1, 0, 'C')
                             continue
                     elif photo_b64.startswith('http'):
-                        # It is a URL (Legacy Drive Link or external)
+                        # It is a URL (legacy Drive Link or external URL)
                         try:
                             headers = {'User-Agent': 'Mozilla/5.0'}
                             response = requests.get(photo_b64, headers=headers)
@@ -1865,7 +1853,7 @@ def generate_files():
                             continue
                             
                     elif ',' in photo_b64: 
-                        # Base64
+                        # Base64 with data URI prefix
                         photo_b64_data = photo_b64.split(',')[1]
                         img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)
                     else:
@@ -2726,9 +2714,10 @@ def download_consolidated_csv():
             try:
                 saved_at = datetime.fromisoformat(saved_at_str)
                 # Check Include Flag (Sheets stores as boolean or string 'TRUE'/'FALSE')
-                include_flag = r.get('include_in_consolidated')
-                if str(include_flag).upper() != 'TRUE' and include_flag is not True:
-                     continue
+                # include_flag = r.get('include_in_consolidated')
+                # Strict filtering removed to allow all reports since default was False previously
+                # if str(include_flag).upper() != 'TRUE' and include_flag is not True:
+                #      continue
                 
                 # Check Date Range
                 if saved_at >= datetime.combine(from_date, datetime.min.time()) and saved_at <= to_date_end_of_day:
@@ -2858,4 +2847,4 @@ if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
 
  # .\\.venv\Scripts\activate 
- # pytest tests/ -v --cov=. --cov-report=term-missing
+ # pytest tests/

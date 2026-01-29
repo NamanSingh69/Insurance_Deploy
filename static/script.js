@@ -1543,36 +1543,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const files = event.target.files;
         if (files.length > 0) {
             Array.from(files).forEach(file => {
-                // Show placeholder or loading state
-                const tempId = 'temp-' + Date.now();
-                // Simple Loading placeholder could be added here if needed, 
-                // but for now we'll just wait for upload.
-
-                // Upload to Backend
-                const formData = new FormData();
-                formData.append('photo', file);
-
-                // Show a global status or local
-                showStatus('Uploading photo...', 'processing');
-
-                fetch('/upload_photo', {
-                    method: 'POST',
-                    body: formData
-                })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success && data.url) {
-                            uploadedPhotos[category].push(data.url); // Append URL
-                            renderPhotos(category);
-                            showStatus('Photo uploaded!', 'success');
-                        } else {
-                            showStatus('Photo upload failed: ' + (data.error || 'Unknown'), 'error');
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Photo upload error:', err);
-                        showStatus('Error uploading photo.', 'error');
-                    });
+                // Read file as base64 data URL directly in the browser
+                // This avoids Drive upload issues and ensures reliable preview/PDF embedding
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const base64Data = e.target.result; // This is a data URL like "data:image/jpeg;base64,..."
+                    uploadedPhotos[category].push(base64Data);
+                    renderPhotos(category);
+                    showStatus('Photo added!', 'success');
+                };
+                reader.onerror = function () {
+                    showStatus('Error reading photo file.', 'error');
+                };
+                reader.readAsDataURL(file);
             });
         }
     }

@@ -14,9 +14,11 @@ import math
 # Google Sheets has a 50,000 character limit per cell
 # We use 45,000 to be safe and account for potential encoding overhead
 MAX_CELL_CHARS = 45000
-MAX_JSON_CHUNKS = 5  # Maximum number of chunks (J, K, L, M, N columns)
+MAX_JSON_CHUNKS = 30  # Increased to 30 to support Base64 images (Columns J to AM)
 
-# Scope required for accessing Google Sheets and Drive
+# ... (omitted SCOPE and init) ...
+
+
 SCOPE = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
@@ -309,8 +311,10 @@ class SheetsDB:
         saved_at = datetime.utcnow().isoformat()
         
         if row_idx_to_update:
-            # Update existing - preserve the original ID
+            # Update existing - preserve the original ID and include_flag
             original_id = records[row_idx_to_update - 2]['id']
+            original_include = records[row_idx_to_update - 2].get('include_in_consolidated', True)
+
             row_data = [
                  original_id, user_id, report_no,
                  report_data_dict.get('survey_report', {}).get('insured', ''),
@@ -318,7 +322,7 @@ class SheetsDB:
                  report_data_dict.get('survey_report', {}).get('claim_no', ''),
                  report_data_dict.get('survey_report', {}).get('policy_no', ''),
                  saved_at,
-                 False, # include_in_consolidated default
+                 original_include, # Preserve existing value
             ] + json_chunks  # Append all JSON chunks (columns J-N)
             
             # Update range: A to N (14 columns)
@@ -336,7 +340,7 @@ class SheetsDB:
                  report_data_dict.get('survey_report', {}).get('claim_no', ''),
                  report_data_dict.get('survey_report', {}).get('policy_no', ''),
                  saved_at,
-                 False,
+                 True, # include_in_consolidated default to TRUE
             ] + json_chunks  # Append all JSON chunks (columns J-N)
             self.reports_worksheet.append_row(row_data)
             return new_id
@@ -395,6 +399,118 @@ class SheetsDB:
         except Exception as e:
             print(f"Error getting metadata reports: {e}")
             return []
+
+    def _reassemble_json_chunks(self, chunks):
+        """
+        Reassembles JSON chunks back into a single JSON string.
+        Chunks is a list of strings (may contain empty strings for padding).
+        """
+        return ''.join([c for c in chunks if c])
+
+    def save_report(self, user_id, report_data_dict):
+        """Saves a report to the sheet, chunking the JSON data."""
+        if not self.reports_worksheet: self.connect()
+
+        # Extract report_no from data
+        report_no = report_data_dict.get('survey_report', {}).get('report_no', '')
+        
+        # Ensure headers exist for all chunks (dynamic check to avoid get_all_records issues)
+        try:
+            headers = self.reports_worksheet.row_values(1)
+            needed_headers_count = 9 + MAX_JSON_CHUNKS # A-I (9) + Chunks
+            if len(headers) < needed_headers_count:
+                # Add missing headers
+                new_headers = []
+                for i in range(len(headers) - 9, MAX_JSON_CHUNKS):
+                    suffix = f"_{i+1}" if i > 0 else ""
+                    new_headers.append(f"report_data_json{suffix}")
+                
+                if new_headers:
+                    start_col_idx = len(headers) + 1
+                    self.reports_worksheet.update(values=[new_headers], range_name=f"{self._col_idx_to_a1(start_col_idx)}1")
+        except Exception as e:
+            print(f"Warning: Could not check/update headers: {e}")
+
+        json_string = json.dumps(report_data_dict)
+        json_chunks = self._chunk_json_data(json_string)
+        
+        while len(json_chunks) < MAX_JSON_CHUNKS:
+            json_chunks.append("")
+            
+        records = self.reports_worksheet.get_all_records()
+        row_idx_to_update = None
+        
+        for idx, record in enumerate(records):
+            if str(record.get('user_id', '')) == str(user_id) and str(record.get('report_no', '')).strip() == str(report_no).strip():
+                row_idx_to_update = idx + 2
+                break
+        
+        saved_at = datetime.utcnow().isoformat()
+        
+        if row_idx_to_update:
+            original_id = records[row_idx_to_update - 2]['id']
+            original_include = records[row_idx_to_update - 2].get('include_in_consolidated', True)
+
+            row_data = [
+                 original_id, user_id, report_no,
+                 report_data_dict.get('survey_report', {}).get('insured', ''),
+                 report_data_dict.get('survey_report', {}).get('vehicle_regn_no', ''),
+                 report_data_dict.get('survey_report', {}).get('claim_no', ''),
+                 report_data_dict.get('survey_report', {}).get('policy_no', ''),
+                 saved_at,
+                 original_include, 
+            ] + json_chunks
+            
+            end_col = self._col_idx_to_a1(9 + MAX_JSON_CHUNKS)
+            rng = f"A{row_idx_to_update}:{end_col}{row_idx_to_update}"
+            self.reports_worksheet.update(range_name=rng, values=[row_data])
+            return original_id
+            
+        else:
+            new_id = str(uuid.uuid4())
+            row_data = [
+                 new_id, user_id, report_no,
+                 report_data_dict.get('survey_report', {}).get('insured', ''),
+                 report_data_dict.get('survey_report', {}).get('vehicle_regn_no', ''),
+                 report_data_dict.get('survey_report', {}).get('claim_no', ''),
+                 report_data_dict.get('survey_report', {}).get('policy_no', ''),
+                 saved_at,
+                 True, 
+            ] + json_chunks
+            self.reports_worksheet.append_row(row_data)
+            return new_id
+
+    def get_user_reports(self, user_id):
+        """Fetches full reports for a user, reassembling JSON chunks."""
+        if not self.reports_worksheet: self.connect()
+        try:
+            records = self.reports_worksheet.get_all_records()
+            user_reports = []
+            for record in records:
+                if str(record.get('user_id')) == str(user_id):
+                    json_chunks = []
+                    json_chunks.append(record.get('report_data_json', ''))
+                    for i in range(2, MAX_JSON_CHUNKS + 1):
+                        key = f"report_data_json_{i}"
+                        json_chunks.append(record.get(key, ''))
+                        
+                    full_json = self._reassemble_json_chunks(json_chunks)
+                    if full_json:
+                        pass
+                    record['report_data_json'] = full_json
+                    user_reports.append(record)
+            return user_reports
+        except Exception as e:
+            print(f"Error getting reports: {e}")
+            return []
+
+    def _col_idx_to_a1(self, n):
+        """Converts valid 1-based column index to A1 notation string."""
+        string = ""
+        while n > 0:
+            n, remainder = divmod(n - 1, 26)
+            string = chr(65 + remainder) + string
+        return string
 
     def get_report_by_id(self, report_id):
          # Helper if needed
