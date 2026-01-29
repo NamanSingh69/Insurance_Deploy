@@ -1293,7 +1293,7 @@ def upload_photo():
         # Read file content
         content = file.read()
         # Upload to Drive
-        result = db.upload_image_to_drive(content, filename, file.mimetype)
+        result = sheets_db.upload_image_to_drive(content, filename, file.mimetype)
         
         if result and result.get('id'):
              # Return a proxy URL that goes through our backend
