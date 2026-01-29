@@ -154,6 +154,11 @@ class SheetsDB:
                 'mimeType': mime_type
             }
             
+            # Use shared folder if configured (required for service account quota)
+            drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+            if drive_folder_id:
+                metadata['parents'] = [drive_folder_id]
+            
             response = requests.post(
                 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
                 headers=headers,
