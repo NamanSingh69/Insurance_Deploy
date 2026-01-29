@@ -577,6 +577,61 @@ def get_upload_url():
     else:
         return jsonify({"error": "Failed to generate upload URL"}), 500
 
+@app.route('/proxy_upload_chunk', methods=['POST'])
+@login_required
+def proxy_upload_chunk():
+    """
+    Proxies a file chunk to Google Drive's resumable upload endpoint.
+    This bypasses CORS restrictions by having the server make the request.
+    """
+    import requests as http_requests
+    import base64
+    
+    data = request.get_json()
+    upload_url = data.get('upload_url')
+    chunk_data_b64 = data.get('chunk_data')  # Base64 encoded chunk
+    content_range = data.get('content_range')  # e.g., "bytes 0-2097151/5000000"
+    content_type = data.get('content_type', 'application/pdf')
+    
+    if not upload_url or not chunk_data_b64 or not content_range:
+        return jsonify({"error": "Missing required fields: upload_url, chunk_data, content_range"}), 400
+    
+    try:
+        chunk_bytes = base64.b64decode(chunk_data_b64)
+        
+        headers = {
+            'Content-Length': str(len(chunk_bytes)),
+            'Content-Range': content_range,
+            'Content-Type': content_type
+        }
+        
+        response = http_requests.put(upload_url, headers=headers, data=chunk_bytes)
+        
+        # 308 = Resume Incomplete (more chunks needed)
+        # 200/201 = Upload Complete
+        if response.status_code in [200, 201]:
+            file_data = response.json()
+            return jsonify({
+                "complete": True,
+                "file_id": file_data.get('id'),
+                "file_name": file_data.get('name')
+            })
+        elif response.status_code == 308:
+            range_header = response.headers.get('Range', '')
+            return jsonify({
+                "complete": False,
+                "range": range_header
+            })
+        else:
+            print(f"Upload chunk failed: {response.status_code} - {response.text}")
+            return jsonify({"error": f"Upload failed: {response.status_code}"}), 500
+            
+    except Exception as e:
+        print(f"Error proxying upload chunk: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Proxy error: {str(e)}"}), 500
+
 @app.route('/process_pdf', methods=['POST'])
 @login_required
 def process_pdf():

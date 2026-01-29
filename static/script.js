@@ -1699,40 +1699,72 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // --- Direct Drive Upload Helper ---
+    // --- Direct Drive Upload Helper (Chunked via Backend Proxy) ---
     async function uploadFileDirectly(file) {
+        const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunks
+        const totalSize = file.size;
+        const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+
         // 1. Get Resumable Upload URL from Backend
         const getUrlResponse = await fetch('/get_upload_url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, mime_type: file.type })
+            body: JSON.stringify({ filename: file.name, mime_type: file.type, file_size: totalSize })
         });
 
         if (!getUrlResponse.ok) {
             throw new Error('Failed to get upload URL from server.');
         }
 
-        const { url } = await getUrlResponse.json();
+        const { url: uploadUrl } = await getUrlResponse.json();
 
-        // 2. Upload directly to Drive (PUT)
-        // No Authorization header needed here, it's embedded in the signed URL? 
-        // Actually, for resumable upload session obtained via service account, 
-        // we might just PUT to it. The session URL usually contains the necessary tokens.
+        // 2. Upload in chunks via backend proxy
+        let fileId = null;
 
-        const uploadResponse = await fetch(url, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': file.type
-            },
-            body: file
-        });
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, totalSize);
+            const chunk = file.slice(start, end);
 
-        if (!uploadResponse.ok) {
-            throw new Error('Direct upload to Drive failed.');
+            // Convert chunk to base64
+            const chunkArrayBuffer = await chunk.arrayBuffer();
+            const chunkBase64 = btoa(
+                new Uint8Array(chunkArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+
+            // Content-Range format: "bytes start-end/total"
+            const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
+
+            const proxyResponse = await fetch('/proxy_upload_chunk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    upload_url: uploadUrl,
+                    chunk_data: chunkBase64,
+                    content_range: contentRange,
+                    content_type: file.type
+                })
+            });
+
+            if (!proxyResponse.ok) {
+                const errorData = await proxyResponse.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Chunk upload failed.');
+            }
+
+            const result = await proxyResponse.json();
+
+            if (result.complete) {
+                fileId = result.file_id;
+                break;
+            }
+            // If not complete (308), continue to next chunk
         }
 
-        const uploadData = await uploadResponse.json();
-        return uploadData.id; // Drive File ID
+        if (!fileId) {
+            throw new Error('Upload completed but no file ID received.');
+        }
+
+        return fileId;
     }
 
     // --- Process PDF ---
