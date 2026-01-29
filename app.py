@@ -5,6 +5,7 @@ import json
 import requests
 import uuid
 from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
+from werkzeug.utils import secure_filename
 # from flask_sqlalchemy import SQLAlchemy # REMOVED for Sheets
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
