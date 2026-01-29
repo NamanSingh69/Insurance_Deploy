@@ -156,8 +156,14 @@ class SheetsDB:
             
             # Use shared folder if configured (required for service account quota)
             drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+            print(f"DEBUG: GOOGLE_DRIVE_FOLDER_ID = '{drive_folder_id}'")
             if drive_folder_id:
                 metadata['parents'] = [drive_folder_id]
+                print(f"DEBUG: Uploading to folder: {drive_folder_id}")
+            else:
+                print("DEBUG: No folder ID set, uploading to root (will fail for service accounts)")
+            
+            print(f"DEBUG: Upload metadata = {metadata}")
             
             response = requests.post(
                 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',

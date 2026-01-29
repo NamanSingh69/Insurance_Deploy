@@ -1235,29 +1235,25 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const FILE_SIZE_LIMIT = 3.5 * 1024 * 1024; // 3.5 MB
+        const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        showInvoiceStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing invoice...', 'processing');
+        if (isLargeFile) {
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            showInvoiceStatus(`File is too large (${fileSizeMB}MB). Maximum file size is 4MB. Please compress the PDF.`, 'error');
+            return;
+        }
+
+        showInvoiceStatus('Uploading and processing invoice...', 'processing');
         uploadInvoiceButton.disabled = true;
         uploadInvoiceButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Invoice...';
 
         try {
             let response;
 
-            if (isLargeFile) {
-                // Direct Upload
-                const driveFileId = await uploadFileDirectly(file);
-                response = await fetch('/process_invoice', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ drive_file_id: driveFileId })
-                });
-            } else {
-                // Standard Upload
-                const formData = new FormData(); formData.append('invoice_pdf_file', file);
-                response = await fetch('/process_invoice', { method: 'POST', body: formData });
-            }
+            // Standard Upload (no large file handling for now)
+            const formData = new FormData(); formData.append('invoice_pdf_file', file);
+            response = await fetch('/process_invoice', { method: 'POST', body: formData });
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status}`;
@@ -1773,10 +1769,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = pdfFileInput.files[0];
         if (!file) { showStatus('Please select a PDF file first.', 'error'); return; }
 
-        const FILE_SIZE_LIMIT = 3.5 * 1024 * 1024; // 3.5 MB
+        const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        showStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing PDF...', 'processing');
+        if (isLargeFile) {
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            showStatus(`File is too large (${fileSizeMB}MB). Maximum file size is 4MB. Please compress the PDF or split it into smaller parts.`, 'error');
+            return;
+        }
+
+        showStatus('Uploading and processing PDF...', 'processing');
         processButton.disabled = true; processButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
         uploadProgressContainer.classList.remove('hidden'); uploadProgress.style.width = `0%`;
 
@@ -1792,20 +1794,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             let response;
 
-            if (isLargeFile) {
-                // Direct Upload Strategy
-                const driveFileId = await uploadFileDirectly(file);
-                // Trigger Processing with File ID
-                response = await fetch('/process_pdf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ drive_file_id: driveFileId })
-                });
-            } else {
-                // Standard Upload
-                const formData = new FormData(); formData.append('pdf_file', file);
-                response = await fetch('/process_pdf', { method: 'POST', body: formData });
-            }
+            // Standard Upload (no large file handling for now)
+            const formData = new FormData(); formData.append('pdf_file', file);
+            response = await fetch('/process_pdf', { method: 'POST', body: formData });
 
             clearInterval(progressInterval); uploadProgress.style.width = '100%';
 
