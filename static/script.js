@@ -1235,7 +1235,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const FILE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5 MB
+        const FILE_SIZE_LIMIT = 3.5 * 1024 * 1024; // 3.5 MB
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
         showInvoiceStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing invoice...', 'processing');
@@ -1740,7 +1740,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const file = pdfFileInput.files[0];
         if (!file) { showStatus('Please select a PDF file first.', 'error'); return; }
 
-        const FILE_SIZE_LIMIT = 4.5 * 1024 * 1024; // 4.5 MB
+        const FILE_SIZE_LIMIT = 3.5 * 1024 * 1024; // 3.5 MB
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
         showStatus(isLargeFile ? 'Large file detected. Uploading directly to Drive...' : 'Uploading and processing PDF...', 'processing');
