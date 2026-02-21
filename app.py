@@ -807,6 +807,168 @@ def proxy_upload_chunk():
         traceback.print_exc()
         return jsonify({"error": f"Proxy error: {str(e)}"}), 500
 
+def download_drive_file_with_token(access_token, file_id):
+    """Downloads file content from Drive using the user's OAuth access token."""
+    try:
+        headers = {'Authorization': f'Bearer {access_token}'}
+        response = requests.get(
+            f'https://www.googleapis.com/drive/v3/files/{file_id}?alt=media',
+            headers=headers
+        )
+        if response.status_code == 200:
+            return response.content
+        else:
+            print(f"Failed to download file {file_id} with user token: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"Error downloading file with user token: {e}")
+        return None
+
+def _find_or_create_drive_folder(access_token, folder_name, parent_id=None):
+    """Finds a folder by name in Drive (under optional parent), or creates it."""
+    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    if parent_id:
+        query += f" and '{parent_id}' in parents"
+    
+    headers = {'Authorization': f'Bearer {access_token}'}
+    search_resp = requests.get(
+        'https://www.googleapis.com/drive/v3/files',
+        headers=headers,
+        params={'q': query, 'fields': 'files(id,name)', 'spaces': 'drive'}
+    )
+    
+    if search_resp.status_code == 200:
+        files = search_resp.json().get('files', [])
+        if files:
+            return files[0]['id']
+    
+    # Create the folder
+    metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    if parent_id:
+        metadata['parents'] = [parent_id]
+    
+    create_resp = requests.post(
+        'https://www.googleapis.com/drive/v3/files',
+        headers={**headers, 'Content-Type': 'application/json'},
+        json=metadata
+    )
+    
+    if create_resp.status_code == 200:
+        return create_resp.json().get('id')
+    
+    print(f"Failed to create folder '{folder_name}': {create_resp.status_code} - {create_resp.text}")
+    return None
+
+def upload_pdf_to_drive(access_token, pdf_bytes, filename, folder_name):
+    """
+    Uploads a PDF to the user's Drive inside 'Survey Reports/{folder_name}/'.
+    If a file with the same name exists in that folder, it is replaced.
+    Returns the web view link on success, None on failure.
+    """
+    try:
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        # 1. Find or create "Survey Reports" root folder
+        root_folder_id = _find_or_create_drive_folder(access_token, 'Survey Reports')
+        if not root_folder_id:
+            print("Failed to find/create 'Survey Reports' folder")
+            return None
+        
+        # 2. Find or create vehicle subfolder
+        vehicle_folder_id = _find_or_create_drive_folder(access_token, folder_name, root_folder_id)
+        if not vehicle_folder_id:
+            print(f"Failed to find/create '{folder_name}' folder")
+            return None
+        
+        # 3. Check if file already exists in that folder (to update instead of duplicate)
+        query = f"name='{filename}' and '{vehicle_folder_id}' in parents and trashed=false"
+        search_resp = requests.get(
+            'https://www.googleapis.com/drive/v3/files',
+            headers=headers,
+            params={'q': query, 'fields': 'files(id)', 'spaces': 'drive'}
+        )
+        
+        existing_file_id = None
+        if search_resp.status_code == 200:
+            files = search_resp.json().get('files', [])
+            if files:
+                existing_file_id = files[0]['id']
+        
+        # 4. Upload or update the PDF
+        if existing_file_id:
+            # Update existing file content
+            upload_resp = requests.patch(
+                f'https://www.googleapis.com/upload/drive/v3/files/{existing_file_id}?uploadType=media&fields=id,webViewLink',
+                headers={**headers, 'Content-Type': 'application/pdf'},
+                data=pdf_bytes
+            )
+        else:
+            # Create new file with multipart upload
+            import json as json_module
+            boundary = '----DriveUploadBoundary'
+            metadata = json_module.dumps({
+                'name': filename,
+                'parents': [vehicle_folder_id],
+                'mimeType': 'application/pdf'
+            })
+            
+            body = (
+                f'--{boundary}\r\n'
+                f'Content-Type: application/json; charset=UTF-8\r\n\r\n'
+                f'{metadata}\r\n'
+                f'--{boundary}\r\n'
+                f'Content-Type: application/pdf\r\n\r\n'
+            ).encode('utf-8') + pdf_bytes + f'\r\n--{boundary}--'.encode('utf-8')
+            
+            upload_resp = requests.post(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
+                headers={**headers, 'Content-Type': f'multipart/related; boundary={boundary}'},
+                data=body
+            )
+        
+        if upload_resp.status_code in (200, 201):
+            result = upload_resp.json()
+            return result.get('webViewLink', f"https://drive.google.com/file/d/{result.get('id')}/view")
+        else:
+            print(f"Drive upload failed: {upload_resp.status_code} - {upload_resp.text}")
+            return None
+            
+    except Exception as e:
+        print(f"Error uploading PDF to Drive: {e}")
+        import traceback; traceback.print_exc()
+        return None
+
+@app.route('/upload_report_to_drive', methods=['POST'])
+@login_required
+def upload_report_to_drive():
+    """Upload the generated report PDF to Google Drive (service account)."""
+    data = request.get_json()
+    request_id = data.get('request_id')
+    
+    if not request_id or request_id not in generated_data_store:
+        return jsonify({'error': 'Report not found. Please generate the report first.'}), 404
+    
+    report_data = generated_data_store[request_id]
+    pdf_bytes = report_data.get('pdf_report')
+    vehicle_no = report_data.get('vehicle_no', '').strip()
+    report_no = report_data.get('report_no', 'SurveyReport')
+    
+    if not pdf_bytes:
+        return jsonify({'error': 'No PDF data found for this report.'}), 400
+    
+    filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no else report_no.replace(' ', '_').replace('/', '-')
+    filename = f"{filename_base}.pdf"
+    
+    drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename, vehicle_no if vehicle_no else 'Unknown_Vehicle')
+    
+    if drive_link:
+        return jsonify({'success': True, 'drive_link': drive_link, 'message': f'Report uploaded to Drive!'})
+    else:
+        return jsonify({'error': 'Failed to upload report to Google Drive. Check server logs.'}), 500
+
 @app.route('/process_pdf', methods=['POST'])
 @login_required
 def process_pdf():
@@ -819,10 +981,14 @@ def process_pdf():
         if not drive_file_id:
             return jsonify({"error": "No drive_file_id provided"}), 400
         
-        # Fetch content from Drive
-        pdf_content = sheets_db.get_file_content(drive_file_id)
+        # Fetch content from Drive using user's OAuth token
+        from flask import session
+        access_token = session.get('google_access_token')
+        if not access_token:
+            return jsonify({"error": "Not connected to Google Drive. Please connect first."}), 401
+        pdf_content = download_drive_file_with_token(access_token, drive_file_id)
         if not pdf_content:
-             return jsonify({"error": "Failed to retrieve file content from Drive"}), 500
+             return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
              
     elif 'pdf_file' in request.files:
         file = request.files['pdf_file']
@@ -941,9 +1107,14 @@ def process_invoice():
         if not drive_file_id:
              return jsonify({"error": "No drive_file_id provided"}), 400
         
-        pdf_content = sheets_db.get_file_content(drive_file_id)
+        # Fetch content from Drive using user's OAuth token
+        from flask import session
+        access_token = session.get('google_access_token')
+        if not access_token:
+            return jsonify({"error": "Not connected to Google Drive. Please connect first."}), 401
+        pdf_content = download_drive_file_with_token(access_token, drive_file_id)
         if not pdf_content:
-             return jsonify({"error": "Failed to retrieve file content from Drive"}), 500
+             return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
              
     elif 'invoice_pdf_file' in request.files:
         file = request.files['invoice_pdf_file']
@@ -1103,11 +1274,7 @@ def _calculate_report_assessment_summary(assessment_data_raw, survey_data_raw):
         
         if labour_tax_type_main == 'IGST': 
             p3_igst_calc = p3_total_before_gst * 0.18
-        elif labour_tax_type_main == 'Zero':
-            p3_cgst_calc = 0.0
-            p3_sgst_calc = 0.0
-            p3_igst_calc = 0.0
-        else: # CGST/SGST
+        else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
             p3_cgst_calc = p3_total_before_gst * 0.09
             p3_sgst_calc = p3_total_before_gst * 0.09
         
@@ -1566,9 +1733,7 @@ def generate_files():
         
         if labour_tax_type_main == 'IGST': 
             p3_igst = p3_total_before_gst * 0.18
-        elif labour_tax_type_main == 'Zero':
-            p3_cgst = 0.0; p3_sgst = 0.0; p3_igst = 0.0
-        else: 
+        else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
             p3_cgst = p3_total_before_gst * 0.09; p3_sgst = p3_total_before_gst * 0.09
             
         p3_grand_total = p3_total_before_gst + p3_cgst + p3_sgst + p3_igst
@@ -2413,9 +2578,7 @@ def generate_files():
             
             if labour_tax_type_main == 'IGST':
                 if p3_igst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 18% IGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_igst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            elif labour_tax_type_main == 'Zero':
-                pass # No Tax
-            else: 
+            else: # Survey fee GST is always 18% (CGST/SGST), even when labour tax is Zero
                 if p3_cgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% CGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_cgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 if p3_sgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% SGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_sgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
@@ -2507,13 +2670,27 @@ def generate_files():
 
         pdf_bytes = pdf.output()
         request_id = str(uuid.uuid4())
+        vehicle_no_raw = final_survey_data.get('vehicle_regn_no', '')
         # Store vehicle_regn_no for filename generation
         generated_data_store[request_id] = { 
             "pdf_report": pdf_bytes, 
             "report_no": final_survey_data.get('report_no', 'SurveyReport'),
-            "vehicle_no": final_survey_data.get('vehicle_regn_no', '')
+            "vehicle_no": vehicle_no_raw
         }
-        return jsonify({"request_id": request_id})
+
+        # Auto-upload to Google Drive (service account)
+        drive_link = None
+        try:
+            filename_base = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no_raw.strip() else 'SurveyReport'
+            drive_link = sheets_db.upload_report_pdf(pdf_bytes, f"{filename_base}.pdf", vehicle_no_raw)
+            if drive_link:
+                print(f"Report auto-uploaded to Drive: {drive_link}")
+            else:
+                print("Warning: Auto-upload to Drive failed (non-critical).")
+        except Exception as drive_err:
+            print(f"Warning: Drive auto-upload error (non-critical): {drive_err}")
+
+        return jsonify({"request_id": request_id, "drive_link": drive_link})
 
     except FPDFException as fpdf_err:
         print(f"FPDF Error generating files: {fpdf_err}")

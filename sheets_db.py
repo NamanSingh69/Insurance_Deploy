@@ -255,6 +255,99 @@ class SheetsDB:
             print(f"Error uploading to Drive: {e}")
             return None
 
+    def _find_or_create_folder(self, folder_name, parent_id=None):
+        """Finds a folder by name (under optional parent) or creates it. Returns folder ID."""
+        if not self.drive_service: self.connect()
+        try:
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            if parent_id:
+                query += f" and '{parent_id}' in parents"
+            
+            results = self.drive_service.files().list(
+                q=query, fields='files(id,name)', spaces='drive'
+            ).execute()
+            
+            files = results.get('files', [])
+            if files:
+                return files[0]['id']
+            
+            # Create the folder
+            metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            if parent_id:
+                metadata['parents'] = [parent_id]
+            
+            folder = self.drive_service.files().create(
+                body=metadata, fields='id'
+            ).execute()
+            
+            return folder.get('id')
+        except Exception as e:
+            print(f"Error finding/creating folder '{folder_name}': {e}")
+            return None
+
+    def upload_report_pdf(self, pdf_bytes, filename, vehicle_no):
+        """
+        Uploads a report PDF to Drive: Survey Reports/{vehicle_no}/{filename}.
+        Creates folders automatically. Replaces existing file if same name exists.
+        Returns the web view link or None.
+        """
+        if not self.drive_service: self.connect()
+        try:
+            # 1. Find/create "Survey Reports" root folder
+            root_folder_id = self._find_or_create_folder('Survey Reports')
+            if not root_folder_id:
+                return None
+            
+            # 2. Find/create vehicle subfolder
+            folder_name = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no else 'Unknown_Vehicle'
+            vehicle_folder_id = self._find_or_create_folder(folder_name, root_folder_id)
+            if not vehicle_folder_id:
+                return None
+            
+            # 3. Check if file already exists (to update instead of duplicate)
+            query = f"name='{filename}' and '{vehicle_folder_id}' in parents and trashed=false"
+            results = self.drive_service.files().list(
+                q=query, fields='files(id)', spaces='drive'
+            ).execute()
+            
+            existing_files = results.get('files', [])
+            
+            fh = io.BytesIO(pdf_bytes)
+            media = MediaIoBaseUpload(fh, mimetype='application/pdf', resumable=True)
+            
+            if existing_files:
+                # Update existing file
+                file_id = existing_files[0]['id']
+                updated = self.drive_service.files().update(
+                    fileId=file_id,
+                    media_body=media,
+                    fields='id, webViewLink'
+                ).execute()
+                print(f"Updated report in Drive: Survey Reports/{folder_name}/{filename}")
+                return updated.get('webViewLink', f"https://drive.google.com/file/d/{updated.get('id')}/view")
+            else:
+                # Create new file
+                file_metadata = {
+                    'name': filename,
+                    'parents': [vehicle_folder_id],
+                    'mimeType': 'application/pdf'
+                }
+                created = self.drive_service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, webViewLink'
+                ).execute()
+                print(f"Uploaded report to Drive: Survey Reports/{folder_name}/{filename}")
+                return created.get('webViewLink', f"https://drive.google.com/file/d/{created.get('id')}/view")
+                
+        except Exception as e:
+            print(f"Error uploading report PDF to Drive: {e}")
+            import traceback; traceback.print_exc()
+            return None
+
     # --- Report Methods ---
     def _chunk_json_data(self, json_string):
         """

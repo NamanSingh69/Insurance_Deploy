@@ -2008,7 +2008,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const result = await response.json();
             const reportNo = finalDataToSend.survey_report['report_no'] || 'SurveyReport';
-            displayDownloadLinks(result.request_id, reportNo);
+            displayDownloadLinks(result.request_id, reportNo, result.drive_link);
         } catch (error) {
             console.error('Generation error:', error);
             showStatus(`Error generating files: ${error.message}`, 'error');
@@ -2058,7 +2058,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Display Download Links ---
-    function displayDownloadLinks(requestId, reportNoBase) {
+    function displayDownloadLinks(requestId, reportNoBase, driveLink) {
         downloadLinksDiv.innerHTML = '';
 
         const pdfLink = document.createElement('a');
@@ -2067,6 +2067,19 @@ document.addEventListener('DOMContentLoaded', () => {
         pdfLink.innerHTML = `<i class="fas fa-file-pdf"></i> Download PDF Report`;
         pdfLink.target = '_blank';
         downloadLinksDiv.appendChild(pdfLink);
+
+        // Drive auto-upload status
+        const driveStatus = document.createElement('span');
+        driveStatus.style.marginLeft = '10px';
+        driveStatus.style.display = 'inline-flex';
+        driveStatus.style.alignItems = 'center';
+        driveStatus.style.gap = '5px';
+        if (driveLink) {
+            driveStatus.innerHTML = `<i class="fas fa-check-circle" style="color: #22c55e;"></i> <a href="${driveLink}" target="_blank" style="color: #22c55e;">Saved to Drive</a>`;
+        } else {
+            driveStatus.innerHTML = `<i class="fas fa-exclamation-circle" style="color: #f59e0b;"></i> <span style="color: #f59e0b; font-size: 0.85em;">Drive upload pending</span>`;
+        }
+        downloadLinksDiv.appendChild(driveStatus);
 
         previewSection.classList.add('hidden');
         downloadSection.classList.remove('hidden');
