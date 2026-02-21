@@ -6,9 +6,9 @@ from datetime import datetime
 import uuid
 import base64
 import io
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import requests
+import math
+import mimetypes
 import math
 
 # Google Sheets has a 50,000 character limit per cell
@@ -44,9 +44,6 @@ class SheetsDB:
             creds_dict = json.loads(creds_json)
             self.creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
             self.client = gspread.authorize(self.creds)
-            
-            # Build Drive Service
-            self.drive_service = build('drive', 'v3', credentials=self.creds)
             
             # Open the spreadsheet (assumes name is 'InsuranceAppDB' by default, or env var)
             sheet_name = os.getenv("GOOGLE_SHEET_NAME", "InsuranceAppDB")
@@ -193,83 +190,86 @@ class SheetsDB:
             print(f"Error getting resumable upload URL: {e}")
             return None
 
+    def _get_auth_header(self):
+        """Helper to get a fresh access token for REST API calls."""
+        if not self.creds: self.connect()
+        import httplib2
+        if self.creds.access_token_expired or not self.creds.access_token:
+            self.creds.refresh(httplib2.Http())
+        return {'Authorization': f'Bearer {self.creds.access_token}'}
+
     def get_file_content(self, file_id):
         """Downloads file content as bytes from Drive."""
-        if not self.drive_service: self.connect()
         try:
-            request = self.drive_service.files().get_media(fileId=file_id)
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-            return fh.getvalue()
+            headers = self._get_auth_header()
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.content
+            else:
+                print(f"Error downloading file {file_id}: [{response.status_code}] {response.text}")
+                return None
         except Exception as e:
             print(f"Error downloading file {file_id}: {e}")
             return None
 
     def upload_image_to_drive(self, file_content, filename, mime_type='image/jpeg'):
         """Uploads an image to Google Drive and returns the webViewLink."""
-        if not self.drive_service: self.connect()
         try:
-            file_metadata = {
-                'name': filename,
-                'mimeType': mime_type
-            }
+            headers = self._get_auth_header()
             
-            # Use shared folder if configured (required for service account quota)
+            file_metadata = {'name': filename}
             drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
             if drive_folder_id:
                 file_metadata['parents'] = [drive_folder_id]
-            
-            # Create media upload
-            fh = io.BytesIO(file_content)
-            media = MediaIoBaseUpload(fh, mimetype=mime_type, resumable=True)
-            
-            file = self.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, webViewLink, webContentLink'
-            ).execute()
-            
-            # Make file readable by anyone with the link (so frontend can display it)
-            # Alternatively, we could just rely on Service Account if we proxied, but direct link is requested.
-            # IMPORTANT: This makes the image public to anyone with the link.
-            permission = {
-                'type': 'anyone',
-                'role': 'reader',
-            }
-            self.drive_service.permissions().create(
-                fileId=file.get('id'),
-                body=permission,
-                fields='id',
-            ).execute()
-            
-            return {
-                'id': file.get('id'),
-                'view_link': file.get('webViewLink'),
-                'download_link': file.get('webContentLink') # Use this for embedding in PDF if needed
+
+            # Multipart upload
+            files = {
+                'metadata': ('', json.dumps(file_metadata), 'application/json'),
+                'file': (filename, file_content, mime_type)
             }
             
+            upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,webContentLink"
+            response = requests.post(upload_url, headers=headers, files=files)
+            
+            if response.status_code in [200, 201]:
+                file_info = response.json()
+                file_id = file_info.get('id')
+                
+                # Make file readable by anyone with the link
+                perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
+                perm_data = {'type': 'anyone', 'role': 'reader'}
+                requests.post(perm_url, headers=headers, json=perm_data)
+                
+                return {
+                    'id': file_id,
+                    'view_link': file_info.get('webViewLink'),
+                    'download_link': file_info.get('webContentLink')
+                }
+            else:
+                print(f"Error uploading image to Drive: [{response.status_code}] {response.text}")
+                return None
+                
         except Exception as e:
             print(f"Error uploading to Drive: {e}")
             return None
 
     def _find_or_create_folder(self, folder_name, parent_id=None):
         """Finds a folder by name (under optional parent) or creates it. Returns folder ID."""
-        if not self.drive_service: self.connect()
         try:
+            headers = self._get_auth_header()
             query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
             if parent_id:
                 query += f" and '{parent_id}' in parents"
             
-            results = self.drive_service.files().list(
-                q=query, fields='files(id,name)', spaces='drive'
-            ).execute()
+            search_url = f"https://www.googleapis.com/drive/v3/files"
+            params = {'q': query, 'fields': 'files(id,name)', 'spaces': 'drive'}
             
-            files = results.get('files', [])
-            if files:
-                return files[0]['id']
+            response = requests.get(search_url, headers=headers, params=params)
+            if response.status_code == 200:
+                files = response.json().get('files', [])
+                if files:
+                    return files[0]['id']
             
             # Create the folder
             metadata = {
@@ -279,11 +279,10 @@ class SheetsDB:
             if parent_id:
                 metadata['parents'] = [parent_id]
             
-            folder = self.drive_service.files().create(
-                body=metadata, fields='id'
-            ).execute()
-            
-            return folder.get('id')
+            create_response = requests.post(search_url, headers=headers, json=metadata)
+            if create_response.status_code in [200, 201]:
+                return create_response.json().get('id')
+            return None
         except Exception as e:
             print(f"Error finding/creating folder '{folder_name}': {e}")
             return None
@@ -294,55 +293,54 @@ class SheetsDB:
         Creates folders automatically. Replaces existing file if same name exists.
         Returns the web view link or None.
         """
-        if not self.drive_service: self.connect()
         try:
             # 1. Find/create "Survey Reports" root folder
             root_folder_id = self._find_or_create_folder('Survey Reports')
-            if not root_folder_id:
-                return None
+            if not root_folder_id: return None
             
             # 2. Find/create vehicle subfolder
             folder_name = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no else 'Unknown_Vehicle'
             vehicle_folder_id = self._find_or_create_folder(folder_name, root_folder_id)
-            if not vehicle_folder_id:
-                return None
+            if not vehicle_folder_id: return None
             
-            # 3. Check if file already exists (to update instead of duplicate)
+            # 3. Check if file already exists
+            headers = self._get_auth_header()
             query = f"name='{filename}' and '{vehicle_folder_id}' in parents and trashed=false"
-            results = self.drive_service.files().list(
-                q=query, fields='files(id)', spaces='drive'
-            ).execute()
+            search_url = f"https://www.googleapis.com/drive/v3/files"
+            params = {'q': query, 'fields': 'files(id,webViewLink)', 'spaces': 'drive'}
             
-            existing_files = results.get('files', [])
-            
-            fh = io.BytesIO(pdf_bytes)
-            media = MediaIoBaseUpload(fh, mimetype='application/pdf', resumable=True)
+            search_response = requests.get(search_url, headers=headers, params=params)
+            existing_files = []
+            if search_response.status_code == 200:
+                existing_files = search_response.json().get('files', [])
+
+            files_multipart = {
+                'metadata': ('', json.dumps({'name': filename, 'parents': [vehicle_folder_id], 'mimeType': 'application/pdf'}), 'application/json'),
+                'file': (filename, pdf_bytes, 'application/pdf')
+            }
             
             if existing_files:
-                # Update existing file
+                # Update existing file (PATCH)
                 file_id = existing_files[0]['id']
-                updated = self.drive_service.files().update(
-                    fileId=file_id,
-                    media_body=media,
-                    fields='id, webViewLink'
-                ).execute()
-                print(f"Updated report in Drive: Survey Reports/{folder_name}/{filename}")
-                return updated.get('webViewLink', f"https://drive.google.com/file/d/{updated.get('id')}/view")
-            else:
-                # Create new file
-                file_metadata = {
-                    'name': filename,
-                    'parents': [vehicle_folder_id],
-                    'mimeType': 'application/pdf'
+                # For update, parents are NOT included in metadata normally, so let's strip it to be safe just in case
+                files_multipart = {
+                     'metadata': ('', json.dumps({}), 'application/json'),
+                     'file': (filename, pdf_bytes, 'application/pdf')
                 }
-                created = self.drive_service.files().create(
-                    body=file_metadata,
-                    media_body=media,
-                    fields='id, webViewLink'
-                ).execute()
-                print(f"Uploaded report to Drive: Survey Reports/{folder_name}/{filename}")
-                return created.get('webViewLink', f"https://drive.google.com/file/d/{created.get('id')}/view")
-                
+                update_url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=multipart&fields=id,webViewLink"
+                response = requests.patch(update_url, headers=headers, files=files_multipart)
+                if response.status_code in [200, 201]:
+                    print(f"Updated report in Drive: Survey Reports/{folder_name}/{filename}")
+                    return response.json().get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
+            else:
+                # Create new file (POST)
+                upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink"
+                response = requests.post(upload_url, headers=headers, files=files_multipart)
+                if response.status_code in [200, 201]:
+                    print(f"Uploaded report to Drive: Survey Reports/{folder_name}/{filename}")
+                    return response.json().get('webViewLink', f"https://drive.google.com/file/d/{response.json().get('id')}/view")
+            
+            return None
         except Exception as e:
             print(f"Error uploading report PDF to Drive: {e}")
             import traceback; traceback.print_exc()
