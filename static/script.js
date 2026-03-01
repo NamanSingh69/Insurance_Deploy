@@ -420,6 +420,29 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // --- Auto-generate Report Number if it's empty or doesn't match new format ---
+        const reportNoInput = document.getElementById('input-report_no');
+        const insurerInput = document.getElementById('input-insurer');
+        if (reportNoInput && insurerInput) {
+            const currentReportNo = reportNoInput.value.trim();
+            const currentYear = new Date().getFullYear().toString();
+            // Check if it's empty or clearly an old format (doesn't have /YYYY/ in it)
+            if (!currentReportNo || !currentReportNo.includes(`/${currentYear}/`)) {
+                fetch('/api/generate_report_no', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ insurer: insurerInput.value })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.report_no) {
+                            reportNoInput.value = data.report_no;
+                        }
+                    })
+                    .catch(err => console.error("Failed to auto-generate report number:", err));
+            }
+        }
+
         assessmentHeaderGstInput.value = currentAssessmentData.header_gst || '';
         assessmentHeaderVehicleYearInput.value = currentAssessmentData.header_vehicle_year || '';
         document.getElementById('input-enclosures_text').value = currentAssessmentData.enclosures_text || '';
@@ -1539,7 +1562,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (input) input.value = '';
     }
 
-    function compressImage(file, maxWidth = 1024, quality = 0.7) {
+    function compressImage(file, maxWidth = 800, quality = 0.5) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);

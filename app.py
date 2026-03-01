@@ -2835,6 +2835,53 @@ def load_report(report_id):
         print(f"Error loading report {report_id}: {e}")
         return jsonify({"error": f"Failed to load report: {e}"}), 500
 
+@app.route('/api/generate_report_no', methods=['POST'])
+@login_required
+def generate_report_no():
+    try:
+        data = request.get_json()
+        insurer_name = data.get('insurer', '').upper()
+        
+        # Map known insurers to prefixes
+        prefix = "REP"
+        if "NATIONAL INSURANCE" in insurer_name:
+            prefix = "NIC"
+        elif "NEW INDIA" in insurer_name:
+            prefix = "NIA"
+        elif "ORIENTAL" in insurer_name:
+            prefix = "OIC"
+        elif "UNITED INDIA" in insurer_name:
+            prefix = "UIIC"
+        
+        current_year = str(datetime.now().year)
+        
+        # Fetch user's existing reports to find the highest sequence number for this prefix and year
+        reports_metadata = sheets_db.get_user_reports_metadata_only(current_user.id)
+        
+        max_seq = 0
+        search_pattern = f"{prefix}/{current_year}/"
+        
+        for report in reports_metadata:
+            report_num = str(report.get('report_no', ''))
+            if report_num.startswith(search_pattern):
+                try:
+                    # Extract the sequence part (e.g., from "NIC/2026/01", extract "01")
+                    seq_str = report_num.split('/')[-1]
+                    seq_num = int(seq_str)
+                    if seq_num > max_seq:
+                        max_seq = seq_num
+                except ValueError:
+                    continue
+        
+        new_seq = max_seq + 1
+        new_report_no = f"{prefix}/{current_year}/{new_seq:02d}"
+        
+        return jsonify({"report_no": new_report_no}), 200
+        
+    except Exception as e:
+        print(f"Error generating report number: {e}")
+        return jsonify({"error": "Failed to generate report number"}), 500
+
 @app.route('/delete_report/<report_id>', methods=['DELETE'])
 @login_required
 def delete_report(report_id):

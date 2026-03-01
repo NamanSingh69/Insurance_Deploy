@@ -136,3 +136,5 @@ cython_debug/
 
 # Database
 *.db
+.vercel
+.env*.local
