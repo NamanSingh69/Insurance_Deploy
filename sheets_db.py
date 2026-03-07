@@ -1,5 +1,5 @@
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 import os
 import json
 from datetime import datetime
@@ -42,7 +42,7 @@ class SheetsDB:
 
         try:
             creds_dict = json.loads(creds_json)
-            self.creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+            self.creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPE)
             self.client = gspread.authorize(self.creds)
             
             # Open the spreadsheet (assumes name is 'InsuranceAppDB' by default, or env var)
@@ -144,12 +144,12 @@ class SheetsDB:
         """
         if not self.creds: self.connect()
         try:
-            import httplib2
+            from google.auth.transport.requests import Request
             # Ensure token is fresh
-            if self.creds.access_token_expired or not self.creds.access_token:
-                self.creds.refresh(httplib2.Http())
+            if not self.creds.valid:
+                self.creds.refresh(Request())
 
-            access_token = self.creds.access_token
+            access_token = self.creds.token
             
             headers = {
                 'Authorization': f'Bearer {access_token}',
@@ -193,10 +193,10 @@ class SheetsDB:
     def _get_auth_header(self):
         """Helper to get a fresh access token for REST API calls."""
         if not self.creds: self.connect()
-        import httplib2
-        if self.creds.access_token_expired or not self.creds.access_token:
-            self.creds.refresh(httplib2.Http())
-        return {'Authorization': f'Bearer {self.creds.access_token}'}
+        from google.auth.transport.requests import Request
+        if not self.creds.valid:
+            self.creds.refresh(Request())
+        return {'Authorization': f'Bearer {self.creds.token}'}
 
     def get_file_content(self, file_id):
         """Downloads file content as bytes from Drive."""

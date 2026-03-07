@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set required environment variables before importing app
 os.environ.setdefault("GEMINI_API_KEY", "test_api_key")
-os.environ.setdefault("FLASK_SECRET_KEY", "test_secret_key")
+os.environ.setdefault("FLASK_SECRET_KEY", "test_secret_key_for_automated_tests")
+os.environ.setdefault("TESTING", "1")  # Allows SECRET_KEY fallback in test mode
 os.environ.setdefault("GOOGLE_SHEETS_CREDENTIALS", '{"type": "service_account", "project_id": "test"}')
 os.environ.setdefault("GOOGLE_SHEET_NAME", "TestDB")
 os.environ.setdefault("GOOGLE_DRIVE_FOLDER_ID", "test_folder_id")

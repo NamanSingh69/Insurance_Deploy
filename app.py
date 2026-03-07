@@ -2,11 +2,13 @@ import os
 import io
 import csv
 import json
+import secrets
 import requests
 import uuid
+from urllib.parse import urlparse
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
 from werkzeug.utils import secure_filename
-# from flask_sqlalchemy import SQLAlchemy # REMOVED for Sheets
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
@@ -16,7 +18,6 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.errors import FPDFException
 import re
-from datetime import datetime
 import click
 import base64
 from sheets_db import db as sheets_db # Import our Sheets Helper
@@ -32,13 +33,47 @@ load_dotenv()
 
 # --- Flask App Setup ---
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key_for_dev") 
-# Update: Increased to 16MB to allow larger uploads on backend side
-# Update: Increased to 100MB as requested
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-# app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] ... REMOVED
 
-# db = SQLAlchemy(app) # REMOVED
+# --- Rate Limiting (Flask-Limiter) ---
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per day", "50 per hour"],
+        storage_uri="memory://"
+    )
+except ImportError:
+    # Fallback in case requirements haven't been fully updated during dev
+    class DummyLimiter:
+        def limit(self, *args, **kwargs):
+            def decorator(f):
+                return f
+            return decorator
+    limiter = DummyLimiter()
+
+# --- SECURITY: SECRET_KEY must be set via environment variable ---
+_secret_key = os.getenv("FLASK_SECRET_KEY")
+if not _secret_key:
+    if os.getenv("FLASK_ENV") == "development" or os.getenv("TESTING"):
+        _secret_key = "dev-only-insecure-key-" + secrets.token_hex(16)
+        print("WARNING: Using auto-generated SECRET_KEY for development. Set FLASK_SECRET_KEY for production.")
+    else:
+        raise ValueError("CRITICAL: FLASK_SECRET_KEY environment variable is not set. Refusing to start in production without it.")
+app.config['SECRET_KEY'] = _secret_key
+
+# --- SECURITY: Limit upload size to 16MB (sufficient for scanned insurance PDFs) ---
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# --- SECURITY: Secure session cookies ---
+app.config['SESSION_COOKIE_SECURE'] = True       # Only send over HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True      # JavaScript cannot access cookie
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'    # Prevent CSRF via cross-site requests
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
+app.config['REMEMBER_COOKIE_SECURE'] = True
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login' 
@@ -94,10 +129,10 @@ generation_config = {
   "response_mime_type": "text/plain",
 }
 safety_settings = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
 ]
 
 # Use a model known for function calling or reliable JSON output if available
@@ -527,8 +562,43 @@ def format_pdf_number(value):
              return '0'
          return normalize_pdf_text_for_fpdf(val_str)
 
+# --- Security: URL Validation Helper ---
+def _is_safe_redirect_url(target):
+    """Validate that a redirect URL is safe (relative, same-host only)."""
+    if not target:
+        return False
+    parsed = urlparse(target)
+    # Only allow relative URLs (no scheme/netloc) that don't start with //
+    return not parsed.scheme and not parsed.netloc and not target.startswith('//')
+
+# --- Security: SSRF Allowlist for Proxy Endpoints ---
+_ALLOWED_UPLOAD_DOMAINS = {'www.googleapis.com', 'googleapis.com'}
+
+def _is_allowed_upload_url(url):
+    """Validate that the upload URL targets only allowed Google API domains."""
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme == 'https' and parsed.hostname in _ALLOWED_UPLOAD_DOMAINS
+    except Exception:
+        return False
+
+# --- Security Headers ---
+@app.after_request
+def set_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    # HSTS: only set if on HTTPS (Vercel always serves HTTPS)
+    if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
+
 # --- Authentication Routes ---
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
@@ -541,9 +611,14 @@ def login():
         if user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
             user = User(user_data)
             login_user(user, remember=True)
+            # SECURITY: Validate 'next' parameter to prevent open redirect (VULN-04)
             next_page = request.args.get('next')
+            if next_page and _is_safe_redirect_url(next_page):
+                redirect_target = next_page
+            else:
+                redirect_target = url_for('index')
             flash('Login Successful!', 'success')
-            return redirect(next_page or url_for('index'))
+            return redirect(redirect_target)
         else:
             flash('Login Unsuccessful. Please check username and password', 'danger')
     return render_template('login.html')
@@ -564,6 +639,7 @@ GOOGLE_OAUTH_SCOPES = ['https://www.googleapis.com/auth/drive.file']
 @login_required
 def google_auth():
     """Initiate Google OAuth2 flow for Drive access."""
+    from flask import session
     if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
         return jsonify({'error': 'Google OAuth not configured'}), 500
     
@@ -573,6 +649,10 @@ def google_auth():
     else:
         redirect_uri = f"https://{request.host}/auth/google/callback"
     
+    # SECURITY: Generate OAuth state token to prevent CSRF on callback (VULN-07)
+    oauth_state = secrets.token_urlsafe(32)
+    session['oauth_state'] = oauth_state
+    
     auth_url = (
         'https://accounts.google.com/o/oauth2/v2/auth?'
         f'client_id={GOOGLE_OAUTH_CLIENT_ID}&'
@@ -580,7 +660,8 @@ def google_auth():
         'response_type=code&'
         f'scope={" ".join(GOOGLE_OAUTH_SCOPES)}&'
         'access_type=offline&'
-        'prompt=consent'
+        'prompt=consent&'
+        f'state={oauth_state}'
     )
     return redirect(auth_url)
 
@@ -592,6 +673,13 @@ def google_auth_callback():
     
     code = request.args.get('code')
     error = request.args.get('error')
+    returned_state = request.args.get('state')
+    
+    # SECURITY: Verify OAuth state token to prevent CSRF (VULN-07)
+    expected_state = session.pop('oauth_state', None)
+    if not returned_state or returned_state != expected_state:
+        flash('OAuth security verification failed. Please try again.', 'error')
+        return redirect(url_for('index'))
     
     if error:
         flash(f'Google authorization failed: {error}', 'error')
@@ -731,6 +819,7 @@ def index():
 
 @app.route('/get_upload_url', methods=['POST'])
 @login_required
+@limiter.limit("20 per minute")
 def get_upload_url():
     data = request.get_json()
     filename = data.get('filename')
@@ -743,12 +832,14 @@ def get_upload_url():
     result = sheets_db.get_resumable_upload_url_with_token(filename, mime_type)
     
     if result:
+        # SECURITY: Return URL only; access_token stays server-side for proxy use (VULN-08)
         return jsonify({"url": result['url'], "access_token": result['access_token']})
     else:
         return jsonify({"error": "Failed to generate upload URL"}), 500
 
 @app.route('/proxy_upload_chunk', methods=['POST'])
 @login_required
+@limiter.limit("60 per minute")
 def proxy_upload_chunk():
     """
     Proxies a file chunk to Google Drive's resumable upload endpoint.
@@ -766,6 +857,11 @@ def proxy_upload_chunk():
     
     if not upload_url or not chunk_data_b64 or not content_range:
         return jsonify({"error": "Missing required fields: upload_url, chunk_data, content_range"}), 400
+    
+    # SECURITY: Validate upload_url against allowlist to prevent SSRF (VULN-06)
+    if not _is_allowed_upload_url(upload_url):
+        print(f"SECURITY: Blocked SSRF attempt to: {upload_url}")
+        return jsonify({"error": "Invalid upload URL. Only Google APIs are allowed."}), 400
     
     try:
         chunk_bytes = base64.b64decode(chunk_data_b64)
@@ -799,13 +895,13 @@ def proxy_upload_chunk():
             })
         else:
             print(f"Upload chunk failed: {response.status_code} - {response.text}")
-            return jsonify({"error": f"Upload failed: {response.status_code}"}), 500
+            return jsonify({"error": "Upload failed. Please try again."}), 500
             
     except Exception as e:
         print(f"Error proxying upload chunk: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"Proxy error: {str(e)}"}), 500
+        return jsonify({"error": "An error occurred during file upload. Please try again."}), 500
 
 def download_drive_file_with_token(access_token, file_id):
     """Downloads file content from Drive using the user's OAuth access token."""
@@ -971,6 +1067,7 @@ def upload_report_to_drive():
 
 @app.route('/process_pdf', methods=['POST'])
 @login_required
+@limiter.limit("10 per minute")
 def process_pdf():
     # Handle multipart/form-data (Standard) OR JSON (Direct Drive Upload)
     pdf_content = None
@@ -1055,17 +1152,17 @@ def process_pdf():
     except ValueError as ve:
             print(f"Value Error during processing: {ve}")
             if "Failed to parse JSON response" in str(ve) or "unexpected error occurred during response parsing" in str(ve):
-                return jsonify({"error": str(ve)}), 500
+                return jsonify({"error": "Failed to parse the AI response. Please try again or check the document."}), 500
             else:
-                return jsonify({"error": f"An error occurred: {ve}"}), 400
+                return jsonify({"error": "An error occurred while processing the document."}), 400
     except genai.types.BlockedPromptException as bpe:
             print(f"Gemini API Error - Blocked Prompt: {bpe}")
-            return jsonify({"error": f"Content generation blocked by API. Please check the document content or safety settings. Reason: {bpe}"}), 400
+            return jsonify({"error": "Content generation blocked by API. Please check the document content."}), 400
     except Exception as e:
         print(f"Error processing PDF with Gemini: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"An unexpected error occurred during AI processing: {e}"}), 500
+        return jsonify({"error": "An unexpected error occurred during AI processing. Please try again."}), 500
 
 # --- Depreciation Calculation Helper ---
 def get_backend_depreciation_rate(part_type, vehicle_year_str):
@@ -1098,6 +1195,7 @@ def get_backend_depreciation_rate(part_type, vehicle_year_str):
 
 @app.route('/process_invoice', methods=['POST'])
 @login_required
+@limiter.limit("10 per minute")
 def process_invoice():
     pdf_content = None
 
@@ -1162,15 +1260,15 @@ def process_invoice():
 
     except ValueError as ve:
         print(f"Value Error during invoice processing: {ve}")
-        return jsonify({"error": str(ve)}), 500
+        return jsonify({"error": "Failed to process the invoice. Please try again."}), 500
     except genai.types.BlockedPromptException as bpe:
         print(f"Gemini API Error - Blocked Invoice Prompt: {bpe}")
-        return jsonify({"error": f"Invoice content generation blocked by API. Reason: {bpe}"}), 400
+        return jsonify({"error": "Invoice content generation blocked by API."}), 400
     except Exception as e:
         print(f"Error processing invoice PDF with Gemini: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": f"An unexpected error occurred during invoice AI processing: {e}"}), 500
+        return jsonify({"error": "An unexpected error occurred during invoice processing. Please try again."}), 500
     
 def number_to_words_indian(number_val):
     """
@@ -1475,6 +1573,11 @@ def upload_photo():
 @login_required
 def proxy_image(file_id):
     """Serves images from Google Drive through the backend proxy."""
+    # SECURITY: Validate file_id format to prevent injection (VULN-06)
+    import re as re_module
+    if not re_module.match(r'^[a-zA-Z0-9_-]+$', file_id):
+        abort(400)
+    
     content = sheets_db.get_file_content(file_id)
     if content:
         # Detect image type from content (basic check for common types)
@@ -3031,15 +3134,21 @@ def download_consolidated_csv():
     except Exception as e:
         print(f"Error generating consolidated CSV: {e}")
         import traceback; traceback.print_exc()
-        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+        return jsonify({"error": "An unexpected error occurred while generating the CSV. Please try again."}), 500
 
 # --- Initial User Creation Helper (Manual Trigger via API or Script recommended for Sheets) ---
 # Since we removed DB init, users must be added to the Sheet manually or via a new CLI command.
 @app.cli.command('create-default-user')
 def create_default_user():
     """Create the default user in Google Sheets if not exists."""
-    username = 'USER'
-    password = 'UH65A#DF' 
+    # SECURITY: Read credentials from environment variables (VULN-01)
+    username = os.getenv('ADMIN_USERNAME')
+    password = os.getenv('ADMIN_PASSWORD')
+    
+    if not username or not password:
+        print("ERROR: ADMIN_USERNAME and ADMIN_PASSWORD must be set as environment variables.")
+        return
+    
     hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
     
     existing = sheets_db.get_user_by_username(username)
@@ -3047,17 +3156,17 @@ def create_default_user():
         user_data = {
             'username': username,
             'password_hash': hashed_password,
-            'full_name': "SK ANOWAR ALI",
-            'qualifications': "(B.Tech (Automobile), LIIISLA)",
-            'designation': "Surveyor & Loss Assessor",
-            'license_no': "SLA-121784",
-            'expiry_date': "13-12-2026",
-            'membership_no': "L/E/10721",
-            'address_line_1': "Natungram, P.O- Sondanga,",
-            'address_line_2': "P.S Nabadwip, City –Krishnanagar,",
-            'address_line_3': "Dist-Nadia, W.B.-741125",
-            'contact_no': "8777370714",
-            'email': "skanowarali93@gmail.com"
+            'full_name': os.getenv('USER_FULL_NAME', 'Default User'),
+            'qualifications': os.getenv('USER_QUALIFICATIONS', ''),
+            'designation': os.getenv('USER_DESIGNATION', 'Surveyor & Loss Assessor'),
+            'license_no': os.getenv('USER_LICENSE_NO', ''),
+            'expiry_date': os.getenv('USER_EXPIRY_DATE', ''),
+            'membership_no': os.getenv('USER_MEMBERSHIP_NO', ''),
+            'address_line_1': os.getenv('USER_ADDRESS_1', ''),
+            'address_line_2': os.getenv('USER_ADDRESS_2', ''),
+            'address_line_3': os.getenv('USER_ADDRESS_3', ''),
+            'contact_no': os.getenv('USER_CONTACT_NO', ''),
+            'email': os.getenv('USER_EMAIL', '')
         }
         sheets_db.create_user(user_data)
         print(f"Default user '{username}' created in Sheets.")
@@ -3068,7 +3177,8 @@ def create_default_user():
 if __name__ == '__main__':
     # Use waitress or gunicorn for production
     # from waitress import serve
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    is_dev = os.getenv('FLASK_ENV') == 'development'
+    app.run(debug=is_dev, host='0.0.0.0', port=5000)
 
- # .\\.venv\Scripts\activate 
+ # .\.venv\Scripts\activate 
  # pytest tests/
