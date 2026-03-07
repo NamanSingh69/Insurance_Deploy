@@ -138,7 +138,7 @@ safety_settings = [
 # Use a model known for function calling or reliable JSON output if available
 # For this example, we'll parse JSON from text response.
 model = genai.GenerativeModel(
-    model_name='gemini-3-flash-preview', 
+    model_name='gemini-3.1-flash-lite-preview', 
     safety_settings=safety_settings,
     generation_config=generation_config
     )
