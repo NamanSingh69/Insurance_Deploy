@@ -63,8 +63,8 @@ if not _secret_key:
         raise ValueError("CRITICAL: FLASK_SECRET_KEY environment variable is not set. Refusing to start in production without it.")
 app.config['SECRET_KEY'] = _secret_key
 
-# --- SECURITY: Limit upload size to 16MB (sufficient for scanned insurance PDFs) ---
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+# --- SECURITY: Limit upload size to 100MB (user requested revert) ---
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 # --- SECURITY: Secure session cookies ---
 app.config['SESSION_COOKIE_SECURE'] = True       # Only send over HTTPS
@@ -129,10 +129,10 @@ generation_config = {
   "response_mime_type": "text/plain",
 }
 safety_settings = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
 # Use a model known for function calling or reliable JSON output if available
