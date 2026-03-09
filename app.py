@@ -141,14 +141,14 @@ safety_settings = [
 # Use a model known for function calling or reliable JSON output if available
 # For this example, we'll parse JSON from text response.
 model = genai.GenerativeModel(
-    model_name='gemini-3.1-flash-lite-preview',
+    model_name='gemini-3.1-pro-preview',
     safety_settings=safety_settings,
     generation_config=generation_config
     )
 
 # Secondary model for fallback
 secondary_model = genai.GenerativeModel(
-    model_name='gemini-2.5-flash',
+    model_name='gemini-3.1-flash-lite-preview',
     safety_settings=safety_settings,
     generation_config=generation_config
 )
@@ -592,7 +592,7 @@ def _is_allowed_upload_url(url):
 def set_security_headers(response):
     """Add security headers to every response."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
