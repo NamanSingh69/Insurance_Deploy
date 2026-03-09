@@ -33,6 +33,9 @@ load_dotenv()
 
 # --- Flask App Setup ---
 app = Flask(__name__)
+from werkzeug.middleware.proxy_fix import ProxyFix
+# Fix for Vercel to handle secure cookies
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # --- Rate Limiting (Flask-Limiter) ---
 try:
@@ -138,15 +141,14 @@ safety_settings = [
 # Use a model known for function calling or reliable JSON output if available
 # For this example, we'll parse JSON from text response.
 model = genai.GenerativeModel(
-    model_name='gemini-3.1-flash-lite-preview', 
+    model_name='gemini-3.1-flash-lite-preview',
     safety_settings=safety_settings,
     generation_config=generation_config
     )
 
-# gemini-2.5-pro
-# gemini-2.5-flash
+# Secondary model for fallback
 secondary_model = genai.GenerativeModel(
-    model_name='gemini-2.5-pro',
+    model_name='gemini-2.5-flash',
     safety_settings=safety_settings,
     generation_config=generation_config
 )
@@ -546,6 +548,9 @@ def normalize_pdf_text_for_fpdf(text_val):
     text_val = text_val.replace('–', '-')  # En dash (U+2013)
     text_val = text_val.replace('—', '-')  # Em dash (U+2014)
     text_val = text_val.replace('−', '-')  # Minus sign (U+2212)
+    
+    # Aggressively replace all characters outside latin-1 to prevent fpdf.errors.FPDFUnicodeEncodingException
+    text_val = text_val.encode('latin-1', 'replace').decode('latin-1')
     return text_val
 
 def format_pdf_number(value):
