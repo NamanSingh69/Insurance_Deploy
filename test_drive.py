@@ -1,28 +1,28 @@
-import dotenv
-import os
 import requests
-dotenv.load_dotenv()
-from sheets_db import SheetsDB
-db = SheetsDB()
-db.connect()
+import time
 
-try:
-    parent_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
-    print(f"Using parent ID: {parent_id}")
-    
-    # Try to create 'Test Folder' inside parent
-    root_folder_id = db._find_or_create_folder('Test Quota Bypass', parent_id=parent_id)
-    print("Folder created/found:", root_folder_id)
-    
-    if root_folder_id:
-        headers = db._get_auth_header()
-        files = {
-            'metadata': ('', '{"name": "test.pdf", "parents": ["' + root_folder_id + '"], "mimeType": "application/pdf"}', 'application/json'),
-            'file': ('test.pdf', b'hello test bypass quota', 'application/pdf')
-        }
-        r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", headers=headers, files=files)
-        print("Upload Status:", r.status_code)
-        print("Upload Response:", r.text)
+s = requests.Session()
+BASE_URL = "http://localhost:5000"
 
-except Exception as e:
-    print('Error:', e)
+print("--- Testing Database Integration ---")
+start = time.time()
+r = s.get(BASE_URL + "/login")
+csrf_time = time.time() - start
+print(f"GET /login (Load page & CSRF) latency: {csrf_time:.4f}s")
+print(f"Status: {r.status_code}")
+
+print("\n--- Testing Authentication ---")
+login_data = {"username": "NAMAN", "password": "69"} # Ensure NAMAN is created or existing username here, wait, old user is NAMAN with pass 69420
+login_data = {"username": "NAMAN", "password": "69420"}
+start = time.time()
+r = s.post(BASE_URL + "/login", data=login_data)
+login_time = time.time() - start
+print(f"POST /login latency: {login_time:.4f}s")
+print(f"Status: {r.status_code}")
+
+print("\n--- Testing High-Volume Database Fetch ---")
+start = time.time()
+r = s.get(BASE_URL + "/api/reports") # If this exists or index page
+fetch_time = time.time() - start
+print(f"GET /api/reports via Postgres logic latency: {fetch_time:.4f}s")
+print(f"Status: {r.status_code}")

@@ -6,16 +6,10 @@
             "memory": 1024
         }
     },
-    "builds": [
+    "rewrites": [
         {
-            "src": "app.py",
-            "use": "@vercel/python"
-        }
-    ],
-    "routes": [
-        {
-            "src": "/(.*)",
-            "dest": "app.py"
+            "source": "/(.*)",
+            "destination": "app.py"
         }
     ]
 }
