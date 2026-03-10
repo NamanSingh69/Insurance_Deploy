@@ -1800,9 +1800,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // --- Direct Drive Upload Helper (Chunked via Backend Proxy) ---
+    // --- Direct Drive Upload Helper (Direct to Google APIs) ---
     async function uploadFileDirectly(file) {
-        const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunks
+        const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks (Google recommended)
         const totalSize = file.size;
         const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
@@ -1817,9 +1817,9 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error('Failed to get upload URL from server.');
         }
 
-        const { url: uploadUrl, access_token: accessToken } = await getUrlResponse.json();
+        const { url: uploadUrl } = await getUrlResponse.json();
 
-        // 2. Upload in chunks via backend proxy
+        // 2. Upload chunks directly to Google Drive
         let fileId = null;
 
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -1827,39 +1827,29 @@ document.addEventListener('DOMContentLoaded', () => {
             const end = Math.min(start + CHUNK_SIZE, totalSize);
             const chunk = file.slice(start, end);
 
-            // Convert chunk to base64
-            const chunkArrayBuffer = await chunk.arrayBuffer();
-            const chunkBase64 = btoa(
-                new Uint8Array(chunkArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-            );
-
             // Content-Range format: "bytes start-end/total"
             const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
 
-            const proxyResponse = await fetch('/proxy_upload_chunk', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    upload_url: uploadUrl,
-                    chunk_data: chunkBase64,
-                    content_range: contentRange,
-                    content_type: file.type,
-                    access_token: accessToken
-                })
+            const driveResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Range': contentRange,
+                    'Content-Type': file.type
+                },
+                body: chunk // Send binary blob directly
             });
 
-            if (!proxyResponse.ok) {
-                const errorData = await proxyResponse.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Chunk upload failed.');
-            }
-
-            const result = await proxyResponse.json();
-
-            if (result.complete) {
-                fileId = result.file_id;
+            if (driveResponse.status === 308) {
+                // Incomplete, continue to next chunk
+                continue;
+            } else if (driveResponse.ok) {
+                // Complete (200 or 201)
+                const result = await driveResponse.json();
+                fileId = result.id;
                 break;
+            } else {
+                throw new Error(`Chunk upload failed with status: ${driveResponse.status}`);
             }
-            // If not complete (308), continue to next chunk
         }
 
         if (!fileId) {
@@ -1869,13 +1859,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return fileId;
     }
 
-    // --- Upload to User's Drive (using their OAuth token) ---
+    // --- Upload to User's Drive (using their OAuth token directly) ---
     async function uploadFileToUserDrive(file) {
-        const CHUNK_SIZE = 2 * 1024 * 1024; // 2 MB chunks
+        const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks (Google recommended)
         const totalSize = file.size;
         const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
-        // 1. Get Resumable Upload URL using user's token
+        // 1. Get Resumable Upload URL + Auth Token using user's session
         const getUrlResponse = await fetch('/get_user_upload_url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1894,7 +1884,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const { url: uploadUrl, access_token: accessToken } = await getUrlResponse.json();
 
-        // 2. Upload in chunks via backend proxy
+        // 2. Upload chunks directly to Google Drive
         let fileId = null;
 
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -1902,36 +1892,28 @@ document.addEventListener('DOMContentLoaded', () => {
             const end = Math.min(start + CHUNK_SIZE, totalSize);
             const chunk = file.slice(start, end);
 
-            // Convert chunk to base64
-            const chunkArrayBuffer = await chunk.arrayBuffer();
-            const chunkBase64 = btoa(
-                new Uint8Array(chunkArrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-            );
-
             const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
 
-            const proxyResponse = await fetch('/proxy_upload_chunk', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    upload_url: uploadUrl,
-                    chunk_data: chunkBase64,
-                    content_range: contentRange,
-                    content_type: file.type,
-                    access_token: accessToken
-                })
+            const driveResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Range': contentRange,
+                    'Content-Type': file.type
+                },
+                body: chunk // Send binary blob directly
             });
 
-            if (!proxyResponse.ok) {
-                const errorData = await proxyResponse.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Chunk upload failed.');
-            }
-
-            const result = await proxyResponse.json();
-
-            if (result.complete) {
-                fileId = result.file_id;
+            if (driveResponse.status === 308) {
+                // Incomplete, continue to next chunk
+                continue;
+            } else if (driveResponse.ok) {
+                // Complete (200 or 201)
+                const result = await driveResponse.json();
+                fileId = result.id;
                 break;
+            } else {
+                throw new Error(`Chunk upload failed with status: ${driveResponse.status}`);
             }
         }
 

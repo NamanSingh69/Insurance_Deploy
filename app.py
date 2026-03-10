@@ -838,7 +838,7 @@ def get_upload_url():
     
     if result:
         # SECURITY: Return URL only; access_token stays server-side for proxy use (VULN-08)
-        return jsonify({"url": result['url'], "access_token": result['access_token']})
+        return jsonify({"url": result['url']})
     else:
         return jsonify({"error": "Failed to generate upload URL"}), 500
 
@@ -2933,7 +2933,7 @@ def load_report(report_id):
         if target_report:
             try:
                 report_data = json.loads(target_report.get('report_data_json'))
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 # Fallback if json string is malformed or empty
                 report_data = {} 
             return jsonify(report_data)
@@ -3054,7 +3054,7 @@ def download_consolidated_csv():
                 # Check Date Range
                 if saved_at >= datetime.combine(from_date, datetime.min.time()) and saved_at <= to_date_end_of_day:
                     reports.append(r)
-            except: 
+            except (ValueError, TypeError): 
                 continue
 
         # Sort
@@ -3077,7 +3077,6 @@ def download_consolidated_csv():
         ]
         csv_writer.writerow(headers)
         
-        sl_no_counter = 1
         sl_no_counter = 1
         for report in reports:
             try:
