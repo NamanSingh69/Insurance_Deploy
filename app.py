@@ -20,7 +20,7 @@ from fpdf.errors import FPDFException
 import re
 import click
 import base64
-from sheets_db import db as sheets_db # Import our Sheets Helper
+from db import db as sheets_db # We kept the variable name the same so it acts as standard drop-in replacement!
 
 def is_number(s):
     try:
