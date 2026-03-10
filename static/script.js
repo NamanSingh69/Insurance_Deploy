@@ -1932,13 +1932,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        if (isLargeFile && !isGoogleDriveConnected) {
-            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            showStatus(`File is too large (${fileSizeMB}MB). Connect Google Drive to upload files larger than 4MB, or compress the PDF.`, 'error');
-            return;
+        if (isLargeFile) {
+            // We can now upload large files using the service account proxy
         }
 
-        showStatus(isLargeFile ? 'Large file detected. Uploading to your Google Drive...' : 'Uploading and processing PDF...', 'processing');
+        showStatus(isLargeFile ? 'Large file detected. Uploading securely...' : 'Uploading and processing PDF...', 'processing');
         processButton.disabled = true; processButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
         uploadProgressContainer.classList.remove('hidden'); uploadProgress.style.width = `0%`;
 
@@ -1954,9 +1952,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             let response;
 
-            if (isLargeFile && isGoogleDriveConnected) {
-                // Upload to user's Drive
-                const driveFileId = await uploadFileToUserDrive(file);
+            if (isLargeFile) {
+                // Upload to service account's Drive
+                const driveFileId = await uploadFileDirectly(file);
                 response = await fetch('/process_pdf', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

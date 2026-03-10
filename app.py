@@ -1062,8 +1062,19 @@ def upload_report_to_drive():
     
     filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no else report_no.replace(' ', '_').replace('/', '-')
     filename = f"{filename_base}.pdf"
+    folder_name_to_use = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no else 'Unknown_Vehicle'
     
-    drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename, vehicle_no if vehicle_no else 'Unknown_Vehicle')
+    from flask import session
+    access_token = session.get('google_access_token')
+    
+    drive_link = None
+    if access_token:
+        # Upload to user's personal drive
+        drive_link = upload_pdf_to_drive(access_token, pdf_bytes, filename, folder_name_to_use)
+        
+    if not drive_link:
+        # Fallback to service account
+        drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename, vehicle_no if vehicle_no else 'Unknown_Vehicle')
     
     if drive_link:
         return jsonify({'success': True, 'drive_link': drive_link, 'message': f'Report uploaded to Drive!'})
@@ -1083,12 +1094,8 @@ def process_pdf():
         if not drive_file_id:
             return jsonify({"error": "No drive_file_id provided"}), 400
         
-        # Fetch content from Drive using user's OAuth token
-        from flask import session
-        access_token = session.get('google_access_token')
-        if not access_token:
-            return jsonify({"error": "Not connected to Google Drive. Please connect first."}), 401
-        pdf_content = download_drive_file_with_token(access_token, drive_file_id)
+        # Fetch content from Service Account Drive (proxy)
+        pdf_content = sheets_db.get_file_content(drive_file_id)
         if not pdf_content:
              return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
              
@@ -1210,12 +1217,8 @@ def process_invoice():
         if not drive_file_id:
              return jsonify({"error": "No drive_file_id provided"}), 400
         
-        # Fetch content from Drive using user's OAuth token
-        from flask import session
-        access_token = session.get('google_access_token')
-        if not access_token:
-            return jsonify({"error": "Not connected to Google Drive. Please connect first."}), 401
-        pdf_content = download_drive_file_with_token(access_token, drive_file_id)
+        # Fetch content from Service Account Drive (proxy)
+        pdf_content = sheets_db.get_file_content(drive_file_id)
         if not pdf_content:
              return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
              
@@ -2786,15 +2789,30 @@ def generate_files():
             "vehicle_no": vehicle_no_raw
         }
 
-        # Auto-upload to Google Drive (service account)
+        # Auto-upload to Google Drive
         drive_link = None
         try:
             filename_base = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no_raw.strip() else 'SurveyReport'
-            drive_link = sheets_db.upload_report_pdf(pdf_bytes, f"{filename_base}.pdf", vehicle_no_raw)
-            if drive_link:
-                print(f"Report auto-uploaded to Drive: {drive_link}")
-            else:
-                print("Warning: Auto-upload to Drive failed (non-critical).")
+            filename_pdf = f"{filename_base}.pdf"
+            folder_name_to_use = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no_raw else 'Unknown_Vehicle'
+            
+            from flask import session
+            access_token = session.get('google_access_token')
+            if access_token:
+                # Upload to user's personal drive
+                drive_link = upload_pdf_to_drive(access_token, pdf_bytes, filename_pdf, folder_name_to_use)
+                if drive_link:
+                    print(f"Report auto-uploaded to User's Drive: {drive_link}")
+                else:
+                    print("Warning: Auto-upload to User's Drive failed.")
+
+            if not drive_link:
+                # Fallback to service account
+                drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename_pdf, vehicle_no_raw)
+                if drive_link:
+                    print(f"Report auto-uploaded to Service Account Drive: {drive_link}")
+                else:
+                    print("Warning: Auto-upload to Service Account Drive failed (non-critical).")
         except Exception as drive_err:
             print(f"Warning: Drive auto-upload error (non-critical): {drive_err}")
 
