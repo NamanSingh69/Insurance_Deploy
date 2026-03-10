@@ -2860,11 +2860,11 @@ def save_report():
         # This helper handles checking for existing report by report_no + user_id and updates/creates row
         try:
             sheets_db.save_report(current_user.id, data)
-            flash(f'Report "{report_no}" saved successfully (to Google Sheets).', 'success')
+            flash(f'Report "{report_no}" saved successfully (to Supabase Database).', 'success')
             return jsonify({"success": True, "message": "Report saved."})
         except Exception as sheet_error:
-            print(f"Sheets Error: {sheet_error}")
-            return jsonify({"error": f"Failed to save to Sheets: {str(sheet_error)}"}), 500
+            print(f"Database Error: {sheet_error}")
+            return jsonify({"error": f"Failed to save to Database: {str(sheet_error)}"}), 500
 
     except Exception as e:
         print(f"Error saving report: {e}")

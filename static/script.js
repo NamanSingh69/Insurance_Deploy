@@ -445,6 +445,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         assessmentHeaderGstInput.value = currentAssessmentData.header_gst || '';
         assessmentHeaderVehicleYearInput.value = currentAssessmentData.header_vehicle_year || '';
+        document.getElementById('input-note_text').value = currentAssessmentData.note_text || '';
+        document.getElementById('input-payment_to_text').value = currentAssessmentData.payment_to_text || '';
+        document.getElementById('input-reinspection_note').value = currentAssessmentData.reinspection_note || '';
         document.getElementById('input-enclosures_text').value = currentAssessmentData.enclosures_text || '';
         document.getElementById('input-parts_table_note').value = currentAssessmentData.parts_table_note || '';
         document.getElementById('input-spot_report_text').value = currentAssessmentData.spot_report_text || document.getElementById('input-spot_report_text').defaultValue;
