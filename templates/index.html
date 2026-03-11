@@ -25,19 +25,19 @@
             <h1>Motor Survey Report Generator</h1>
              <!-- Logout Button -->
             {% if current_user.is_authenticated %}
-                <div style="position: absolute; top: 1rem; right: 1rem; display: flex; align-items: center; gap: 1rem;">
-                    <span style="color: var(--text-secondary); font-size: 0.9rem;">Welcome, {{ current_user.username }}</span>
-                    
-                    <button id="header-drive-btn" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.4rem 0.6rem;">
+                <div style="position: absolute; top: 1rem; right: 1rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; z-index: 10;">
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <span style="color: var(--text-secondary); font-size: 0.9rem; margin-right: 0.25rem;">Welcome, <strong>{{ current_user.username }}</strong></span>
+                        <button id="open-profile-modal" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.4rem 0.6rem;">
+                            <i class="fas fa-user-cog"></i> Settings
+                        </button>
+                        <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.4rem 0.6rem;">
+                            <i class="fas fa-sign-out-alt"></i> Logout
+                        </a>
+                    </div>
+                    <button id="header-drive-btn" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.35rem 0.6rem; font-size: 0.8rem; border-radius: 4px;">
                         <i class="fab fa-google-drive"></i> <span id="header-drive-label">...</span>
                     </button>
-
-                    <button id="open-profile-modal" class="btn btn-secondary btn-sm" style="min-width: auto;">
-                        <i class="fas fa-user-cog"></i> Settings
-                    </button>
-                    <a href="{{ url_for('logout') }}" class="btn btn-secondary btn-sm" style="min-width: auto;">
-                        <i class="fas fa-sign-out-alt"></i> Logout
-                    </a>
                 </div>
              {% endif %}
         </header>
