@@ -2274,16 +2274,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (driveBtn && driveStatus) {
                 try {
-                    const driveRes = await fetch('/check_drive_status');
+                    const driveRes = await fetch('/auth/google/status');
                     const driveData = await driveRes.json();
                     
                     if (driveData.connected) {
-                        driveStatus.innerHTML = `<i class="fas fa-check-circle" style="color: #22c55e;"></i> Connected to ${driveData.email || 'Drive'}`;
+                        driveStatus.innerHTML = `<i class="fas fa-check-circle" style="color: #22c55e;"></i> Connected to Drive`;
                         driveBtn.className = 'btn btn-danger btn-sm';
                         driveLabel.textContent = 'Disconnect';
                         driveBtn.onclick = async () => {
                             if(confirm("Disconnect Google Drive?")) {
-                                await fetch('/disconnect_drive', { method: 'POST' });
+                                await fetch('/auth/google/disconnect', { method: 'POST' });
                                 driveBtn.click(); // reload status
                             }
                         };
@@ -2292,7 +2292,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         driveBtn.className = 'btn btn-secondary btn-sm';
                         driveLabel.textContent = 'Connect Drive';
                         driveBtn.onclick = () => {
-                            window.location.href = '/connect_drive';
+                            window.location.href = '/auth/google';
                         };
                     }
                 } catch (e) {
@@ -2323,11 +2323,54 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     alert("Error updating profile: " + result.error);
                 }
+                // Also update the header button if we disconnected from settings
+                initHeaderDriveButton();
             } catch (e) {
                 console.error(e);
                 alert("Error updating profile.");
             }
         });
     }
+
+    // --- Header Drive Button Logic ---
+    async function initHeaderDriveButton() {
+        const headerDriveBtn = document.getElementById('header-drive-btn');
+        const headerDriveLabel = document.getElementById('header-drive-label');
+        if (!headerDriveBtn || !headerDriveLabel) return;
+        
+        try {
+            const res = await fetch('/auth/google/status');
+            const data = await res.json();
+            
+            if (data.connected) {
+                headerDriveBtn.classList.remove('btn-secondary');
+                headerDriveBtn.classList.add('btn-success');
+                headerDriveLabel.textContent = 'Drive Connected';
+                headerDriveBtn.onclick = async () => {
+                    if(confirm("Disconnect Google Drive?")) {
+                        await fetch('/auth/google/disconnect', { method: 'POST' });
+                        initHeaderDriveButton(); // Reload status
+                        // Also click settings button to refresh if it's open
+                        const settingsBtn = document.getElementById('settings-drive-btn');
+                        if (settingsBtn && !document.getElementById('profile-modal').classList.contains('hidden')) {
+                            document.getElementById('open-profile-modal').click();
+                        }
+                    }
+                };
+            } else {
+                headerDriveBtn.classList.remove('btn-success');
+                headerDriveBtn.classList.add('btn-secondary');
+                headerDriveLabel.textContent = 'Connect Drive';
+                headerDriveBtn.onclick = () => {
+                    window.location.href = '/auth/google';
+                };
+            }
+        } catch (e) {
+            console.error("Failed to fetch header Drive status", e);
+        }
+    }
+    
+    // Initialize on page load
+    initHeaderDriveButton();
 
 });

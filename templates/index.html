@@ -24,9 +24,13 @@
         <header class="app-header">
             <h1>Motor Survey Report Generator</h1>
              <!-- Logout Button -->
-             {% if current_user.is_authenticated %}
+            {% if current_user.is_authenticated %}
                 <div style="position: absolute; top: 1rem; right: 1rem; display: flex; align-items: center; gap: 1rem;">
                     <span style="color: var(--text-secondary); font-size: 0.9rem;">Welcome, {{ current_user.username }}</span>
+                    
+                    <button id="header-drive-btn" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.4rem 0.6rem;">
+                        <i class="fab fa-google-drive"></i> <span id="header-drive-label">...</span>
+                    </button>
 
                     <button id="open-profile-modal" class="btn btn-secondary btn-sm" style="min-width: auto;">
                         <i class="fas fa-user-cog"></i> Settings
