@@ -2266,6 +2266,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error(e);
                 alert("Error loading profile settings.");
             }
+
+            // Fetch Google Drive Status
+            const driveBtn = document.getElementById('settings-drive-btn');
+            const driveStatus = document.getElementById('settings-drive-status');
+            const driveLabel = document.getElementById('settings-drive-label');
+
+            if (driveBtn && driveStatus) {
+                try {
+                    const driveRes = await fetch('/check_drive_status');
+                    const driveData = await driveRes.json();
+                    
+                    if (driveData.connected) {
+                        driveStatus.innerHTML = `<i class="fas fa-check-circle" style="color: #22c55e;"></i> Connected to ${driveData.email || 'Drive'}`;
+                        driveBtn.className = 'btn btn-danger btn-sm';
+                        driveLabel.textContent = 'Disconnect';
+                        driveBtn.onclick = async () => {
+                            if(confirm("Disconnect Google Drive?")) {
+                                await fetch('/disconnect_drive', { method: 'POST' });
+                                driveBtn.click(); // reload status
+                            }
+                        };
+                    } else {
+                        driveStatus.innerHTML = `<i class="fas fa-info-circle"></i> Not connected`;
+                        driveBtn.className = 'btn btn-secondary btn-sm';
+                        driveLabel.textContent = 'Connect Drive';
+                        driveBtn.onclick = () => {
+                            window.location.href = '/connect_drive';
+                        };
+                    }
+                } catch (e) {
+                    console.error("Error checking Drive status:", e);
+                }
+            }
         });
 
         closeProfileBtn.addEventListener('click', () => {

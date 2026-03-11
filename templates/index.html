@@ -1363,8 +1363,14 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                         <input type="text" name="email">
                     </div>
                 </div>
-                <div class="form-actions" style="margin-top: 1.5rem;">
+                <div class="form-actions" style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
                     <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Profile</button>
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <span id="settings-drive-status" style="font-size: 0.85rem; color: var(--text-secondary);"></span>
+                        <button type="button" id="settings-drive-btn" class="btn btn-secondary btn-sm" style="min-width: auto;">
+                            <i class="fab fa-google-drive"></i> <span id="settings-drive-label">Connect Drive</span>
+                        </button>
+                    </div>
                 </div>
             </form>
         </div>

@@ -2789,21 +2789,33 @@ def generate_files():
             "vehicle_no": vehicle_no_raw
         }
 
-        # Auto-upload to Google Drive (service account's own Drive)
+        # Auto-upload to Google Drive (if user connected their personal Drive via Settings)
         drive_link = None
         try:
             filename_base = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no_raw.strip() else 'SurveyReport'
             filename_pdf = f"{filename_base}.pdf"
-            drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename_pdf, vehicle_no_raw)
-            if drive_link:
-                print(f"Report auto-uploaded to Service Account Drive: {drive_link}")
-            else:
-                print("Warning: Auto-upload to Service Account Drive failed (non-critical).")
+            
+            from flask import session
+            access_token = session.get('google_access_token')
+            if access_token:
+                folder_name_to_use = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no_raw else 'Unknown_Vehicle'
+                drive_link = upload_pdf_to_drive(access_token, pdf_bytes, filename_pdf, folder_name_to_use)
+                if drive_link:
+                    print(f"Report auto-uploaded to User's Personal Drive: {drive_link}")
+                else:
+                    print("Warning: Auto-upload to User's Personal Drive failed.")
+                    
+            if not drive_link:
+                # Fallback to service account Drive (if available/working)
+                drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename_pdf, vehicle_no_raw)
+                if drive_link:
+                    print(f"Report auto-uploaded to Service Account Drive: {drive_link}")
+                else:
+                    print("Warning: Auto-upload to Service Account Drive failed (non-critical).")
         except Exception as drive_err:
             print(f"Warning: Drive auto-upload error (non-critical): {drive_err}")
 
-
-
+        return jsonify({"request_id": request_id, "drive_link": drive_link})
     except FPDFException as fpdf_err:
         print(f"FPDF Error generating files: {fpdf_err}")
         import traceback; traceback.print_exc()
