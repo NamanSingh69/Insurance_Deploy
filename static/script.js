@@ -77,69 +77,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Store assessment data globally
     let currentAssessmentData = null;
     let currentReportId = null; // To track if we loaded a report
-    let isGoogleDriveConnected = false; // Track Google Drive connection status
-
-    // Google Drive button
-    const googleDriveBtn = document.getElementById('google-drive-btn');
-    const googleDriveStatus = document.getElementById('google-drive-status');
 
     // Step indicators
     const stepUpload = document.getElementById('step-upload');
     const stepReview = document.getElementById('step-review');
     const stepDownload = document.getElementById('step-download');
 
-    // --- Check Google Drive Connection Status ---
-    async function checkGoogleDriveStatus() {
-        try {
-            const response = await fetch('/auth/google/status');
-            if (response.ok) {
-                const data = await response.json();
-                isGoogleDriveConnected = data.connected;
-                updateGoogleDriveUI();
-            }
-        } catch (e) {
-            console.log('Could not check Google Drive status');
-        }
-    }
-
-    function updateGoogleDriveUI() {
-        if (googleDriveBtn && googleDriveStatus) {
-            if (isGoogleDriveConnected) {
-                googleDriveStatus.textContent = 'Drive Connected';
-                googleDriveBtn.classList.add('btn-success');
-                googleDriveBtn.classList.remove('btn-secondary');
-            } else {
-                googleDriveStatus.textContent = 'Connect Drive';
-                googleDriveBtn.classList.remove('btn-success');
-                googleDriveBtn.classList.add('btn-secondary');
-            }
-        }
-    }
-
-    // Google Drive button click handler
-    if (googleDriveBtn) {
-        googleDriveBtn.addEventListener('click', async () => {
-            if (isGoogleDriveConnected) {
-                // Disconnect
-                if (confirm('Disconnect from Google Drive?')) {
-                    try {
-                        await fetch('/auth/google/disconnect', { method: 'POST' });
-                        isGoogleDriveConnected = false;
-                        updateGoogleDriveUI();
-                        showStatus('Disconnected from Google Drive', 'info', true);
-                    } catch (e) {
-                        showStatus('Failed to disconnect', 'error', true);
-                    }
-                }
-            } else {
-                // Connect - redirect to OAuth
-                window.location.href = '/auth/google';
-            }
-        });
-    }
-
-    // Check status on page load
-    checkGoogleDriveStatus();
 
     // --- Helper Functions ---
     function showStatus(message, type = 'processing', isFlash = false) {
@@ -1322,22 +1265,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
         const isLargeFile = file.size > FILE_SIZE_LIMIT;
 
-        if (isLargeFile && !isGoogleDriveConnected) {
-            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            showInvoiceStatus(`File is too large (${fileSizeMB}MB). Connect Google Drive to upload files larger than 4MB.`, 'error');
-            return;
-        }
-
-        showInvoiceStatus(isLargeFile ? 'Uploading to your Google Drive...' : 'Uploading and processing invoice...', 'processing');
+        showInvoiceStatus(isLargeFile ? 'Large file detected. Uploading securely...' : 'Uploading and processing invoice...', 'processing');
         uploadInvoiceButton.disabled = true;
         uploadInvoiceButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Invoice...';
 
         try {
             let response;
 
-            if (isLargeFile && isGoogleDriveConnected) {
-                // Upload to user's Drive
-                const driveFileId = await uploadFileToUserDrive(file);
+            if (isLargeFile) {
+                // Upload via service account proxy (no user Drive connection needed)
+                const driveFileId = await uploadFileDirectly(file);
                 response = await fetch('/process_invoice', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1859,70 +1796,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return fileId;
     }
 
-    // --- Upload to User's Drive (using their OAuth token directly) ---
-    async function uploadFileToUserDrive(file) {
-        const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks (Google recommended)
-        const totalSize = file.size;
-        const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
-
-        // 1. Get Resumable Upload URL + Auth Token using user's session
-        const getUrlResponse = await fetch('/get_user_upload_url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, mime_type: file.type })
-        });
-
-        if (!getUrlResponse.ok) {
-            const errorData = await getUrlResponse.json().catch(() => ({}));
-            if (getUrlResponse.status === 401) {
-                isGoogleDriveConnected = false;
-                updateGoogleDriveUI();
-                throw new Error('Google Drive connection expired. Please reconnect.');
-            }
-            throw new Error(errorData.error || 'Failed to get upload URL.');
-        }
-
-        const { url: uploadUrl, access_token: accessToken } = await getUrlResponse.json();
-
-        // 2. Upload chunks directly to Google Drive
-        let fileId = null;
-
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const start = chunkIndex * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, totalSize);
-            const chunk = file.slice(start, end);
-
-            const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
-
-            const driveResponse = await fetch(uploadUrl, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Range': contentRange,
-                    'Content-Type': file.type
-                },
-                body: chunk // Send binary blob directly
-            });
-
-            if (driveResponse.status === 308) {
-                // Incomplete, continue to next chunk
-                continue;
-            } else if (driveResponse.ok) {
-                // Complete (200 or 201)
-                const result = await driveResponse.json();
-                fileId = result.id;
-                break;
-            } else {
-                throw new Error(`Chunk upload failed with status: ${driveResponse.status}`);
-            }
-        }
-
-        if (!fileId) {
-            throw new Error('Upload completed but no file ID received.');
-        }
-
-        return fileId;
-    }
 
     // --- Process PDF ---
     processButton.addEventListener('click', async () => {
