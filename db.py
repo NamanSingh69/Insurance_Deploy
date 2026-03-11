@@ -339,34 +339,30 @@ class PostgresDB:
              return None
 
     def upload_report_pdf(self, pdf_bytes, filename, vehicle_no):
+        """Upload report PDF into the service account's own Drive under 'Survey Reports' root."""
         try:
             root_folder_id = self._find_or_create_folder('Survey Reports')
             if not root_folder_id: return None
-            
+
             folder_name = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no else 'Unknown_Vehicle'
             vehicle_folder_id = self._find_or_create_folder(folder_name, root_folder_id)
             if not vehicle_folder_id: return None
-            
+
             headers = self._get_auth_header()
             query = f"name='{filename}' and '{vehicle_folder_id}' in parents and trashed=false"
-            search_url = f"https://www.googleapis.com/drive/v3/files"
+            search_url = "https://www.googleapis.com/drive/v3/files"
             params = {'q': query, 'fields': 'files(id,webViewLink)', 'spaces': 'drive'}
-            
+
             search_response = requests.get(search_url, headers=headers, params=params)
             existing_files = []
             if search_response.status_code == 200:
                 existing_files = search_response.json().get('files', [])
 
-            files_multipart = {
-                'metadata': ('', json.dumps({'name': filename, 'parents': [vehicle_folder_id], 'mimeType': 'application/pdf'}), 'application/json'),
-                'file': (filename, pdf_bytes, 'application/pdf')
-            }
-            
             if existing_files:
                 file_id = existing_files[0]['id']
                 files_multipart = {
-                     'metadata': ('', json.dumps({}), 'application/json'),
-                     'file': (filename, pdf_bytes, 'application/pdf')
+                    'metadata': ('', json.dumps({}), 'application/json'),
+                    'file': (filename, pdf_bytes, 'application/pdf')
                 }
                 update_url = f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=multipart&fields=id,webViewLink"
                 response = requests.patch(update_url, headers=headers, files=files_multipart)
@@ -374,11 +370,19 @@ class PostgresDB:
                     return response.json().get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view")
             else:
                 upload_url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink"
+                files_multipart = {
+                    'metadata': ('', json.dumps({'name': filename, 'parents': [vehicle_folder_id], 'mimeType': 'application/pdf'}), 'application/json'),
+                    'file': (filename, pdf_bytes, 'application/pdf')
+                }
                 response = requests.post(upload_url, headers=headers, files=files_multipart)
                 if response.status_code in [200, 201]:
                     return response.json().get('webViewLink', f"https://drive.google.com/file/d/{response.json().get('id')}/view")
+
+            print(f"Drive upload failed: {response.status_code} - {response.text[:200]}")
             return None
         except Exception as e:
-             return None
+            print(f"Drive upload error: {e}")
+            return None
+
 
 db = PostgresDB()

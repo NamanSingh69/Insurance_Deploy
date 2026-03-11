@@ -1947,18 +1947,16 @@ document.addEventListener('DOMContentLoaded', () => {
         pdfLink.target = '_blank';
         downloadLinksDiv.appendChild(pdfLink);
 
-        // Drive auto-upload status
-        const driveStatus = document.createElement('span');
-        driveStatus.style.marginLeft = '10px';
-        driveStatus.style.display = 'inline-flex';
-        driveStatus.style.alignItems = 'center';
-        driveStatus.style.gap = '5px';
+        // Drive auto-upload status — only show when link actually exists
         if (driveLink) {
+            const driveStatus = document.createElement('span');
+            driveStatus.style.marginLeft = '10px';
+            driveStatus.style.display = 'inline-flex';
+            driveStatus.style.alignItems = 'center';
+            driveStatus.style.gap = '5px';
             driveStatus.innerHTML = `<i class="fas fa-check-circle" style="color: #22c55e;"></i> <a href="${driveLink}" target="_blank" style="color: #22c55e;">Saved to Drive</a>`;
-        } else {
-            driveStatus.innerHTML = `<i class="fas fa-exclamation-circle" style="color: #f59e0b;"></i> <span style="color: #f59e0b; font-size: 0.85em;">Drive upload pending</span>`;
+            downloadLinksDiv.appendChild(driveStatus);
         }
-        downloadLinksDiv.appendChild(driveStatus);
 
         previewSection.classList.add('hidden');
         downloadSection.classList.remove('hidden');
