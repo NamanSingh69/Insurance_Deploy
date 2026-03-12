@@ -761,12 +761,18 @@ def get_user_upload_url():
     if not filename:
         return jsonify({'error': 'Filename required'}), 400
     
+    # Retrieve the origin from the frontend request to bind the Google CORS policy
+    origin = request.headers.get('Origin')
+    
     # Initiate resumable upload with user's token
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json',
         'X-Upload-Content-Type': mime_type,
     }
+    
+    if origin:
+        headers['Origin'] = origin
     
     metadata = {
         'name': filename,
@@ -800,6 +806,8 @@ def get_user_upload_url():
                 new_tokens = refresh_response.json()
                 session['google_access_token'] = new_tokens.get('access_token')
                 # Retry upload URL request
+                if origin:
+                    headers['Origin'] = origin
                 headers['Authorization'] = f"Bearer {new_tokens.get('access_token')}"
                 retry_response = requests.post(
                     'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
@@ -835,6 +843,8 @@ def get_gemini_upload_url():
     if not api_key:
         return jsonify({"error": "No API key"}), 500
         
+    origin = request.headers.get('Origin')
+        
     headers = {
         'X-Goog-Upload-Protocol': 'resumable',
         'X-Goog-Upload-Command': 'start',
@@ -842,6 +852,9 @@ def get_gemini_upload_url():
         'X-Goog-Upload-Header-Content-Type': mime_type,
         'Content-Type': 'application/json'
     }
+    
+    if origin:
+        headers['Origin'] = origin
     
     metadata = {
         'file': {
