@@ -1749,14 +1749,65 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Direct Gemini Upload Helper ---
-    async function uploadFileDirectly(file) {
+    async function uploadToDrive(file) {
+        const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
+        const totalSize = file.size;
+
+        showStatus('Requesting Drive upload link...', 'processing');
+
+        const getUrlResponse = await fetch('/get_user_upload_url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, mime_type: file.type })
+        });
+
+        if (!getUrlResponse.ok) {
+            let err = await getUrlResponse.text();
+            throw new Error(`Failed to get Drive upload URL: ${err}`);
+        }
+
+        const { url: uploadUrl } = await getUrlResponse.json();
+
+        let driveFileId = null;
+
+        for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
+            const end = Math.min(start + CHUNK_SIZE, totalSize);
+            const chunk = file.slice(start, end);
+            
+            showStatus(`Uploading to Drive (${Math.round((end/totalSize)*100)}%)...`, 'processing');
+
+            const uploadResponse = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`
+                },
+                body: chunk
+            });
+
+            if (uploadResponse.status === 308) {
+                // Incomplete, continue
+                continue;
+            } else if (uploadResponse.ok) {
+                // Done
+                const result = await uploadResponse.json();
+                driveFileId = result.id;
+                break;
+            } else {
+                let errorText = await uploadResponse.text();
+                throw new Error(`Drive Upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
+            }
+        }
+
+        return { drive_file_id: driveFileId };
+    }
+
+    async function uploadToGemini(file) {
         // Gemini requires 8MB chunk granularity for resumable uploads
         const CHUNK_SIZE = 8 * 1024 * 1024; 
         const totalSize = file.size;
         const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
-        showStatus('Requesting secure direct upload link...', 'processing');
+        showStatus('Requesting fallback direct upload link...', 'processing');
 
         // 1. Get Resumable Upload URL from Backend (which securely uses the API Key)
         const getUrlResponse = await fetch('/get_gemini_upload_url', {
@@ -1767,7 +1818,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!getUrlResponse.ok) {
             let err = await getUrlResponse.text();
-            throw new Error(`Failed to get upload URL: ${err}`);
+            throw new Error(`Failed to get fallback upload URL: ${err}`);
         }
 
         const { url: uploadUrl } = await getUrlResponse.json();
@@ -1783,7 +1834,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const isFinal = (chunkIndex === totalChunks - 1);
             const command = isFinal ? "upload, finalize" : "upload";
 
-            showStatus(`Uploading chunk ${chunkIndex + 1} of ${totalChunks}...`, 'processing');
+            showStatus(`Uploading fallback chunk ${chunkIndex + 1} of ${totalChunks}...`, 'processing');
 
             const uploadResponse = await fetch(uploadUrl, {
                 method: 'POST',
@@ -1796,7 +1847,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!uploadResponse.ok) {
                 let errorText = await uploadResponse.text();
-                throw new Error(`Chunk ${chunkIndex + 1} upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
+                throw new Error(`Fallback Chunk ${chunkIndex + 1} upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
             }
             
             if (isFinal) {
@@ -1809,7 +1860,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        return fileUri;
+        return { gemini_file_uri: fileUri };
+    }
+
+    // --- Direct Upload Helper ---
+    async function uploadFileDirectly(file) {
+        try {
+            const statusRes = await fetch('/auth/google/status');
+            const data = await statusRes.json();
+            if (data.connected) {
+                return await uploadToDrive(file);
+            }
+        } catch (e) {
+            console.error("Failed to check Drive status, trying Gemini fallback.", e);
+        }
+        
+        // Fallback to Gemini if not connected or getting status fails
+        return await uploadToGemini(file);
     }
 
 
@@ -1842,12 +1909,12 @@ document.addEventListener('DOMContentLoaded', () => {
             let response;
 
             if (isLargeFile) {
-                // Upload securely and directly to Gemini
-                const geminiFileUri = await uploadFileDirectly(file);
+                // Upload via Drive or Gemini Fallback
+                const uploadResult = await uploadFileDirectly(file);
                 response = await fetch('/process_pdf', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ gemini_file_uri: geminiFileUri, mime_type: file.type })
+                    body: JSON.stringify({ ...uploadResult, mime_type: file.type })
                 });
             } else {
                 // Standard Upload

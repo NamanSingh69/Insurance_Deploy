@@ -1035,24 +1035,61 @@ def upload_report_to_drive():
 @login_required
 @limiter.limit("10 per minute")
 def process_pdf():
-    # Handle multipart/form-data (Standard) OR JSON (Direct Gemini Upload)
+    # Handle multipart/form-data (Standard) OR JSON (Drive/Gemini Direct Upload)
     pdf_content = None
     pdf_part = None
     
     if request.content_type == 'application/json':
         data = request.get_json()
-        gemini_file_uri = data.get('gemini_file_uri')
         mime_type = data.get('mime_type', 'application/pdf')
-        if not gemini_file_uri:
-            return jsonify({"error": "No gemini_file_uri provided"}), 400
         
-        # We don't need to load the content, Gemini already has it
-        pdf_part = {
-            "file_data": {
-                "mime_type": mime_type,
-                "file_uri": gemini_file_uri
+        if 'drive_file_id' in data:
+            drive_file_id = data['drive_file_id']
+            from flask import session
+            access_token = session.get('google_access_token')
+            if not access_token:
+                 return jsonify({"error": "Google Drive not connected. Please reconnect in Profile Settings."}), 401
+                 
+            print(f"Downloading file {drive_file_id} from user's Drive...")
+            pdf_bytes = download_drive_file_with_token(access_token, drive_file_id)
+            if not pdf_bytes:
+                 return jsonify({"error": "Failed to download file from Google Drive. Ensure the file still exists."}), 500
+                 
+            print("Successfully downloaded from Drive. Uploading to Gemini...")
+            import tempfile
+            import os
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(pdf_bytes)
+                temp_filename = temp_file.name
+                
+            try:
+                uploaded_file = genai.upload_file(path=temp_filename, mime_type=mime_type)
+                print(f"Uploaded to Gemini URI: {uploaded_file.uri}")
+                pdf_part = {
+                    "file_data": {
+                        "mime_type": mime_type,
+                        "file_uri": uploaded_file.uri
+                    }
+                }
+            except Exception as e:
+                print(f"Error uploading to Gemini: {e}")
+                return jsonify({"error": "Failed to upload file to AI limits."}), 500
+            finally:
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+                    
+        elif 'gemini_file_uri' in data:
+            gemini_file_uri = data['gemini_file_uri']
+            print(f"Using direct Gemini URI: {gemini_file_uri}")
+            pdf_part = {
+                "file_data": {
+                    "mime_type": mime_type,
+                    "file_uri": gemini_file_uri
+                }
             }
-        }
+        else:
+            return jsonify({"error": "No drive_file_id or gemini_file_uri provided"}), 400
              
     elif 'pdf_file' in request.files:
         file = request.files['pdf_file']
