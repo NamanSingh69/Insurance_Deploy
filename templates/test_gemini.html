@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gemini Direct Upload Test</title>
+</head>
+<body>
+    <input type="file" id="fileInput" />
+    <button onclick="uploadFile()">Upload to Gemini</button>
+    <div id="output"></div>
+
+    <script>
+        async function uploadFile() {
+            const output = document.getElementById('output');
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) return;
+
+            output.innerHTML = "Requesting upload URL from backend...<br>";
+            
+            // Backend will generate the start URL using the API Key
+            const resp = await fetch('/get_gemini_upload_url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: file.name, size: file.size, mime_type: file.type })
+            });
+            const data = await resp.json();
+            const uploadUrl = data.url;
+            
+            output.innerHTML += "Got Upload URL, uploading chunks...<br>";
+
+            const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB exactly
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+                
+                const isFinal = (i === totalChunks - 1);
+                const command = isFinal ? "upload, finalize" : "upload";
+
+                const chunkResp = await fetch(uploadUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-Goog-Upload-Command': command,
+                        'X-Goog-Upload-Offset': start.toString()
+                    },
+                    body: chunk
+                });
+
+                output.innerHTML += `Chunk ${i+1}/${totalChunks} Status: ${chunkResp.status}<br>`;
+                
+                if (isFinal) {
+                    const result = await chunkResp.json();
+                    output.innerHTML += `<b>Final Result:</b> ${JSON.stringify(result)}<br>`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

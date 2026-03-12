@@ -907,7 +907,43 @@ def proxy_upload_chunk():
         print(f"Error proxying upload chunk: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": "An error occurred during file upload. Please try again."}), 500
+@app.route('/test_gemini')
+def test_gemini():
+    return render_template('test_gemini.html')
+
+@app.route('/get_gemini_upload_url', methods=['POST'])
+def get_gemini_upload_url():
+    data = request.get_json()
+    filename = data.get('filename', 'document.pdf')
+    size = data.get('size')
+    mime_type = data.get('mime_type', 'application/pdf')
+    
+    api_key = os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        return jsonify({"error": "No API key"}), 500
+        
+    headers = {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': str(size),
+        'X-Goog-Upload-Header-Content-Type': mime_type,
+        'Content-Type': 'application/json'
+    }
+    
+    metadata = {
+        'file': {
+            'display_name': filename
+        }
+    }
+    
+    url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
+    resp = requests.post(url, headers=headers, json=metadata)
+    
+    if resp.status_code != 200:
+        return jsonify({"error": f"Failed to get upload URL: {resp.text}"}), 500
+        
+    upload_url = resp.headers.get('X-Goog-Upload-URL')
+    return jsonify({"url": upload_url})
 
 def download_drive_file_with_token(access_token, file_id):
     """Downloads file content from Drive using the user's OAuth access token."""
