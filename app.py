@@ -895,14 +895,14 @@ def proxy_upload_chunk():
             })
         elif response.status_code == 308:
             range_header = response.headers.get('Range', '')
+            # Return 200 OK so the browser's fetch API doesn't try to automatically redirect
             return jsonify({
                 "complete": False,
                 "range": range_header
-            })
+            }), 200
         else:
             print(f"Upload chunk failed: {response.status_code} - {response.text}")
-            return jsonify({"error": "Upload failed. Please try again."}), 500
-            
+            return jsonify({"error": "Upload failed. Please try again."}), response.status_code
     except Exception as e:
         print(f"Error proxying upload chunk: {e}")
         import traceback

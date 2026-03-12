@@ -1737,9 +1737,22 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // --- Direct Drive Upload Helper (Direct to Google APIs) ---
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            reader.onload = () => {
+                const result = reader.result;
+                resolve(result.split(',')[1]); // Remove data URL prefix
+            };
+            reader.onerror = error => reject(error);
+        });
+    }
+
+    // --- Proxy Drive Upload Helper ---
     async function uploadFileDirectly(file) {
-        const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks (Google recommended)
+        // 2 MB chunks (Must be multiple of 256KB, 2MB safely under Vercel 4.5MB limit after Base64 translation)
+        const CHUNK_SIZE = 2 * 1024 * 1024; 
         const totalSize = file.size;
         const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
@@ -1756,7 +1769,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const { url: uploadUrl } = await getUrlResponse.json();
 
-        // 2. Upload chunks directly to Google Drive
+        // 2. Upload chunks via proxy
         let fileId = null;
 
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -1764,28 +1777,39 @@ document.addEventListener('DOMContentLoaded', () => {
             const end = Math.min(start + CHUNK_SIZE, totalSize);
             const chunk = file.slice(start, end);
 
-            // Content-Range format: "bytes start-end/total"
             const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
+            const chunkBase64 = await blobToBase64(chunk);
 
-            const driveResponse = await fetch(uploadUrl, {
-                method: 'PUT',
+            const proxyResponse = await fetch('/proxy_upload_chunk', {
+                method: 'POST',
                 headers: {
-                    'Content-Range': contentRange,
-                    'Content-Type': file.type
+                    'Content-Type': 'application/json'
                 },
-                body: chunk // Send binary blob directly
+                body: JSON.stringify({
+                    upload_url: uploadUrl,
+                    chunk_data: chunkBase64,
+                    content_range: contentRange,
+                    content_type: file.type
+                })
             });
 
-            if (driveResponse.status === 308) {
-                // Incomplete, continue to next chunk
-                continue;
-            } else if (driveResponse.ok) {
-                // Complete (200 or 201)
-                const result = await driveResponse.json();
-                fileId = result.id;
+            if (!proxyResponse.ok) {
+                let errorText = await proxyResponse.text();
+                throw new Error(`Proxy chunk upload failed! Status: ${proxyResponse.status}, Error: ${errorText}`);
+            }
+
+            const result = await proxyResponse.json();
+
+            if (result.complete === false || result.status === 'incomplete') {
+                continue; // Move to next chunk
+            } else if (result.complete === true || result.file_id) {
+                fileId = result.file_id || result.id;
                 break;
+            } else if (result.id) {
+                 fileId = result.id;
+                 break;
             } else {
-                throw new Error(`Chunk upload failed with status: ${driveResponse.status}`);
+                 throw new Error('Unexpected response from proxy: ' + JSON.stringify(result));
             }
         }
 
