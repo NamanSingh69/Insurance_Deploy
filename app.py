@@ -829,12 +829,13 @@ def get_upload_url():
     data = request.get_json()
     filename = data.get('filename')
     mime_type = data.get('mime_type', 'application/pdf')
+    origin = request.headers.get('Origin') or request.host_url.rstrip('/')
     
     if not filename:
          return jsonify({"error": "Filename required"}), 400
     
     # Get upload URL and access token
-    result = sheets_db.get_resumable_upload_url_with_token(filename, mime_type)
+    result = sheets_db.get_resumable_upload_url_with_token(filename, mime_type, origin=origin)
     
     if result:
         # SECURITY: Return URL only; access_token stays server-side for proxy use (VULN-08)

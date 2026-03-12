@@ -223,11 +223,11 @@ class PostgresDB:
              return False
 
     # --- Drive Methods (Unchanged, relies on Google Auth) ---
-    def get_resumable_upload_url(self, filename, mime_type='application/pdf'):
-        result = self.get_resumable_upload_url_with_token(filename, mime_type)
+    def get_resumable_upload_url(self, filename, mime_type='application/pdf', origin=None):
+        result = self.get_resumable_upload_url_with_token(filename, mime_type, origin)
         return result['url'] if result else None
     
-    def get_resumable_upload_url_with_token(self, filename, mime_type='application/pdf'):
+    def get_resumable_upload_url_with_token(self, filename, mime_type='application/pdf', origin=None):
         if not self.creds: self.connect()
         try:
             from google.auth.transport.requests import Request
@@ -240,6 +240,8 @@ class PostgresDB:
                 'Content-Type': 'application/json',
                 'X-Upload-Content-Type': mime_type,
             }
+            if origin:
+                headers['Origin'] = origin
             metadata = {
                 'name': filename,
                 'mimeType': mime_type

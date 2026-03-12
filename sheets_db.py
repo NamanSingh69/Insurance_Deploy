@@ -131,14 +131,14 @@ class SheetsDB:
         return new_id
 
     # --- Drive Methods ---
-    def get_resumable_upload_url(self, filename, mime_type='application/pdf'):
+    def get_resumable_upload_url(self, filename, mime_type='application/pdf', origin=None):
         """
         Generates a resumable upload session URL for direct frontend upload.
         """
-        result = self.get_resumable_upload_url_with_token(filename, mime_type)
+        result = self.get_resumable_upload_url_with_token(filename, mime_type, origin)
         return result['url'] if result else None
     
-    def get_resumable_upload_url_with_token(self, filename, mime_type='application/pdf'):
+    def get_resumable_upload_url_with_token(self, filename, mime_type='application/pdf', origin=None):
         """
         Generates a resumable upload session URL and returns it with the access token.
         """
@@ -156,6 +156,8 @@ class SheetsDB:
                 'Content-Type': 'application/json',
                 'X-Upload-Content-Type': mime_type,
             }
+            if origin:
+                headers['Origin'] = origin
             
             metadata = {
                 'name': filename,
