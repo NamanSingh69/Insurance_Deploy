@@ -822,94 +822,7 @@ def get_user_upload_url():
 def index():
     return render_template('index.html')
 
-@app.route('/get_upload_url', methods=['POST'])
-@login_required
-@limiter.limit("20 per minute")
-def get_upload_url():
-    data = request.get_json()
-    filename = data.get('filename')
-    mime_type = data.get('mime_type', 'application/pdf')
-    origin = request.headers.get('Origin') or request.host_url.rstrip('/')
-    
-    if not filename:
-         return jsonify({"error": "Filename required"}), 400
-    
-    # Get upload URL and access token
-    result = sheets_db.get_resumable_upload_url_with_token(filename, mime_type, origin=origin)
-    
-    if result:
-        # SECURITY: Return URL only; access_token stays server-side for proxy use (VULN-08)
-        return jsonify({"url": result['url']})
-    else:
-        return jsonify({"error": "Failed to generate upload URL"}), 500
 
-@app.route('/proxy_upload_chunk', methods=['POST'])
-@login_required
-@limiter.limit("60 per minute")
-def proxy_upload_chunk():
-    """
-    Proxies a file chunk to Google Drive's resumable upload endpoint.
-    This bypasses CORS restrictions by having the server make the request.
-    """
-    import requests as http_requests
-    import base64
-    
-    data = request.get_json()
-    upload_url = data.get('upload_url')
-    chunk_data_b64 = data.get('chunk_data')  # Base64 encoded chunk
-    content_range = data.get('content_range')  # e.g., "bytes 0-2097151/5000000"
-    content_type = data.get('content_type', 'application/pdf')
-    access_token = data.get('access_token')  # Auth token for Drive API
-    
-    if not upload_url or not chunk_data_b64 or not content_range:
-        return jsonify({"error": "Missing required fields: upload_url, chunk_data, content_range"}), 400
-    
-    # SECURITY: Validate upload_url against allowlist to prevent SSRF (VULN-06)
-    if not _is_allowed_upload_url(upload_url):
-        print(f"SECURITY: Blocked SSRF attempt to: {upload_url}")
-        return jsonify({"error": "Invalid upload URL. Only Google APIs are allowed."}), 400
-    
-    try:
-        chunk_bytes = base64.b64decode(chunk_data_b64)
-        
-        headers = {
-            'Content-Length': str(len(chunk_bytes)),
-            'Content-Range': content_range,
-            'Content-Type': content_type
-        }
-        
-        # Add authorization if provided
-        if access_token:
-            headers['Authorization'] = f'Bearer {access_token}'
-        
-        response = http_requests.put(upload_url, headers=headers, data=chunk_bytes)
-        
-        # 308 = Resume Incomplete (more chunks needed)
-        # 200/201 = Upload Complete
-        if response.status_code in [200, 201]:
-            file_data = response.json()
-            return jsonify({
-                "complete": True,
-                "file_id": file_data.get('id'),
-                "file_name": file_data.get('name')
-            })
-        elif response.status_code == 308:
-            range_header = response.headers.get('Range', '')
-            # Return 200 OK so the browser's fetch API doesn't try to automatically redirect
-            return jsonify({
-                "complete": False,
-                "range": range_header
-            }), 200
-        else:
-            print(f"Upload chunk failed: {response.status_code} - {response.text}")
-            return jsonify({"error": "Upload failed. Please try again."}), response.status_code
-    except Exception as e:
-        print(f"Error proxying upload chunk: {e}")
-        import traceback
-        traceback.print_exc()
-@app.route('/test_gemini')
-def test_gemini():
-    return render_template('test_gemini.html')
 
 @app.route('/get_gemini_upload_url', methods=['POST'])
 def get_gemini_upload_url():
@@ -1122,19 +1035,24 @@ def upload_report_to_drive():
 @login_required
 @limiter.limit("10 per minute")
 def process_pdf():
-    # Handle multipart/form-data (Standard) OR JSON (Direct Drive Upload)
+    # Handle multipart/form-data (Standard) OR JSON (Direct Gemini Upload)
     pdf_content = None
+    pdf_part = None
     
     if request.content_type == 'application/json':
         data = request.get_json()
-        drive_file_id = data.get('drive_file_id')
-        if not drive_file_id:
-            return jsonify({"error": "No drive_file_id provided"}), 400
+        gemini_file_uri = data.get('gemini_file_uri')
+        mime_type = data.get('mime_type', 'application/pdf')
+        if not gemini_file_uri:
+            return jsonify({"error": "No gemini_file_uri provided"}), 400
         
-        # Fetch content from Service Account Drive (proxy)
-        pdf_content = sheets_db.get_file_content(drive_file_id)
-        if not pdf_content:
-             return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
+        # We don't need to load the content, Gemini already has it
+        pdf_part = {
+            "file_data": {
+                "mime_type": mime_type,
+                "file_uri": gemini_file_uri
+            }
+        }
              
     elif 'pdf_file' in request.files:
         file = request.files['pdf_file']
@@ -1142,6 +1060,7 @@ def process_pdf():
             return jsonify({"error": "No selected file"}), 400
         if file and file.mimetype == 'application/pdf':
             pdf_content = file.read()
+            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
         else:
              return jsonify({"error": "Invalid file type. Please upload a PDF."}), 400
     else:
@@ -1150,7 +1069,6 @@ def process_pdf():
     # Common Processing
     try:
         prompt = build_gemini_prompt()
-        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
         prompt_part = {"text": prompt}
 
         # Generate content using the configured model

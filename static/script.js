@@ -1749,75 +1749,67 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Proxy Drive Upload Helper ---
+    // --- Direct Gemini Upload Helper ---
     async function uploadFileDirectly(file) {
-        // 2 MB chunks (Must be multiple of 256KB, 2MB safely under Vercel 4.5MB limit after Base64 translation)
-        const CHUNK_SIZE = 2 * 1024 * 1024; 
+        // Gemini requires 8MB chunk granularity for resumable uploads
+        const CHUNK_SIZE = 8 * 1024 * 1024; 
         const totalSize = file.size;
         const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
 
-        // 1. Get Resumable Upload URL from Backend
-        const getUrlResponse = await fetch('/get_upload_url', {
+        showStatus('Requesting secure direct upload link...', 'processing');
+
+        // 1. Get Resumable Upload URL from Backend (which securely uses the API Key)
+        const getUrlResponse = await fetch('/get_gemini_upload_url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, mime_type: file.type, file_size: totalSize })
+            body: JSON.stringify({ filename: file.name, mime_type: file.type, size: totalSize })
         });
 
         if (!getUrlResponse.ok) {
-            throw new Error('Failed to get upload URL from server.');
+            let err = await getUrlResponse.text();
+            throw new Error(`Failed to get upload URL: ${err}`);
         }
 
         const { url: uploadUrl } = await getUrlResponse.json();
 
-        // 2. Upload chunks via proxy
-        let fileId = null;
+        // 2. Upload chunks directly to Google's servers over CORS
+        let fileUri = null;
 
         for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
             const start = chunkIndex * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, totalSize);
             const chunk = file.slice(start, end);
+            
+            const isFinal = (chunkIndex === totalChunks - 1);
+            const command = isFinal ? "upload, finalize" : "upload";
 
-            const contentRange = `bytes ${start}-${end - 1}/${totalSize}`;
-            const chunkBase64 = await blobToBase64(chunk);
+            showStatus(`Uploading chunk ${chunkIndex + 1} of ${totalChunks}...`, 'processing');
 
-            const proxyResponse = await fetch('/proxy_upload_chunk', {
+            const uploadResponse = await fetch(uploadUrl, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'X-Goog-Upload-Command': command,
+                    'X-Goog-Upload-Offset': start.toString()
                 },
-                body: JSON.stringify({
-                    upload_url: uploadUrl,
-                    chunk_data: chunkBase64,
-                    content_range: contentRange,
-                    content_type: file.type
-                })
+                body: chunk // Send raw bytes, no Base64 necessary!
             });
 
-            if (!proxyResponse.ok) {
-                let errorText = await proxyResponse.text();
-                throw new Error(`Proxy chunk upload failed! Status: ${proxyResponse.status}, Error: ${errorText}`);
+            if (!uploadResponse.ok) {
+                let errorText = await uploadResponse.text();
+                throw new Error(`Chunk ${chunkIndex + 1} upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
             }
-
-            const result = await proxyResponse.json();
-
-            if (result.complete === false || result.status === 'incomplete') {
-                continue; // Move to next chunk
-            } else if (result.complete === true || result.file_id) {
-                fileId = result.file_id || result.id;
-                break;
-            } else if (result.id) {
-                 fileId = result.id;
-                 break;
-            } else {
-                 throw new Error('Unexpected response from proxy: ' + JSON.stringify(result));
+            
+            if (isFinal) {
+                const result = await uploadResponse.json();
+                if (result.file && result.file.uri) {
+                    fileUri = result.file.uri;
+                } else {
+                    throw new Error('Upload completed but no file URI received: ' + JSON.stringify(result));
+                }
             }
         }
 
-        if (!fileId) {
-            throw new Error('Upload completed but no file ID received.');
-        }
-
-        return fileId;
+        return fileUri;
     }
 
 
@@ -1850,12 +1842,12 @@ document.addEventListener('DOMContentLoaded', () => {
             let response;
 
             if (isLargeFile) {
-                // Upload to service account's Drive
-                const driveFileId = await uploadFileDirectly(file);
+                // Upload securely and directly to Gemini
+                const geminiFileUri = await uploadFileDirectly(file);
                 response = await fetch('/process_pdf', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ drive_file_id: driveFileId })
+                    body: JSON.stringify({ gemini_file_uri: geminiFileUri, mime_type: file.type })
                 });
             } else {
                 // Standard Upload
