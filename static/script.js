@@ -76,7 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Store assessment data globally
     let currentAssessmentData = null;
-    let currentReportId = null; // To track if we loaded a report
+    let currentReportId = null; // To track if we loaded a report (display row ID)
+    let currentDbReportId = null; // The Postgres UUID of the currently-loaded report (for safe updates)
 
     // Step indicators
     const stepUpload = document.getElementById('step-upload');
@@ -259,12 +260,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Display Preview Data ---
-    function displayPreview(combinedData, loadedReportId = null) {
+    function displayPreview(combinedData, loadedReportId = null, loadedDbReportId = null) {
         previewForm.reset();
         labourDetailsTbody.innerHTML = '';
         partsDetailsTbody.innerHTML = '';
         if (page3FeeItemsTbody) page3FeeItemsTbody.innerHTML = '';
         currentReportId = loadedReportId;
+        currentDbReportId = loadedDbReportId; // Store the Postgres UUID for safe updates
 
         // --- FIX: Reset Global Photo State ---
         uploadedPhotos.first_inspection = [];
@@ -1997,6 +1999,11 @@ document.addEventListener('DOMContentLoaded', () => {
         generateButton.disabled = true;
 
         const finalDataToSend = collectFinalData();
+        // Attach the current DB UUID so the backend knows which row to UPDATE.
+        // If null, the backend will INSERT a fresh row.
+        if (currentDbReportId) {
+            finalDataToSend._current_report_id = currentDbReportId;
+        }
 
         try {
             const response = await fetch('/save_report', {
@@ -2006,6 +2013,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok) {
                 throw new Error(result.error || `Server error: ${response.status}`);
+            }
+            // Update our local UUID with what the server confirmed/created.
+            // This ensures that the very first save of a new report also correctly tracks the ID.
+            if (result.report_id) {
+                currentDbReportId = result.report_id;
             }
             showStatus(result.message || 'Report saved successfully!', 'success', true);
             fetchSavedReports();
@@ -2075,6 +2087,7 @@ document.addEventListener('DOMContentLoaded', () => {
         hideStatus();
         fetchSavedReports();
         currentReportId = null;
+        currentDbReportId = null; // Clear UUID tracking - next save will INSERT a new row
     });
 
     // --- Saved Reports Functionality ---
@@ -2146,7 +2159,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function handleLoadReport(event) {
         const button = event.currentTarget;
-        const reportId = button.dataset.reportId;
+        const reportId = button.dataset.reportId; // This IS the Postgres UUID
         showStatus('Loading report data...', 'processing');
         button.disabled = true; button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
@@ -2158,7 +2171,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorMsg);
             }
             const reportData = await response.json();
-            displayPreview(reportData, reportId);
+            // Pass reportId as BOTH the display ID and the DB UUID for safe updates
+            displayPreview(reportData, reportId, reportId);
         } catch (error) {
             console.error("Error loading report:", error);
             showStatus(`Failed to load report: ${error.message}`, 'error', true);

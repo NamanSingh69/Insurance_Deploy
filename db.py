@@ -168,8 +168,15 @@ class PostgresDB:
              print(f"Error getting user reports: {e}")
              return []
 
-    def save_report(self, user_id, report_data_dict):
-        """Saves a report to PostgreSQL natively as JSONB!"""
+    def save_report(self, user_id, report_data_dict, existing_report_id=None):
+        """Saves a report to PostgreSQL natively as JSONB!
+        
+        If existing_report_id is provided (the UUID of the currently-loaded report),
+        we UPDATE that specific row. This prevents silent overwrites caused by two
+        different reports sharing the same report_no string.
+        
+        If existing_report_id is None (brand-new report), we INSERT a fresh row.
+        """
         if not self.conn: self.connect()
         if not self.conn: return None
         try:
@@ -184,20 +191,25 @@ class PostgresDB:
             report_data_json = json.dumps(report_data_dict)
 
             with self.conn.cursor() as cur:
-                # Check if it exists for updates
-                cur.execute("SELECT id FROM reports WHERE user_id = %s AND report_no = %s;", (user_id, report_no))
-                existing = cur.fetchone()
-                
-                if existing:
-                    report_id = existing[0]
-                    cur.execute("""
-                        UPDATE reports SET
-                            insured_name = %s, vehicle_no = %s, claim_no = %s,
-                            policy_no = %s, saved_at = %s, report_data_json = %s::jsonb
-                        WHERE id = %s RETURNING id;
-                    """, (insured_name, vehicle_no, claim_no, policy_no, saved_at, report_data_json, report_id))
-                    return cur.fetchone()[0]
-                else:
+                if existing_report_id:
+                    # PRIORITY: If we know which row to update (by UUID), update it directly.
+                    # First verify this UUID actually belongs to this user (security check).
+                    cur.execute("SELECT id FROM reports WHERE id = %s AND user_id = %s;", (existing_report_id, user_id))
+                    verified = cur.fetchone()
+                    if verified:
+                        cur.execute("""
+                            UPDATE reports SET
+                                report_no = %s, insured_name = %s, vehicle_no = %s, claim_no = %s,
+                                policy_no = %s, saved_at = %s, report_data_json = %s::jsonb
+                            WHERE id = %s RETURNING id;
+                        """, (report_no, insured_name, vehicle_no, claim_no, policy_no, saved_at, report_data_json, existing_report_id))
+                        return cur.fetchone()[0]
+                    else:
+                        print(f"Warning: existing_report_id {existing_report_id} not found for user {user_id}. Creating new record.")
+                        existing_report_id = None  # Fall through to insert
+
+                if not existing_report_id:
+                    # No existing ID provided — this is a new report. Insert fresh row.
                     new_id = str(uuid.uuid4())
                     cur.execute("""
                         INSERT INTO reports (

@@ -2877,14 +2877,19 @@ def save_report():
         if not report_no:
             return jsonify({"error": "Report Number cannot be empty"}), 400
 
-        # Delegate saving to Sheets Helper
-        # This helper handles checking for existing report by report_no + user_id and updates/creates row
+        # Extract the UUID of the currently-loaded report (if editing an existing one).
+        # This ensures we UPDATE the correct row instead of matching by report_no string.
+        existing_report_id = data.get('_current_report_id') or None
+
         try:
-            sheets_db.save_report(current_user.id, data)
-            flash(f'Report "{report_no}" saved successfully (to Supabase Database).', 'success')
-            return jsonify({"success": True, "message": "Report saved."})
+            saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
+            if saved_id:
+                return jsonify({"success": True, "message": f'Report "{report_no}" saved successfully.', "report_id": saved_id})
+            else:
+                return jsonify({"error": "Failed to save to Database (unknown error)."}), 500
         except Exception as sheet_error:
             print(f"Database Error: {sheet_error}")
+            import traceback; traceback.print_exc()
             return jsonify({"error": f"Failed to save to Database: {str(sheet_error)}"}), 500
 
     except Exception as e:
