@@ -425,6 +425,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 : formatCurrency(imposeExcessValue);
         }
 
+        // Restore estimate override fields
+        const estLabourEl = document.getElementById('assessment-est-labour');
+        const estPaintEl = document.getElementById('assessment-est-paint');
+        const estPartsEl = document.getElementById('assessment-est-parts');
+        if (estLabourEl) estLabourEl.value = currentAssessmentData.est_labour_override || '';
+        if (estPaintEl) estPaintEl.value = currentAssessmentData.est_paint_override || '';
+        if (estPartsEl) estPartsEl.value = currentAssessmentData.est_parts_override || '';
+
         if (page3CustomerGstinInput) page3CustomerGstinInput.value = currentAssessmentData.page3_details.customer_gstin || '';
         const page3CompanyGstinInput = document.getElementById('page3-company-gstin');
         if (page3CompanyGstinInput) page3CompanyGstinInput.value = currentAssessmentData.page3_details.company_gstin || '';
