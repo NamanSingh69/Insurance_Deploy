@@ -119,11 +119,102 @@ def load_user(user_id):
     return None
 
 # --- Gemini API Configuration ---
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY not found in .env file.")
+def _score_model_for_intelligence(name):
+    """
+    Dynamically score models to prioritize pure intelligence/reasoning capabilities.
+    Calibrated against Artificial Analysis Intelligence Index hierarchies.
+    """
+    n = name.lower()
+    score = 0
+    
+    # 1. Base Version Multiplier (The strongest indicator of intelligence)
+    # E.g., 3.1 adds 3,100,000; 2.5 adds 2,500,000.
+    m = re.search(r'(\d+)\.(\d+)', n)
+    if m:
+        major = int(m.group(1))
+        minor = int(m.group(2))
+        score += (major * 1000000) + (minor * 100000)
+        
+    # 2. Base Tier Capabilities
+    # Pro > Flash > Flash-Lite
+    if "pro" in n:
+        score += 300000
+    elif "flash-lite" in n:
+        score += 0       # Baseline for its specific generation
+    elif "flash" in n:
+        score += 100000
+        
+    # 3. Reasoning / Thinking Modifiers (The Paradigm Shift)
+    # Models with native/maximized thinking massively outperform their base counterparts.
+    # Checks for historical and future reasoning indicators.
+    if any(kw in n for kw in ["thinking", "reasoning", "deep-think", "high"]):
+        score += 90000
+    elif "low" in n:
+        score -= 150000  # Heavily penalize explicitly downgraded reasoning models
+        
+    # 4. Model State / Stability
+    # For pure intelligence, we tolerate experimental/preview to get the smartest model.
+    # We only apply very minor bonuses to break ties in favor of stability.
+    if "exp" in n or "experimental" in n:
+        score += 0
+    elif "preview" in n:
+        score += 20
+    else:
+        score += 50      # Stable gets a slight edge if intelligence is equal
+        
+    # 5. Date Tie-Breaker
+    # If two models have the exact same stats, newer date wins.
+    date_match = re.search(r'-(\d{4,8})', n)
+    if date_match:
+        val = int(date_match.group(1))
+        score += (val % 20) 
+        
+    return score
 
+def load_valid_api_key():
+    """
+    Loads GEMINI_API_KEY from the environment, prioritizing .env.local,
+    but falling back to .env if the prioritized key is expired or invalid.
+    """
+    # 1. Try loading .env.local first
+    if os.path.exists('.env.local'):
+        load_dotenv('.env.local', override=True)
+        key = os.getenv("GEMINI_API_KEY")
+        if key:
+            try:
+                # Test the key by listing models
+                genai.configure(api_key=key)
+                list(genai.list_models())
+                print("[API-KEY] Successfully verified GEMINI_API_KEY from .env.local")
+                return key
+            except Exception as e:
+                print(f"[API-KEY] Key from .env.local failed verification ({e}). Falling back to .env...")
+                
+    # 2. Fall back to .env
+    load_dotenv('.env', override=True)
+    key = os.getenv("GEMINI_API_KEY")
+    if key:
+        try:
+            genai.configure(api_key=key)
+            list(genai.list_models())
+            print("[API-KEY] Successfully verified GEMINI_API_KEY from .env")
+            return key
+        except Exception as e:
+            print(f"[API-KEY] Key from .env failed verification ({e}).")
+            
+    return key
+
+# Load the working API key
+API_KEY = load_valid_api_key()
+if not API_KEY:
+    # If both failed or are invalid, fall back to standard os.getenv to avoid complete block
+    API_KEY = os.getenv("GEMINI_API_KEY")
+    if not API_KEY:
+        raise ValueError("GEMINI_API_KEY not found in environment or .env files.")
+
+# Re-configure with verified key
 genai.configure(api_key=API_KEY)
+
 generation_config = {
   "temperature": 1,
   "top_p": 0.95,
@@ -138,17 +229,48 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# Use a model known for function calling or reliable JSON output if available
-# For this example, we'll parse JSON from text response.
+def get_best_models():
+    """
+    Query available models from Gemini API, rank them using intelligence scoring,
+    and return a sorted list of model names.
+    """
+    default_models = ['gemini-1.5-pro', 'gemini-1.5-flash']
+    try:
+        models = []
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                clean_name = m.name.split('/')[-1] if '/' in m.name else m.name
+                score = _score_model_for_intelligence(clean_name)
+                models.append((clean_name, score))
+        
+        if not models:
+            return default_models
+            
+        # Sort by score descending
+        models.sort(key=lambda x: x[1], reverse=True)
+        return [name for name, score in models]
+    except Exception as e:
+        print(f"[MODEL-SELECT] Error fetching available models: {e}. Using defaults.")
+        return default_models
+
+# Resolve best models using intelligence scoring
+best_models = get_best_models()
+print(f"[MODEL-SELECT] Ranked available models: {best_models}")
+
+PRIMARY_MODEL_NAME = best_models[0] if best_models else 'gemini-1.5-pro'
+SECONDARY_MODEL_NAME = best_models[1] if len(best_models) > 1 else PRIMARY_MODEL_NAME
+
+print(f"[MODEL-SELECT] Selecting primary model: {PRIMARY_MODEL_NAME}")
+print(f"[MODEL-SELECT] Selecting secondary model: {SECONDARY_MODEL_NAME}")
+
 model = genai.GenerativeModel(
-    model_name='gemini-3.1-pro-preview',
+    model_name=PRIMARY_MODEL_NAME,
     safety_settings=safety_settings,
     generation_config=generation_config
-    )
+)
 
-# Secondary model for fallback
 secondary_model = genai.GenerativeModel(
-    model_name='gemini-3.1-flash-lite-preview',
+    model_name=SECONDARY_MODEL_NAME,
     safety_settings=safety_settings,
     generation_config=generation_config
 )
@@ -1125,7 +1247,7 @@ def process_pdf():
         try:
             response = model.generate_content([prompt_part, pdf_part], stream=False)
         except ResourceExhausted as e:
-            print(f"Primary model hit rate limit: {e}. Switching to secondary model (gemini-2.5-pro).")
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model ({SECONDARY_MODEL_NAME}).")
             response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential lack of response parts or blocked content
@@ -1247,7 +1369,7 @@ def process_invoice():
         try:
             response = model.generate_content([prompt_part, pdf_part], stream=False)
         except ResourceExhausted as e:
-            print(f"Primary model hit rate limit: {e}. Switching to secondary model (gemini-2.5-pro) for invoice.")
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model ({SECONDARY_MODEL_NAME}) for invoice.")
             response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential blocked content or empty response (similar to process_pdf)

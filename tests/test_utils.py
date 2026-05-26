@@ -229,3 +229,36 @@ class TestGetBackendDepreciationRate:
         from app import get_backend_depreciation_rate
         rate = get_backend_depreciation_rate("M", "")
         assert isinstance(rate, (int, float))
+
+
+class TestScoreModelForIntelligence:
+    """Tests for _score_model_for_intelligence() function."""
+    
+    def test_pro_vs_flash(self):
+        """Test that pro gets higher score than flash of the same version."""
+        from app import _score_model_for_intelligence
+        pro_score = _score_model_for_intelligence("gemini-2.5-pro")
+        flash_score = _score_model_for_intelligence("gemini-2.5-flash")
+        assert pro_score > flash_score
+        
+    def test_version_multiplier(self):
+        """Test that higher base versions get significantly higher score."""
+        from app import _score_model_for_intelligence
+        v3_score = _score_model_for_intelligence("gemini-3.5-flash")
+        v2_score = _score_model_for_intelligence("gemini-2.5-flash")
+        assert v3_score > v2_score
+        
+    def test_reasoning_keyword(self):
+        """Test reasoning/thinking keyword bonus."""
+        from app import _score_model_for_intelligence
+        thinking_score = _score_model_for_intelligence("gemini-2.5-flash-thinking")
+        normal_score = _score_model_for_intelligence("gemini-2.5-flash")
+        assert thinking_score > normal_score
+        
+    def test_stability_bonus(self):
+        """Test stable model slight bonus over preview/experimental."""
+        from app import _score_model_for_intelligence
+        stable_score = _score_model_for_intelligence("gemini-2.5-flash")
+        preview_score = _score_model_for_intelligence("gemini-2.5-flash-preview")
+        assert stable_score > preview_score
+
