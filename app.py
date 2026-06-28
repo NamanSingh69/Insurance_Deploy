@@ -3462,6 +3462,35 @@ def create_default_user():
     else:
         print(f"User '{username}' already exists in Sheets.")
 
+@app.cli.command('create-user')
+@click.argument('username')
+@click.argument('password')
+@click.option('--name', default='Employee')
+def create_user_cli(username, password, name):
+    """Create a new user account in PostgreSQL."""
+    hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+    existing = sheets_db.get_user_by_username(username)
+    if not existing:
+        user_data = {
+            'username': username,
+            'password_hash': hashed_password,
+            'full_name': name,
+            'qualifications': '',
+            'designation': 'Surveyor & Loss Assessor',
+            'license_no': '',
+            'expiry_date': '',
+            'membership_no': '',
+            'address_line_1': '',
+            'address_line_2': '',
+            'address_line_3': '',
+            'contact_no': '',
+            'email': ''
+        }
+        sheets_db.create_user(user_data)
+        print(f"User '{username}' created successfully.")
+    else:
+        print(f"Error: User '{username}' already exists.")
+
 # --- Run Application ---
 if __name__ == '__main__':
     # Use waitress or gunicorn for production
