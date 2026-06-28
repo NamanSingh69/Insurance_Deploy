@@ -316,6 +316,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadedPaintDepn = currentAssessmentData.labour_paint_depn;
         currentAssessmentData.labour_paint_depn = loadedPaintDepn ?? null;
         currentAssessmentData.policy_type = currentAssessmentData.policy_type || 'NORMAL';
+        currentAssessmentData.nd_deduction_pc = currentAssessmentData.nd_deduction_pc ?? 5;
+        currentAssessmentData.nd_deduction_amount = currentAssessmentData.nd_deduction_amount ?? null;
+        currentAssessmentData.towing_charges = currentAssessmentData.towing_charges ?? 0;
         currentAssessmentData.report_type = currentAssessmentData.report_type || 'Final Survey Report';
         currentAssessmentData.claim_type = currentAssessmentData.claim_type || 'Cashless';
         currentAssessmentData.labour_tax_type = currentAssessmentData.labour_tax_type || 'CGST/SGST';
@@ -425,6 +428,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 : formatCurrency(imposeExcessValue);
         }
 
+        // Restore ND deduction fields
+        const ndDeductionPcInput = document.getElementById('assessment-nd-deduction-pc');
+        const ndDeductionAmtInput = document.getElementById('assessment-nd-deduction-amt');
+        if (ndDeductionPcInput) ndDeductionPcInput.value = currentAssessmentData.nd_deduction_pc ?? 5;
+        if (ndDeductionAmtInput && currentAssessmentData.nd_deduction_amount != null) {
+            ndDeductionAmtInput.value = formatCurrency(currentAssessmentData.nd_deduction_amount);
+        }
+
+        // Restore towing charges
+        const towingChargesInput = document.getElementById('assessment-towing-charges');
+        if (towingChargesInput) {
+            const towingVal = currentAssessmentData.towing_charges;
+            towingChargesInput.value = (towingVal === null || typeof towingVal === 'undefined' || towingVal === 0)
+                ? ''
+                : formatCurrency(towingVal);
+        }
+
         // Restore estimate override fields
         const estLabourEl = document.getElementById('assessment-est-labour');
         const estPaintEl = document.getElementById('assessment-est-paint');
@@ -517,6 +537,9 @@ document.addEventListener('DOMContentLoaded', () => {
             assessmentPolicyTypeDropdown,
             assessmentLabourTaxTypeDropdown,
             document.getElementById('assessment-labour-imt-23'),
+            document.getElementById('assessment-nd-deduction-pc'),
+            document.getElementById('assessment-nd-deduction-amt'),
+            document.getElementById('assessment-towing-charges'),
             page3EstimatedAmountInput,
             page3PhotoCopiesCountInput,
             document.getElementById('input-vehicle_regn_date'),
@@ -537,10 +560,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+
+        // ND deduction amount: mark as manually overridden when user types directly
+        const ndAmtInputEl = document.getElementById('assessment-nd-deduction-amt');
+        if (ndAmtInputEl) {
+            ndAmtInputEl.addEventListener('focus', () => {
+                ndAmtInputEl.dataset.autoCalculated = 'false';
+            });
+        }
+        // ND deduction %: reset amount to auto-calculate when % changes
+        const ndPcInputEl = document.getElementById('assessment-nd-deduction-pc');
+        if (ndPcInputEl) {
+            ndPcInputEl.addEventListener('input', () => {
+                if (ndAmtInputEl) ndAmtInputEl.dataset.autoCalculated = 'true';
+            });
+        }
     }
 
     function updateDepreciationFieldStates() {
-        const isNilDepn = assessmentPolicyTypeDropdown.value === 'NIL_DEPN';
+        const policyVal = assessmentPolicyTypeDropdown.value;
+        const isNilDepn = policyVal === 'NIL_DEPN' || policyVal === 'NIL_DEPN_PLUS';
+
+        // Toggle ND deduction fields visibility (only for NIL_DEPN, not NIL_DEPN_PLUS)
+        const ndPcGroup = document.getElementById('nd-deduction-pc-group');
+        const ndAmtGroup = document.getElementById('nd-deduction-amt-group');
+        if (ndPcGroup) ndPcGroup.style.display = (policyVal === 'NIL_DEPN') ? '' : 'none';
+        if (ndAmtGroup) ndAmtGroup.style.display = (policyVal === 'NIL_DEPN') ? '' : 'none';
 
         // Labour Paint Depreciation
         assessmentLabourPaintDepnInput.readOnly = isNilDepn;
@@ -923,7 +968,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const paintDepnInput = assessmentLabourPaintDepnInput;
         let finalPaintDepnToUse;
 
-        if (assessmentPolicyTypeDropdown.value === 'NIL_DEPN') {
+        if (assessmentPolicyTypeDropdown.value === 'NIL_DEPN' || assessmentPolicyTypeDropdown.value === 'NIL_DEPN_PLUS') {
             finalPaintDepnToUse = 0.0;
             paintDepnInput.value = formatCurrency(0);
         } else {
@@ -1149,7 +1194,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Depreciation
         let finalDeprAmount;
-        const isNilDepnPolicy = assessmentPolicyTypeDropdown.value === 'NIL_DEPN';
+        const isNilDepnPolicy = assessmentPolicyTypeDropdown.value === 'NIL_DEPN' || assessmentPolicyTypeDropdown.value === 'NIL_DEPN_PLUS';
 
         if (isNilDepnPolicy) {
             finalDeprAmount = 0.0;
@@ -1249,11 +1294,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const imposeExcessInput = document.getElementById('assessment-impose-excess');
         const imposeExcess = parseFormattedNumber(imposeExcessInput?.value || 0);
 
+        // ND Deduction (only for NIL_DEPN policy)
+        const ndDeductionPcInput = document.getElementById('assessment-nd-deduction-pc');
+        const ndDeductionAmtInput = document.getElementById('assessment-nd-deduction-amt');
+        const towingChargesInput = document.getElementById('assessment-towing-charges');
+        const policyVal = assessmentPolicyTypeDropdown.value;
+
+        let ndDeductionAmount = 0;
+        if (policyVal === 'NIL_DEPN') {
+            const ndPc = parseFloat(ndDeductionPcInput?.value || 5);
+            const totalLiability = addLabour + addPartsNet;
+            const autoNdAmount = totalLiability * (ndPc / 100.0);
+            // If user hasn't manually overridden, use auto-calculated value
+            const currentNdAmtStr = ndDeductionAmtInput?.value?.trim() || '';
+            if (currentNdAmtStr === '' || ndDeductionAmtInput?.dataset.autoCalculated === 'true') {
+                ndDeductionAmount = autoNdAmount;
+                if (ndDeductionAmtInput) {
+                    ndDeductionAmtInput.value = formatCurrency(autoNdAmount);
+                    ndDeductionAmtInput.dataset.autoCalculated = 'true';
+                }
+            } else {
+                ndDeductionAmount = parseFormattedNumber(currentNdAmtStr);
+            }
+        }
+
+        const towingCharges = parseFormattedNumber(towingChargesInput?.value || 0);
+
         currentAssessmentData.deductibles = lessExcess;
         currentAssessmentData.salvage = salvageValue;
         currentAssessmentData.impose_excess = imposeExcess;
+        currentAssessmentData.nd_deduction_pc = parseFloat(ndDeductionPcInput?.value || 5);
+        currentAssessmentData.nd_deduction_amount = ndDeductionAmount;
+        currentAssessmentData.towing_charges = towingCharges;
 
-        const netLiability = (addLabour + addPartsNet) - lessExcess - imposeExcess - salvageValue;
+        const netLiability = (addLabour + addPartsNet) - lessExcess - imposeExcess - salvageValue - ndDeductionAmount + towingCharges;
 
         summaryAddLabour.value = formatCurrency(addLabour);
         summaryAddParts.value = formatCurrency(addPartsNet);
@@ -1708,6 +1782,9 @@ document.addEventListener('DOMContentLoaded', () => {
             parts: collectedParts,
             deductibles: parseFormattedNumber(assessmentDeductiblesInput.value || 1000),
             impose_excess: parseFormattedNumber(imposeExcessInput?.value || 0),
+            nd_deduction_pc: parseFloat(document.getElementById('assessment-nd-deduction-pc')?.value || 5),
+            nd_deduction_amount: parseFormattedNumber(document.getElementById('assessment-nd-deduction-amt')?.value || 0),
+            towing_charges: parseFormattedNumber(document.getElementById('assessment-towing-charges')?.value || 0),
             salvage: assessmentSalvageInput.value.trim() || '-',
             user_labour_rows: collectedUserLabourRows,
             note_text: document.getElementById('input-note_text')?.value.trim() || '',

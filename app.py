@@ -513,6 +513,9 @@ def parse_gemini_response(response_text):
             'header_gst': '', 
             'header_vehicle_year': '', 
             'policy_type': 'NORMAL', 
+            'nd_deduction_pc': 5,
+            'nd_deduction_amount': 0,
+            'towing_charges': 0,
             'report_type': 'Final Survey Report', 
             'claim_type': 'Cashless', 
             'labour_tax_type': 'CGST/SGST',
@@ -1544,7 +1547,7 @@ def _calculate_report_assessment_summary(assessment_data_raw, survey_data_raw):
 
         # Paint Logic
         final_paint_depn_to_use = labour_paint_depn_input
-        if policy_type == 'NIL_DEPN':
+        if policy_type in ('NIL_DEPN', 'NIL_DEPN_PLUS'):
             final_paint_depn_to_use = 0.0
         
         net_paint_after_dep = total_painting - final_paint_depn_to_use
@@ -1588,7 +1591,7 @@ def _calculate_report_assessment_summary(assessment_data_raw, survey_data_raw):
             except ValueError: saved_depr_val = -1.0
             
             final_depr_amount = 0.0
-            if policy_type == 'NIL_DEPN':
+            if policy_type in ('NIL_DEPN', 'NIL_DEPN_PLUS'):
                  final_depr_amount = 0.0
             elif saved_depr_val >= 0:
                  final_depr_amount = saved_depr_val
@@ -1623,6 +1626,14 @@ def _calculate_report_assessment_summary(assessment_data_raw, survey_data_raw):
             pass 
         
         summary['assessed_amount'] = (labour_grand_total_final + parts_net_amt_final_calc) - excess_final_calc - impose_excess_calc - salvage_val_numeric_calc
+        
+        # Apply ND deduction (only for NIL_DEPN policy)
+        nd_deduction_amount_calc = float(assessment_data_raw.get('nd_deduction_amount', 0.0))
+        towing_charges_calc = float(assessment_data_raw.get('towing_charges', 0.0))
+        if policy_type == 'NIL_DEPN' and nd_deduction_amount_calc > 0:
+            summary['assessed_amount'] -= nd_deduction_amount_calc
+        if towing_charges_calc > 0:
+            summary['assessed_amount'] += towing_charges_calc
 
     except Exception as e:
         print(f"Error in _calculate_report_assessment_summary: {e}")
@@ -1788,6 +1799,11 @@ def generate_files():
 
         # Estimate Overrides
         est_labour_override = assessment_data.get('est_labour_override', '')
+
+        # ND Deduction and Towing Charges
+        nd_deduction_pc = float(assessment_data.get('nd_deduction_pc', 5))
+        nd_deduction_amount = float(assessment_data.get('nd_deduction_amount', 0.0))
+        towing_charges = float(assessment_data.get('towing_charges', 0.0))
         est_paint_override = assessment_data.get('est_paint_override', '')
         est_parts_override = assessment_data.get('est_parts_override', '')
 
@@ -1848,7 +1864,7 @@ def generate_files():
         # Logic: 
         # 1. Paint Dep (12.5% default)
         labour_paint_depn_final = labour_paint_depn_input 
-        if policy_type == 'NIL_DEPN':
+        if policy_type in ('NIL_DEPN', 'NIL_DEPN_PLUS'):
             labour_paint_depn_final = 0.0
         
         net_paint_after_dep = labour_sum_painting - labour_paint_depn_final
@@ -1898,7 +1914,7 @@ def generate_files():
                 
                 # Depreciation
                 final_depr_amount_to_use = 0.0
-                if policy_type == 'NIL_DEPN': final_depr_amount_to_use = 0.0
+                if policy_type in ('NIL_DEPN', 'NIL_DEPN_PLUS'): final_depr_amount_to_use = 0.0
                 elif depr_amount_from_frontend >= 0: final_depr_amount_to_use = depr_amount_from_frontend
                 else: 
                     calculated_depr_rate = get_backend_depreciation_rate(part_type, header_vehicle_year)
@@ -1950,6 +1966,14 @@ def generate_files():
         except (ValueError, TypeError): salvage_val_numeric = 0.0
         
         net_liability_final = (labour_grand_total_final + parts_net_amt_final) - excess_final - impose_excess_final - salvage_val_numeric
+        
+        # Apply ND deduction (only for NIL_DEPN policy)
+        if policy_type == 'NIL_DEPN' and nd_deduction_amount > 0:
+            net_liability_final -= nd_deduction_amount
+        
+        # Apply Towing Charges (add)
+        if towing_charges > 0:
+            net_liability_final += towing_charges
         
         # --- Page 4 (Tax Invoice) Calculations ---
         p3_photo_total_charge = p3_photo_copies_count * 10.0
@@ -2501,7 +2525,7 @@ def generate_files():
                 if part.get('total_parts_amt', 0) > 0 and part.get('depr', 0) > 0:
                     rate = (part.get('depr', 0) / part.get('total_parts_amt', 0)) * 100
                     dep_pc_display = f"{rate:.0f}%"
-                elif policy_type == 'NIL_DEPN': dep_pc_display = "NIL"
+                elif policy_type in ('NIL_DEPN', 'NIL_DEPN_PLUS'): dep_pc_display = "NIL"
                 imt_23_display = "NIL"
                 if part.get('imt_23_amt', 0) > 0: imt_23_display = "YES"
 
@@ -2682,6 +2706,17 @@ def generate_files():
             # Net Settlement
             net_settlement = total_liability - salvage_val_numeric - excess_final - impose_excess_final
             add_less_row("Net settlement Amount :", net_settlement)
+            
+            # ND Deduction Row (only for NIL_DEPN policy)
+            if policy_type == 'NIL_DEPN' and nd_deduction_amount > 0:
+                nd_label = f"Less: {nd_deduction_pc:g}% on assessed amount as per ND policy norms"
+                add_less_row(nd_label, nd_deduction_amount)
+                net_settlement -= nd_deduction_amount
+            
+            # Towing Charges Row (only if non-zero)
+            if towing_charges > 0:
+                add_less_row("Add: Towing Charges", towing_charges)
+                net_settlement += towing_charges
             
             # Round off (Blue Row) - SAFETY CHECK FOR SIGNATURE
             # Ensure this row + Signature height fits on the page. 
@@ -2891,6 +2926,27 @@ def generate_files():
         # 1. Print Assessed Amount (if applicable)
         if net_liability_final != 0: 
             pdf.set_font("Helvetica", '', base_font_size_page3)
+            
+            # ND Deduction line (only for NIL_DEPN policy)
+            if policy_type == 'NIL_DEPN' and nd_deduction_amount > 0:
+                nd_label_raw = f"Less: {nd_deduction_pc:g}% on assessed amount as per ND policy norms"
+                nd_label_text = normalize_pdf_text_for_fpdf(nd_label_raw)
+                nd_label_width = pdf.get_string_width(nd_label_text + " ") + 1
+                pdf.cell(nd_label_width, line_h_page3, nd_label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP)
+                pdf.set_font("Helvetica", 'B', base_font_size_page3)
+                pdf.cell(usable_width_page3 - nd_label_width, line_h_page3, format_pdf_number(nd_deduction_amount), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_font("Helvetica", '', base_font_size_page3)
+            
+            # Towing Charges line (only if non-zero)
+            if towing_charges > 0:
+                tow_label_raw = "Add: Towing Charges"
+                tow_label_text = normalize_pdf_text_for_fpdf(tow_label_raw)
+                tow_label_width = pdf.get_string_width(tow_label_text + " ") + 1
+                pdf.cell(tow_label_width, line_h_page3, tow_label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP)
+                pdf.set_font("Helvetica", 'B', base_font_size_page3)
+                pdf.cell(usable_width_page3 - tow_label_width, line_h_page3, format_pdf_number(towing_charges), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_font("Helvetica", '', base_font_size_page3)
+            
             label_text_raw = "Net settlement Amount Round off:"; label_text = normalize_pdf_text_for_fpdf(label_text_raw); current_label_width = pdf.get_string_width(label_text + " ") + 1
             pdf.cell(current_label_width, line_h_page3, label_text, 0, new_x=XPos.RIGHT, new_y=YPos.TOP); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(usable_width_page3 - current_label_width, line_h_page3, format_pdf_number(net_liability_final), 0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         

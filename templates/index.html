@@ -750,6 +750,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                                         <select id="assessment-policy-type" name="assessment_policy_type" class="form-control-select">
                                             <option value="NORMAL" selected>Normal Policy</option>
                                             <option value="NIL_DEPN">Nil Depreciation Policy</option>
+                                            <option value="NIL_DEPN_PLUS">Nil Depreciation Plus Policy</option>
                                         </select>
                                     </div>
 
@@ -970,6 +971,27 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                                                 <div class="input-with-icon">
                                                 <i class="fas fa-minus-circle input-icon"></i>
                                                 <input type="text" id="assessment-impose-excess" name="assessment_impose_excess" class="summary-source-input number-input" placeholder="0.00">
+                                                </div>
+                                        </div>
+                                        <div class="field-group" id="nd-deduction-pc-group" style="display: none;">
+                                            <label for="assessment-nd-deduction-pc"><i class="fas fa-percent"></i> ND Policy Deduction %:</label>
+                                                <div class="input-with-icon">
+                                                <i class="fas fa-percentage input-icon"></i>
+                                                <input type="text" id="assessment-nd-deduction-pc" name="assessment_nd_deduction_pc" class="summary-source-input number-input" value="5" placeholder="5">
+                                                </div>
+                                        </div>
+                                        <div class="field-group" id="nd-deduction-amt-group" style="display: none;">
+                                            <label for="assessment-nd-deduction-amt"><i class="fas fa-calculator"></i> ND Deduction Amount (Editable):</label>
+                                                <div class="input-with-icon">
+                                                <i class="fas fa-rupee-sign input-icon"></i>
+                                                <input type="text" id="assessment-nd-deduction-amt" name="assessment_nd_deduction_amt" class="summary-source-input number-input" placeholder="Auto-calculated">
+                                                </div>
+                                        </div>
+                                        <div class="field-group">
+                                            <label for="assessment-towing-charges"><i class="fas fa-truck-pickup"></i> Towing Charges:</label>
+                                                <div class="input-with-icon">
+                                                <i class="fas fa-rupee-sign input-icon"></i>
+                                                <input type="text" id="assessment-towing-charges" name="assessment_towing_charges" class="summary-source-input number-input" placeholder="0.00">
                                                 </div>
                                         </div>
                                         
