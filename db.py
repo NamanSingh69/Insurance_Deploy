@@ -57,8 +57,25 @@ class PostgresDB:
                     address_line_2 VARCHAR(255),
                     address_line_3 VARCHAR(255),
                     contact_no VARCHAR(255),
-                    email VARCHAR(255)
+                    email VARCHAR(255),
+                    gemini_api_key VARCHAR(255),
+                    gemini_model VARCHAR(255)
                 );
+            """)
+
+            # Safeguard: Ensure gemini_api_key and gemini_model exist in existing DB schemas
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='users' AND column_name='gemini_api_key') THEN
+                        ALTER TABLE users ADD COLUMN gemini_api_key VARCHAR(255);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                   WHERE table_name='users' AND column_name='gemini_model') THEN
+                        ALTER TABLE users ADD COLUMN gemini_model VARCHAR(255);
+                    END IF;
+                END $$;
             """)
             
             # Create Reports Table - Note id is UUID and payload is JSONB natively!
@@ -109,8 +126,8 @@ class PostgresDB:
                     INSERT INTO users (
                         username, password_hash, full_name, qualifications, designation,
                         license_no, expiry_date, membership_no, address_line_1,
-                        address_line_2, address_line_3, contact_no, email
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+                        address_line_2, address_line_3, contact_no, email, gemini_api_key, gemini_model
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
                 """, (
                     user_data.get('username'), user_data.get('password_hash'),
                     user_data.get('full_name'), user_data.get('qualifications'),
@@ -118,12 +135,38 @@ class PostgresDB:
                     user_data.get('expiry_date'), user_data.get('membership_no'),
                     user_data.get('address_line_1'), user_data.get('address_line_2'),
                     user_data.get('address_line_3'), user_data.get('contact_no'),
-                    user_data.get('email')
+                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model')
                 ))
                 return cur.fetchone()[0]
         except Exception as e:
              print(f"Error creating user: {e}")
              return None
+
+    def update_user(self, user_id, user_data):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET
+                        full_name = %s, qualifications = %s, designation = %s,
+                        license_no = %s, expiry_date = %s, membership_no = %s,
+                        address_line_1 = %s, address_line_2 = %s, address_line_3 = %s,
+                        contact_no = %s, email = %s, gemini_api_key = %s, gemini_model = %s
+                    WHERE id = %s;
+                """, (
+                    user_data.get('full_name'), user_data.get('qualifications'),
+                    user_data.get('designation'), user_data.get('license_no'),
+                    user_data.get('expiry_date'), user_data.get('membership_no'),
+                    user_data.get('address_line_1'), user_data.get('address_line_2'),
+                    user_data.get('address_line_3'), user_data.get('contact_no'),
+                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model'),
+                    user_id
+                 ))
+                return True
+        except Exception as e:
+             print(f"Error updating user profile: {e}")
+             return False
 
     # --- Report Methods ---
     def get_user_reports_metadata_only(self, user_id):

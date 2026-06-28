@@ -99,6 +99,8 @@ class User(UserMixin):
         self.address_line_3 = user_data.get('address_line_3')
         self.contact_no = user_data.get('contact_no')
         self.email = user_data.get('email')
+        self.gemini_api_key = user_data.get('gemini_api_key')
+        self.gemini_model = user_data.get('gemini_model')
 
     def get_id(self):
         return self.id
@@ -274,6 +276,62 @@ secondary_model = genai.GenerativeModel(
     safety_settings=safety_settings,
     generation_config=generation_config
 )
+
+def get_user_best_models(api_key):
+    default_models = ['gemini-1.5-pro', 'gemini-1.5-flash']
+    if not api_key:
+        return default_models
+    original_key = os.getenv("GEMINI_API_KEY")
+    try:
+        genai.configure(api_key=api_key)
+        models = []
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                clean_name = m.name.split('/')[-1] if '/' in m.name else m.name
+                score = _score_model_for_intelligence(clean_name)
+                models.append((clean_name, score))
+        if original_key:
+            genai.configure(api_key=original_key)
+        if not models:
+            return default_models
+        models.sort(key=lambda x: x[1], reverse=True)
+        return [name for name, score in models]
+    except Exception as e:
+        print(f"[MODEL-SELECT] Error fetching models for custom key: {e}. Using defaults.")
+        if original_key:
+            try:
+                genai.configure(api_key=original_key)
+            except Exception:
+                pass
+        return default_models
+
+def get_generative_models(user=None):
+    user_key = user.gemini_api_key if (user and getattr(user, 'gemini_api_key', None)) else None
+    api_key = user_key or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
+    genai.configure(api_key=api_key)
+    
+    user_model = user.gemini_model if (user and getattr(user, 'gemini_model', None)) else None
+    if user_model:
+        primary_name = user_model
+        secondary_name = user_model
+    else:
+        ranked = get_user_best_models(api_key)
+        primary_name = ranked[0] if ranked else 'gemini-1.5-pro'
+        secondary_name = ranked[1] if len(ranked) > 1 else primary_name
+        
+    primary = genai.GenerativeModel(
+        model_name=primary_name,
+        safety_settings=safety_settings,
+        generation_config=generation_config
+    )
+    secondary = genai.GenerativeModel(
+        model_name=secondary_name,
+        safety_settings=safety_settings,
+        generation_config=generation_config
+    )
+    return primary, secondary
 
 # --- In-memory storage for generated files (Temporary before download) ---
 generated_data_store = {}
@@ -1247,11 +1305,12 @@ def process_pdf():
         prompt_part = {"text": prompt}
 
         # Generate content using the configured model
+        dynamic_model, dynamic_secondary = get_generative_models(current_user)
         try:
-            response = model.generate_content([prompt_part, pdf_part], stream=False)
+            response = dynamic_model.generate_content([prompt_part, pdf_part], stream=False)
         except ResourceExhausted as e:
-            print(f"Primary model hit rate limit: {e}. Switching to secondary model ({SECONDARY_MODEL_NAME}).")
-            response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model.")
+            response = dynamic_secondary.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential lack of response parts or blocked content
         if not response.parts:
@@ -1369,11 +1428,12 @@ def process_invoice():
         prompt_part = {"text": prompt}
 
         # Generate content using the same model configuration
+        dynamic_model, dynamic_secondary = get_generative_models(current_user)
         try:
-            response = model.generate_content([prompt_part, pdf_part], stream=False)
+            response = dynamic_model.generate_content([prompt_part, pdf_part], stream=False)
         except ResourceExhausted as e:
-            print(f"Primary model hit rate limit: {e}. Switching to secondary model ({SECONDARY_MODEL_NAME}) for invoice.")
-            response = secondary_model.generate_content([prompt_part, pdf_part], stream=False)
+            print(f"Primary model hit rate limit: {e}. Switching to secondary model for invoice.")
+            response = dynamic_secondary.generate_content([prompt_part, pdf_part], stream=False)
 
         # Handle potential blocked content or empty response (similar to process_pdf)
         if not response.parts:
@@ -1668,7 +1728,9 @@ def get_user_profile():
         "address_line_2": user.address_line_2,
         "address_line_3": user.address_line_3,
         "contact_no": user.contact_no,
-        "email": user.email
+        "email": user.email,
+        "gemini_api_key": user.gemini_api_key,
+        "gemini_model": user.gemini_model
     })
 
 @app.route('/update_user_profile', methods=['POST'])
@@ -1676,18 +1738,37 @@ def get_user_profile():
 def update_user_profile():
     data = request.get_json()
     try:
-        # For Sheets MVP: Updating user profile is complex (need to find row and update columns).
-        # We will skip saving to sheet for now to avoid breakage, or implement later.
-        # Ideally: sheets_db.update_user(current_user.id, data)
-        print("User profile update requested (Not implemented for Sheets MVP):", data)
+        success = sheets_db.update_user(current_user.id, data)
+        if not success:
+            return jsonify({"error": "Failed to update profile in database."}), 500
         
-        # update current session user object temporarily
+        # update current session user object
         current_user.full_name = data.get('full_name', current_user.full_name)
-        # ... others
+        current_user.qualifications = data.get('qualifications', current_user.qualifications)
+        current_user.designation = data.get('designation', current_user.designation)
+        current_user.license_no = data.get('license_no', current_user.license_no)
+        current_user.expiry_date = data.get('expiry_date', current_user.expiry_date)
+        current_user.membership_no = data.get('membership_no', current_user.membership_no)
+        current_user.address_line_1 = data.get('address_line_1', current_user.address_line_1)
+        current_user.address_line_2 = data.get('address_line_2', current_user.address_line_2)
+        current_user.address_line_3 = data.get('address_line_3', current_user.address_line_3)
+        current_user.contact_no = data.get('contact_no', current_user.contact_no)
+        current_user.email = data.get('email', current_user.email)
+        current_user.gemini_api_key = data.get('gemini_api_key', current_user.gemini_api_key)
+        current_user.gemini_model = data.get('gemini_model', current_user.gemini_model)
         
-        return jsonify({"success": True, "message": "Profile updated locally (Sheet update not implemented in MVP)."})
+        return jsonify({"success": True, "message": "Profile updated successfully."})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/available_models', methods=['GET'])
+@login_required
+def available_models():
+    # Allow passing custom API key as query parameter for validation/testing in real-time
+    custom_key = request.args.get('api_key')
+    key_to_use = custom_key if custom_key is not None else (current_user.gemini_api_key or os.getenv("GEMINI_API_KEY"))
+    models = get_user_best_models(key_to_use)
+    return jsonify(models)
 
 # --- Photo Upload Route ---
 @app.route('/upload_photo', methods=['POST'])

@@ -1390,6 +1390,22 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                         <input type="text" name="email">
                     </div>
                 </div>
+                <div class="field-group" style="margin-top: 1rem;">
+                    <label>Gemini API Key (Optional Override)</label>
+                    <input type="password" id="settings-gemini-key" name="gemini_api_key" placeholder="Enter key starting with AIzaSy..." style="width: 100%; box-sizing: border-box;">
+                    <small style="display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--text-secondary);">
+                        Leave blank to use default system key. Get a free or paid key from <a href="https://aistudio.google.com/api-keys" target="_blank" style="color: var(--primary-color); text-decoration: underline;">Google AI Studio</a>.
+                    </small>
+                </div>
+                <div class="field-group" style="margin-top: 1rem;">
+                    <label>Preferred Gemini Model</label>
+                    <select id="settings-gemini-model" name="gemini_model" style="width: 100%; box-sizing: border-box; background: #1e293b; color: #f8fafc; border: 1px solid #475569; padding: 0.5rem; border-radius: 4px; font-size: 0.95rem;">
+                        <option value="">Auto Model Selection (Recommended)</option>
+                    </select>
+                    <small style="display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--text-secondary);">
+                        Models are dynamically fetched and ranked based on intelligence capabilities.
+                    </small>
+                </div>
                 <div class="form-actions" style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
                     <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Profile</button>
                     <div style="display: flex; align-items: center; gap: 0.75rem;">

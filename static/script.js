@@ -2441,12 +2441,26 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                     profileModal.classList.remove('hidden');
+                    // Populate models dropdown
+                    await loadAvailableModels(data.gemini_api_key, data.gemini_model);
                 } else {
                     alert("Failed to load profile settings.");
                 }
             } catch (e) {
                 console.error(e);
                 alert("Error loading profile settings.");
+            }
+
+            // Bind listener to validate custom API key dynamically on blur
+            const geminiKeyInput = document.getElementById('settings-gemini-key');
+            if (geminiKeyInput && !geminiKeyInput.dataset.listenerBound) {
+                geminiKeyInput.dataset.listenerBound = "true";
+                geminiKeyInput.addEventListener('blur', async () => {
+                    const currentKey = geminiKeyInput.value.trim();
+                    const modelSelect = document.getElementById('settings-gemini-model');
+                    const savedValue = modelSelect ? modelSelect.value : '';
+                    await loadAvailableModels(currentKey, savedValue);
+                });
             }
 
             // Fetch Google Drive Status
@@ -2549,6 +2563,34 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) {
             console.error("Failed to fetch header Drive status", e);
+        }
+    }
+    
+    async function loadAvailableModels(apiKey, savedModel) {
+        const modelSelect = document.getElementById('settings-gemini-model');
+        if (!modelSelect) return;
+        
+        // Save current selection to restore if it exists in new models list
+        const currentSelection = savedModel || modelSelect.value;
+        modelSelect.innerHTML = '<option value="">Auto Model Selection (Recommended)</option>';
+        
+        try {
+            const url = apiKey ? `/api/available_models?api_key=${encodeURIComponent(apiKey)}` : '/api/available_models';
+            const response = await fetch(url);
+            if (response.ok) {
+                const models = await response.json();
+                models.forEach(model => {
+                    const opt = document.createElement('option');
+                    opt.value = model;
+                    opt.textContent = model;
+                    if (model === currentSelection) {
+                        opt.selected = true;
+                    }
+                    modelSelect.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            console.error("Error loading available models:", e);
         }
     }
     
