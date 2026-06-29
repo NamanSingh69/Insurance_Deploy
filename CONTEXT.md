@@ -43,5 +43,9 @@ The **Motor Survey Report Generator** is a Python Flask web application designed
 * **Database Initialization:** Run the database schema connector. Tables `users` and `reports` exist.
 * **Data Migration:** Run `pg_dump` on the old Australia Supabase DB and `pg_restore` on localhost. Validated count results: **2 users and 241 reports** are successfully migrated.
 * **Process Execution:** Nginx is running and Gunicorn is active on port 8000.
-* **Blocked Seam:** Port 80 and Port 22 connections to the public IP `185.199.52.85` are currently timing out.
-  * **Cause:** The Hostinger dashboard firewall has 0 rules allowing TCP 80/22. Rule TCP 443 was successfully added in the dashboard, but rules for TCP 80 and TCP 22 must be created and synchronized to make the site and SSH accessible.
+* **Hostinger Firewall:** Firewall `319602` is activated and synced with rules allowing TCP 22, 80, 443, 8000 (source: any). Configured via Hostinger API using bearer token.
+* **OS Firewall:** `ufw` is inactive. `iptables` INPUT policy is ACCEPT with no rules. No OS-level blocking.
+* **Services Verified:** SSH (port 22), Nginx (port 80), Gunicorn (port 8000) all listening on `0.0.0.0`. App returns HTTP 302 when curled from within VPS.
+* **Blocked Seam:** Port 80 and Port 22 connections to the public IP `185.199.52.85` are **still timing out** from external networks.
+  * **Root Cause:** Hostinger datacenter-level networking issue. Traceroute shows traffic dying at the Hostinger DC edge (hop 12). The VPS can reach itself via public IP, but external traffic is dropped before reaching the VM. This is NOT a configuration issue — tested with firewall active, inactive, different firewalls, and VPS restart. All produce the same timeout.
+  * **Next Step:** Contact Hostinger support with this diagnostic evidence. Reference VPS ID `1789781`, IP `185.199.52.85`, firewall ID `319602`.
