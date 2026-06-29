@@ -9,7 +9,7 @@ The **Motor Survey Report Generator** is a Python Flask web application designed
 * **Storage:** Report PDFs and vehicle photos are uploaded to **Google Drive** using a Service Account configured in `.env`.
 * **Process Manager:** Gunicorn running via a Systemd service (`insurance.service`) proxying traffic locally.
 * **Web Server:** Nginx running as a reverse proxy, listening on Port 80.
-* **Public Access Bypass:** Bypassed Hostinger inbound network drop using Cloudflare Tunnel. The site is publicly visible at: **https://pricing-themselves-console-intervals.trycloudflare.com/**
+* **Public Access Bypass:** Bypassed Hostinger inbound network drop using Cloudflare Tunnel. The site is publicly visible at: **https://agricultural-concentration-equilibrium-leads.trycloudflare.com/**
 
 ---
 
@@ -50,4 +50,4 @@ The **Motor Survey Report Generator** is a Python Flask web application designed
 * **Blocked Seam:** Port 80 and Port 22 connections to the public IP `185.199.52.85` are **still timing out** from external networks.
   * **Root Cause:** Hostinger datacenter-level networking issue. Traceroute shows traffic dying at the Hostinger DC edge (hop 12). The VPS can reach itself via public IP, but external traffic is dropped before reaching the VM. This is NOT a configuration issue — tested with firewall active, inactive, different firewalls, and VPS restart. All produce the same timeout.
   * **Next Step:** Contact Hostinger support with this diagnostic evidence. Reference VPS ID `1789781`, IP `185.199.52.85`, firewall ID `319602`.
-* **Resolution (Bypass):** Installed `cloudflared` on the VPS to establish a secure Cloudflare Tunnel, exposing the app (Port 80) directly to the web. Verified login rendering and database authentication successfully at: **https://pricing-themselves-console-intervals.trycloudflare.com/**. Added cleanup scripts to verify database integrity.
+* **Resolution (Bypass):** Installed `cloudflared` on the VPS to establish a secure Cloudflare Tunnel, exposing the app (Port 80) directly to the web. Verified login rendering and database authentication successfully at: **https://agricultural-concentration-equilibrium-leads.trycloudflare.com/**. Added cleanup scripts to verify database integrity.
