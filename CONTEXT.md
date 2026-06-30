@@ -1,53 +1,124 @@
-# Context: Motor Survey Report Generator (VPS Hosting)
+# Project Context: Motor Survey Report Generator
 
-## Project Overview
-The **Motor Survey Report Generator** is a Python Flask web application designed for insurance surveyors. It processes claim files, vehicle photographs, and documents using Gemini AI to automatically extract key values and render detailed PDF survey reports.
-
-## System Architecture & State
-* **Application Server:** Single instance deployed on a **Hostinger VPS (KVM 1)** running **Ubuntu 24.04 LTS**.
-* **Database:** Local **PostgreSQL** database hosted directly on the VPS for zero query latency (replacing Australia-hosted Supabase free tier).
-* **Storage:** Report PDFs and vehicle photos are uploaded to **Google Drive** using a Service Account configured in `.env`.
-* **Process Manager:** Gunicorn running via a Systemd service (`insurance.service`) proxying traffic locally.
-* **Web Server:** Nginx running as a reverse proxy, listening on Port 80.
-* **Public Access Bypass:** Bypassed Hostinger inbound network drop using Cloudflare Tunnel. The site is publicly visible at: **https://doug-holland-metals-evaluations.trycloudflare.com/**
+This document provides a comprehensive technical overview of the **Motor Survey Report Generator** application. It describes the complete software stack, database schema, file layout, dynamic AI model integration, and the current Hostinger VPS deployment infrastructure.
 
 ---
 
-## Technical Details
+## 1. System Architecture Overview
 
-### VPS Credentials
-* **Host IP:** `185.199.52.85`
-* **Username:** `root`
-* **Password:** `surveyorportal@2026`
-* **SSH Port:** `22`
+The Motor Survey Report Generator is a multi-user, web-based tool designed for insurance surveyors. It streamlines the creation of survey reports by automatically parsing insurance claims documents, parts invoices, and vehicle photographs using Gemini AI, generating consolidated PDFs, and storing structured records.
 
-### App File Structure
-* **App Directory:** `/var/www/insurance-app`
-* **Virtual Environment:** `/var/www/insurance-app/venv`
-* **Environment Configuration:** `/var/www/insurance-app/.env`
-* **Service Config:** `/etc/systemd/system/insurance.service`
-* **Nginx Server Block:** `/etc/nginx/sites-available/insurance`
-* **Github Repository:** `https://github.com/NamanSingh69/Insurance_Deploy.git`
-
-### Database Details
-* **DB Engine:** PostgreSQL (local instance on port 5432)
-* **Database Name:** `insurance_db`
-* **DB User:** `insurance_user`
-* **DB Password:** `surveyorportal@2026`
-* **Connection String:** `postgresql://insurance_user:surveyorportal@2026@localhost/insurance_db`
+```mermaid
+graph TD
+    User([Surveyor User])
+    Client[Web Browser (HTML/CSS/JS)]
+    Proxy[Nginx Reverse Proxy]
+    WSGI[Gunicorn HTTP Server]
+    App[Flask App Logic]
+    DB[(Local PostgreSQL)]
+    Drive[(Google Drive API)]
+    Gemini[Google Gemini API]
+    
+    User -->|HTTPS| Client
+    Client -->|Port 80/443 via Cloudflare Tunnel| Proxy
+    Proxy -->|Local Port 5000| WSGI
+    WSGI --> App
+    App -->|Local Port 5432| DB
+    App -->|JSON/File Stream| Drive
+    App -->|JSON Prompt| Gemini
+```
 
 ---
 
-## Migration & Deployment Progress
-* **Code Setup:** Local updates (Procfile, vps_setup configurations, dynamic Gemini API key user settings, and CLI create-user command) have been committed and pushed to `origin/main` on GitHub, and successfully pulled on the VPS.
-* **Server Dependency Setup:** Installed PostgreSQL, Nginx, Certbot, Git, and Python. Virtual environment built and dependencies successfully installed on the VPS.
-* **Database Initialization:** Run the database schema connector. Tables `users` and `reports` exist.
-* **Data Migration:** Run `pg_dump` on the old Australia Supabase DB and `pg_restore` on localhost. Validated count results: **2 users and 241 reports** are successfully migrated.
-* **Process Execution:** Nginx is running and Gunicorn is active on port 8000.
-* **Hostinger Firewall:** Firewall `319602` is activated and synced with rules allowing TCP 22, 80, 443, 8000 (source: any). Configured via Hostinger API using bearer token.
-* **OS Firewall:** `ufw` is inactive. `iptables` INPUT policy is ACCEPT with no rules. No OS-level blocking.
-* **Services Verified:** SSH (port 22), Nginx (port 80), Gunicorn (port 8000) all listening on `0.0.0.0`. App returns HTTP 302 when curled from within VPS.
-* **Blocked Seam:** Port 80 and Port 22 connections to the public IP `185.199.52.85` are **still timing out** from external networks.
-  * **Root Cause:** Hostinger datacenter-level networking issue. Traceroute shows traffic dying at the Hostinger DC edge (hop 12). The VPS can reach itself via public IP, but external traffic is dropped before reaching the VM. This is NOT a configuration issue — tested with firewall active, inactive, different firewalls, and VPS restart. All produce the same timeout.
-  * **Next Step:** Contact Hostinger support with this diagnostic evidence. Reference VPS ID `1789781`, IP `185.199.52.85`, firewall ID `319602`.
-* **Resolution (Bypass):** Installed `cloudflared` on the VPS to establish a secure Cloudflare Tunnel, exposing the app (Port 80) directly to the web. Verified login rendering and database authentication successfully at: **https://doug-holland-metals-evaluations.trycloudflare.com/**. Added cleanup scripts to verify database integrity.
+## 2. Technical Stack Details
+
+### Frontend Layer
+* **Tech Stack:** HTML5, CSS3 (Vanilla), JavaScript (ES6+).
+* **Styling Framework:** Custom responsive layout styled inside `static/style.css`.
+* **Icons:** Font Awesome v6.4.0 (CDN-loaded).
+* **Pages:**
+  * `login.html`: Secure user authentication page.
+  * `index.html`: Main dashboard page. Contains:
+    * Reports list table (paginated search, sort, and status toggles).
+    * Core Survey Report Entry forms (Surveyor profile, claim details, policy information, vehicle descriptors).
+    * Vehicle parts tables (Metal, Plastic, Glass, Endorsement tables with automatic depreciation and salvage calculations).
+    * Media uploading component (invoice and vehicle photograph selectors).
+    * Surveyor Profile and Dynamic Settings modals.
+* **Client-Side Scripts:**
+  * `static/script.js` handles form states, dynamic table insertions, real-time calculations (depreciation percentages, VAT/GST additions, salvage values), uploads via Drive resumable URLs, and dynamic model lists population on opening settings.
+
+### Backend Layer
+* **Tech Stack:** Python Flask (v3.1.0).
+* **WSGI Server:** Gunicorn (v23.0.0) configured with 3 workers.
+* **Process Monitor:** Systemd service (`insurance.service`).
+* **Web Server:** Nginx (v1.24) acting as a local reverse proxy (routing requests to Gunicorn port `5000` and serving `/static/` assets directly with a 30-day cache control).
+* **Security Controls:**
+  * **Flask-Login (v0.6.3):** Manages user session state and secure HTTP-Only/SameSite session cookies.
+  * **Flask-Bcrypt (v1.0.1):** Secure password hashing using salt rounds.
+  * **Flask-Limiter (v3.8.0):** Limits brute force attacks (rate-limits endpoints to 200/day, 50/hour).
+  * **File Upload Limits:** Configured up to 100MB (`MAX_CONTENT_LENGTH`).
+
+### Database Layer
+* **Database Engine:** PostgreSQL (local instance on Port 5432).
+* **Connection Client:** `psycopg2-binary` (v2.9.9).
+* **Tables:**
+  1. `users` Table:
+     * `id` (SERIAL PRIMARY KEY)
+     * `username` (VARCHAR(255) UNIQUE) — User login credential.
+     * `password_hash` (VARCHAR(255)) — Bcrypt password hash.
+     * Profile Metadata: `full_name`, `qualifications`, `designation`, `license_no`, `expiry_date`, `membership_no`, `address_line_1`, `address_line_2`, `address_line_3`, `contact_no`, `email`.
+     * Dynamic settings: `gemini_api_key` (VARCHAR(255)) & `gemini_model` (VARCHAR(255)) which store user-specific AI preferences.
+  2. `reports` Table:
+     * `id` (VARCHAR(255) PRIMARY KEY) — Unique UUID4 key.
+     * `user_id` (INTEGER REFERENCES users(id)) — Links report to the surveyor user.
+     * Report Quick Fields: `report_no`, `insured_name`, `vehicle_no`, `claim_no`, `policy_no`.
+     * `saved_at` (TIMESTAMP) — Date of save.
+     * `include_in_consolidated` (BOOLEAN) — Status flag.
+     * `report_data_json` (JSONB) — Native JSON column containing the entire nested report data payload (depreciation, lists of parts, images metadata, descriptions).
+
+### AI Integration Layer (Gemini AI)
+* **Client Library:** `google-generativeai` (v0.8.4).
+* **Resolution Workflow (`get_generative_models`):**
+  1. Priority 1: Reads `user.gemini_api_key` from the database.
+  2. Priority 2: Falls back to the server environment's `GEMINI_API_KEY`.
+  3. Model Selection: If `user.gemini_model` is explicitly selected in settings (e.g. `gemini-1.5-pro` or `gemini-1.5-flash`), that model is instantiated. If not, the application calls `get_user_best_models` which queries `genai.list_models()`, filters for content generation capability, and scores them using the intelligence heuristic `_score_model_for_intelligence` (preferring Pro over Flash, and thinking/reasoning models over standard versions).
+
+### File Storage Layer (Google Drive)
+* **API Clients:** `google-auth` (v2.38) & `gspread` (v6.0.2) using a shared Google Service Account.
+* **Credentials:** Read from `GOOGLE_SHEETS_CREDENTIALS` (JSON string) and `GOOGLE_DRIVE_FOLDER_ID` (target root folder).
+* **Directory Structure:**
+  * The system automatically creates a root folder called `Survey Reports/`.
+  * For each report, it creates a subdirectory named after the vehicle's registration number (e.g., `Survey Reports/MH02AB1234/`).
+  * All uploaded vehicle photos, estimate sheets, invoices, and the final compiled report PDF are stored inside this vehicle-specific folder.
+
+### File Generation Layer
+* **PDF Reports:** Generated dynamically in Python using `fpdf2` and `reportlab` layout libraries. Builds headers, surveyor details, calculation tables, deprecation breakdowns, and dynamically fetches and embeds vehicle photographs uploaded to Google Drive.
+* **Consolidated Outputs:** Exports multiple reports simultaneously in Microsoft Excel/CSV format via `/download_consolidated_csv`.
+
+---
+
+## 3. Codebase File Index
+
+* **[app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py):** Main application routing, Flask settings, authentication logic, Gemini AI integration, report calculation handling, PDF rendering layout, and file download controllers.
+* **[db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/db.py):** PostgreSQL interface file. Connects to the local DB, initializes database schemas, updates and creates user accounts, fetches user metadata only (for fast listing), processes report CRUD requests, and hosts Google Drive folder/file upload wrappers.
+* **[migrate_db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/migrate_db.py):** Data migration utility script. Migrates users and reports from the legacy Vercel/Sheets CSV backups (`InsuranceAppDB - Users.csv` and `InsuranceAppDB - Reports.csv`) to PostgreSQL, consolidating chunked data blocks back into native JSONB fields.
+* **[sheets_db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/sheets_db.py):** Legacy database provider that used Google Sheets as a storage engine. Replaced by `db.py` but preserved in the repository as a design backup.
+* **[vps_setup/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/vps_setup):**
+  * `setup_vps.sh`: Installs system packages, Python venv, PostgreSQL, Nginx, Certbot, Git, and sets up database credentials.
+  * `nginx.conf`: Nginx server configuration reverse-proxying port 80 to port 5000.
+  * `insurance.service`: Gunicorn systemd daemon manager.
+* **[templates/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/templates):** Contains Jinja2 HTML templates (`index.html` and `login.html`).
+* **[static/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/static):** Contains frontend assets (`style.css`, client script `script.js`, and system graphics `favicon.png`/`header.png`).
+* **[tests/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/tests):** Contains local end-to-end integration and routing tests.
+
+---
+
+## 4. Hostinger VPS Infrastructure & Deployment State
+
+* **Server Profile:** Hostinger KVM 1 VPS instance running **Ubuntu 24.04 LTS**.
+* **Internal IP Routing:** Server is correctly configured with local interfaces, and Gunicorn is running on port 5000. Nginx is listening on port 80 and reverse-proxying.
+* **Public Network Drop:** Connections directly to the VPS IP `185.199.52.85` on port 80/22 from external networks time out. Networking analysis (traceroute and tcpdump) indicates that Hostinger's edge routers drop all incoming TCP handshake requests before reaching the virtual machine's virtual network interface.
+* **Cloudflare Tunnel Bypass:** A robust secure tunnel bypass has been implemented using `cloudflared`.
+  * **Service Configuration:** `cloudflared` is configured as a systemd service (`cloudflared.service`) on the VPS. It automatically starts on boot, runs as root in the background, and has self-healing recovery rules.
+  * **Tunnel Command:** `/usr/bin/cloudflared tunnel --url http://localhost` (exposing Nginx Port 80 securely).
+  * **Current Public App URL:** **[https://doug-holland-metals-evaluations.trycloudflare.com](https://doug-holland-metals-evaluations.trycloudflare.com)**
