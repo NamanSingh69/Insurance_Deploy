@@ -1,6 +1,6 @@
 # Project Context: Motor Survey Report Generator
 
-This document provides a comprehensive technical overview of the **Motor Survey Report Generator** application. It describes the complete software stack, database schema, file layout, dynamic AI model integration, and the current Hostinger VPS deployment infrastructure.
+This document provides a comprehensive technical overview of the **Motor Survey Report Generator** application. It describes the complete software stack, database schema, file layout, dynamic AI model integration, current production deployment infrastructure, and maintenance procedures.
 
 ---
 
@@ -11,21 +11,23 @@ The Motor Survey Report Generator is a multi-user, web-based tool designed for i
 ```mermaid
 graph TD
     User([Surveyor User])
-    Client[Web Browser (HTML/CSS/JS)]
-    Proxy[Nginx Reverse Proxy]
-    WSGI[Gunicorn HTTP Server]
+    Client[Web Browser]
+    CF[Cloudflare CDN Proxy]
+    Proxy[Nginx + Let's Encrypt SSL]
+    WSGI[Gunicorn :8000]
     App[Flask App Logic]
-    DB[(Local PostgreSQL)]
+    DB[(PostgreSQL :5432)]
     Drive[(Google Drive API)]
     Gemini[Google Gemini API]
-    
+
     User -->|HTTPS| Client
-    Client -->|Port 80/443 via Cloudflare Tunnel| Proxy
-    Proxy -->|Local Port 5000| WSGI
+    Client -->|IPv4 or IPv6| CF
+    CF -->|IPv6 to 2a02:4780:12:aa78::1| Proxy
+    Proxy -->|localhost:8000| WSGI
     WSGI --> App
-    App -->|Local Port 5432| DB
-    App -->|JSON/File Stream| Drive
-    App -->|JSON Prompt| Gemini
+    App -->|localhost:5432| DB
+    App -->|REST API| Drive
+    App -->|REST API| Gemini
 ```
 
 ---
@@ -49,9 +51,9 @@ graph TD
 
 ### Backend Layer
 * **Tech Stack:** Python Flask (v3.1.0).
-* **WSGI Server:** Gunicorn (v23.0.0) configured with 3 workers.
+* **WSGI Server:** Gunicorn (v23.0.0) configured with 3 workers, bound to `127.0.0.1:8000`.
 * **Process Monitor:** Systemd service (`insurance.service`).
-* **Web Server:** Nginx (v1.24) acting as a local reverse proxy (routing requests to Gunicorn port `5000` and serving `/static/` assets directly with a 30-day cache control).
+* **Web Server:** Nginx (v1.24) acting as a local reverse proxy (routing requests from port 80/443 to Gunicorn port `8000` and serving `/static/` assets directly with a 30-day cache control).
 * **Security Controls:**
   * **Flask-Login (v0.6.3):** Manages user session state and secure HTTP-Only/SameSite session cookies.
   * **Flask-Bcrypt (v1.0.1):** Secure password hashing using salt rounds.
@@ -61,6 +63,11 @@ graph TD
 ### Database Layer
 * **Database Engine:** PostgreSQL (local instance on Port 5432).
 * **Connection Client:** `psycopg2-binary` (v2.9.9).
+* **VPS Database Credentials:**
+  * Host: `127.0.0.1`, Port: `5432`
+  * Database: `insurance_db`
+  * User: `insurance_user`
+  * Password: `surveyorportal@2026`
 * **Tables:**
   1. `users` Table:
      * `id` (SERIAL PRIMARY KEY)
@@ -99,34 +106,199 @@ graph TD
 
 ## 3. Codebase File Index
 
-* **[app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py):** Main application routing, Flask settings, authentication logic, Gemini AI integration, report calculation handling, PDF rendering layout, and file download controllers.
+* **[app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py):** Main application routing, Flask settings, authentication logic, Gemini AI integration, report calculation handling, PDF rendering layout, and file download controllers. Also contains Flask CLI commands for user creation (`flask create-user`).
 * **[db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/db.py):** PostgreSQL interface file. Connects to the local DB, initializes database schemas, updates and creates user accounts, fetches user metadata only (for fast listing), processes report CRUD requests, and hosts Google Drive folder/file upload wrappers.
 * **[migrate_db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/migrate_db.py):** Data migration utility script. Migrates users and reports from the legacy Vercel/Sheets CSV backups (`InsuranceAppDB - Users.csv` and `InsuranceAppDB - Reports.csv`) to PostgreSQL, consolidating chunked data blocks back into native JSONB fields.
 * **[sheets_db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/sheets_db.py):** Legacy database provider that used Google Sheets as a storage engine. Replaced by `db.py` but preserved in the repository as a design backup.
 * **[vps_setup/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/vps_setup):**
   * `setup_vps.sh`: Installs system packages, Python venv, PostgreSQL, Nginx, Certbot, Git, and sets up database credentials.
-  * `nginx.conf`: Nginx server configuration reverse-proxying port 80 to port 5000.
-  * `insurance.service`: Gunicorn systemd daemon manager.
+  * `nginx.conf`: Nginx server configuration reverse-proxying port 80 to port 8000.
+  * `insurance.service`: Gunicorn systemd daemon manager (bound to `127.0.0.1:8000`).
 * **[templates/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/templates):** Contains Jinja2 HTML templates (`index.html` and `login.html`).
 * **[static/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/static):** Contains frontend assets (`style.css`, client script `script.js`, and system graphics `favicon.png`/`header.png`).
 * **[tests/](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/tests):** Contains local end-to-end integration and routing tests.
 
 ---
 
-## 4. Hostinger VPS Infrastructure & Deployment State
+## 4. Production Infrastructure & Network Topology
 
-* **Server Profile:** Hostinger KVM 1 VPS instance running **Ubuntu 24.04 LTS**.
-* **Internal IP Routing:** Server is correctly configured with local interfaces, and Gunicorn is running on port 8000. Nginx is listening on port 80 and reverse-proxying.
-* **Public Network Drop (IPv4):** Connections directly to the VPS IPv4 `185.199.52.85` on port 80/22/443 from external networks time out. Hostinger's edge routers drop all incoming IPv4 TCP handshake requests before reaching the VM.
-* **Direct Network Access (IPv6 Bypass):** Incoming IPv6 traffic is **fully open and unblocked** on the edge routers. The VPS is reachable directly from external networks via its public IPv6 address:
-  * **IPv6 Address:** `2a02:4780:12:aa78::1`
-  * **Listening Ports:** SSH (22), HTTP (80), HTTPS (443) are all verified accessible externally over IPv6.
-* **Production Database Backup:** A verified binary dump of the PostgreSQL database (4 users, 241 reports) was taken and saved to the local machine:
-  * **Backup file name:** `db_backup.dump`
-  * **Dumping tool:** `pg_dump`
-* **Direct Routing Implementation Plan:**
-  1. Add/modify the custom domain's **AAAA record** in the domain registrar's DNS management (the domain `iitpcep.online` is registered under a different Hostinger account than the VPS) pointing directly to the VPS IPv6: `2a02:4780:12:aa78::1`.
-  2. Run Certbot on the VPS via IPv6 to generate a standard Let's Encrypt SSL certificate for the domain.
-  3. Optionally enable Cloudflare proxying (orange cloud CDN) on the domain. This acts as an IPv4-to-IPv6 proxy, allowing IPv4-only users to connect to Cloudflare edge nodes, which then proxy the traffic to the VPS via IPv6. This requires no software tunnels running on the VPS.
-* **Legacy Cloudflare Tunnel Bypass:** The systemd service `cloudflared.service` is configured as a backup bypass tunnel using token-based authentication.
+### 4.1 Server Profile
+* **Provider:** Hostinger KVM 1 VPS
+* **OS:** Ubuntu 24.04 LTS
+* **IPv4 Address:** `185.199.52.85` (blocked by Hostinger edge routers — all inbound IPv4 traffic is dropped)
+* **IPv6 Address:** `2a02:4780:12:aa78::1` (fully open — SSH, HTTP, HTTPS all accessible externally)
 
+### 4.2 Network Path (How Users Reach the App)
+
+```
+User's Browser (any network, IPv4 or IPv6)
+    ↓ HTTPS (port 443)
+Cloudflare CDN Edge (Orange Cloud proxy)
+    ↓ IPv6 connection to 2a02:4780:12:aa78::1:443
+Nginx on VPS (Let's Encrypt SSL certificate)
+    ↓ localhost:8000
+Gunicorn (3 workers) → Flask App → PostgreSQL
+```
+
+* **Cloudflare CDN Proxy** acts as the public-facing gateway. It accepts connections from both IPv4-only and IPv6 clients at its edge, then forwards traffic to the VPS exclusively over IPv6.
+* **No software tunnels** (e.g., `cloudflared`) are required on the VPS for this to work. This is standard CDN proxying.
+
+### 4.3 Domain & DNS Configuration
+* **Production Domain:** `a-ppautomotivespvt.com`
+* **Domain Registrar:** Hostinger (registered June 5, 2026; **expires June 5, 2027**)
+* **Nameservers:** Cloudflare (`wesley.ns.cloudflare.com`, `delilah.ns.cloudflare.com`)
+* **Cloudflare Account:** `Namsingh419@gmail.com`
+* **DNS Records (configured in Cloudflare Dashboard):**
+  | Type | Name | Value | Proxy Status |
+  |------|------|-------|--------------|
+  | AAAA | `@` | `2a02:4780:12:aa78::1` | Proxied (Orange Cloud) |
+  | AAAA | `www` | `2a02:4780:12:aa78::1` | Proxied (Orange Cloud) |
+  | *(plus Hostinger email CNAME/MX/TXT records)* | | | |
+
+### 4.4 SSL/TLS Configuration
+* **Origin SSL:** Let's Encrypt certificate installed on Nginx via Certbot.
+  * Certificate path: `/etc/letsencrypt/live/a-ppautomotivespvt.com/fullchain.pem`
+  * Key path: `/etc/letsencrypt/live/a-ppautomotivespvt.com/privkey.pem`
+  * **Expires:** September 30, 2026 (Certbot auto-renews via systemd timer)
+* **Cloudflare SSL Mode:** Full (Strict) — Cloudflare validates the origin Let's Encrypt certificate.
+
+### 4.5 Is This a Permanent Solution?
+
+**Yes.** This is a stable, production-grade setup:
+* **Cloudflare CDN Proxy** is a standard industry practice used by millions of websites. It requires no running daemons and has no moving parts on the VPS side.
+* **Let's Encrypt SSL** auto-renews every 90 days via a Certbot systemd timer. No manual intervention required.
+* **The only recurring cost** is the domain renewal (~$10-$20/year after the first free year expires on **June 5, 2027**). Enable auto-renewal in Hostinger hPanel → Domains to avoid accidental expiry.
+
+### 4.6 Legacy Fallback
+* The systemd service `cloudflared.service` is configured as a backup Cloudflare Named Tunnel using token-based authentication. It can be started if needed: `sudo systemctl start cloudflared`.
+
+---
+
+## 5. Current Users & Database State
+
+### 5.1 Active Users (as of July 2, 2026)
+
+| ID | Username | Full Name | Reports | Notes |
+|----|----------|-----------|---------|-------|
+| 1 | `USER` | SK ANOWAR ALI | 241 | Primary production user. Password in `.env` as `UH65A#DF` |
+| 2 | `NAMAN` | *(not set)* | 0 | Admin/dev account. Password in `.env` as `69420` |
+| 3 | `test_employee` | Test Employee | 0 | Created during testing |
+| 5 | `USER1` | User One | 0 | Created July 2, 2026. Password: `JH6%GT9` |
+| *(4 = tempuser, may have been deleted)* | | | | |
+
+### 5.2 Database Connection (on VPS)
+```
+Host:     127.0.0.1
+Port:     5432
+Database: insurance_db
+User:     insurance_user
+Password: surveyorportal@2026
+```
+
+---
+
+## 6. Maintenance Runbook
+
+### 6.1 How to Add a New User
+
+**Option A: Flask CLI (recommended)**
+SSH into the VPS and run:
+```bash
+ssh root@2a02:4780:12:aa78::1          # or use Hostinger VPS Web Terminal
+cd /var/www/insurance-app
+sudo venv/bin/flask create-user <USERNAME> <PASSWORD> --name "<Full Name>"
+```
+Example:
+```bash
+sudo venv/bin/flask create-user SURVEYOR2 MyPass123 --name "John Doe"
+```
+The password is automatically Bcrypt-hashed before storage.
+
+**Option B: Direct SQL (advanced)**
+```bash
+PGPASSWORD='surveyorportal@2026' psql -U insurance_user -d insurance_db -h 127.0.0.1
+```
+Then manually INSERT a row with a pre-hashed password (not recommended — use the CLI instead).
+
+### 6.2 How to SSH into the VPS
+Since IPv4 is blocked, SSH only works over IPv6:
+```bash
+ssh root@2a02:4780:12:aa78::1
+```
+Alternatively, use the **Hostinger VPS Web Terminal** at: `https://hpanel.hostinger.com` → VPS → Web Terminal.
+
+### 6.3 How to Back Up the Database
+```bash
+ssh root@2a02:4780:12:aa78::1
+sudo PGPASSWORD='surveyorportal@2026' pg_dump -U insurance_user -d insurance_db -h 127.0.0.1 -F c -b -v -f /var/www/insurance-app/static/db_backup.dump
+```
+Then download the backup via: `https://a-ppautomotivespvt.com/static/db_backup.dump`
+**Important:** Delete the backup file from `/static/` after downloading to prevent public access.
+
+### 6.4 How to Restore the Database
+```bash
+sudo PGPASSWORD='surveyorportal@2026' pg_restore -U insurance_user -d insurance_db -h 127.0.0.1 --clean --if-exists /path/to/db_backup.dump
+```
+
+### 6.5 How to Deploy Code Updates
+```bash
+ssh root@2a02:4780:12:aa78::1
+cd /var/www/insurance-app
+git pull origin main
+sudo systemctl restart insurance
+```
+
+### 6.6 How to Check Service Status
+```bash
+sudo systemctl status insurance       # Gunicorn app server
+sudo systemctl status nginx           # Web server
+sudo systemctl status postgresql      # Database
+sudo certbot certificates             # SSL certificate status
+```
+
+### 6.7 How to Renew the SSL Certificate Manually
+Certbot auto-renews, but if needed:
+```bash
+sudo certbot renew --force-renewal
+sudo systemctl reload nginx
+```
+
+### 6.8 Domain Renewal
+* **Domain:** `a-ppautomotivespvt.com`
+* **Registered:** June 5, 2026
+* **Expires:** June 5, 2027
+* **Action Required:** Renew in Hostinger hPanel → Domains before expiry, or enable auto-renewal.
+* **Cost:** Standard `.com` renewal fee (~$10-$20/year).
+
+### 6.9 Cloudflare DNS Changes
+If the VPS IPv6 address changes (e.g., after a VPS rebuild):
+1. Log in to Cloudflare at `dash.cloudflare.com` (account: `Namsingh419@gmail.com`).
+2. Select `a-ppautomotivespvt.com` → DNS → Records.
+3. Edit the `AAAA` records for `@` and `www` to point to the new IPv6 address.
+4. Re-run Certbot on the VPS if the domain name or certificate changed.
+
+### 6.10 VPS Environment Variables
+The VPS `.env` file is at `/var/www/insurance-app/.env` and contains:
+* `GEMINI_API_KEY` — Google Gemini API key for AI document processing.
+* `GOOGLE_SHEETS_CREDENTIALS` — Service account JSON for Google Drive uploads.
+* `GOOGLE_DRIVE_FOLDER_ID` — Root folder ID for report PDF storage.
+* `DATABASE_URL` — PostgreSQL connection string (points to local DB on VPS).
+* `FLASK_SECRET_KEY` — Session encryption key.
+* `USERNAME` / `PASSWORD` — Legacy env vars (not used for auth; users are in PostgreSQL).
+
+---
+
+## 7. Key URLs & Access Points
+
+| Resource | URL / Address |
+|----------|---------------|
+| **Production Website** | `https://a-ppautomotivespvt.com` |
+| **VPS SSH (IPv6 only)** | `ssh root@2a02:4780:12:aa78::1` |
+| **Hostinger hPanel** | `https://hpanel.hostinger.com` |
+| **Cloudflare Dashboard** | `https://dash.cloudflare.com` (account: `Namsingh419@gmail.com`) |
+| **VPS Web Terminal** | Hostinger hPanel → VPS → Web Terminal |
+| **Application Directory** | `/var/www/insurance-app/` |
+| **Nginx Config** | `/etc/nginx/sites-available/default` |
+| **Gunicorn Service** | `/etc/systemd/system/insurance.service` |
+| **SSL Certificates** | `/etc/letsencrypt/live/a-ppautomotivespvt.com/` |
+| **Database Backup (temp)** | `/var/www/insurance-app/static/db_backup.dump` |
