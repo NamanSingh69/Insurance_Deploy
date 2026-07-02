@@ -116,9 +116,17 @@ graph TD
 ## 4. Hostinger VPS Infrastructure & Deployment State
 
 * **Server Profile:** Hostinger KVM 1 VPS instance running **Ubuntu 24.04 LTS**.
-* **Internal IP Routing:** Server is correctly configured with local interfaces, and Gunicorn is running on port 5000. Nginx is listening on port 80 and reverse-proxying.
-* **Public Network Drop:** Connections directly to the VPS IP `185.199.52.85` on port 80/22 from external networks time out. Networking analysis (traceroute and tcpdump) indicates that Hostinger's edge routers drop all incoming TCP handshake requests before reaching the virtual machine's virtual network interface.
-* **Cloudflare Tunnel Bypass:** A robust secure tunnel bypass has been implemented using `cloudflared`.
-  * **Service Configuration:** `cloudflared` is configured as a systemd service (`cloudflared.service`) on the VPS. It automatically starts on boot, runs as root in the background, and has self-healing recovery rules.
-  * **Tunnel Command:** `/usr/bin/cloudflared tunnel --url http://localhost` (exposing Nginx Port 80 securely).
-  * **Current Public App URL:** **[https://doug-holland-metals-evaluations.trycloudflare.com](https://doug-holland-metals-evaluations.trycloudflare.com)**
+* **Internal IP Routing:** Server is correctly configured with local interfaces, and Gunicorn is running on port 8000. Nginx is listening on port 80 and reverse-proxying.
+* **Public Network Drop (IPv4):** Connections directly to the VPS IPv4 `185.199.52.85` on port 80/22/443 from external networks time out. Hostinger's edge routers drop all incoming IPv4 TCP handshake requests before reaching the VM.
+* **Direct Network Access (IPv6 Bypass):** Incoming IPv6 traffic is **fully open and unblocked** on the edge routers. The VPS is reachable directly from external networks via its public IPv6 address:
+  * **IPv6 Address:** `2a02:4780:12:aa78::1`
+  * **Listening Ports:** SSH (22), HTTP (80), HTTPS (443) are all verified accessible externally over IPv6.
+* **Production Database Backup:** A verified binary dump of the PostgreSQL database (4 users, 241 reports) was taken and saved to the local machine:
+  * **Backup file name:** `db_backup.dump`
+  * **Dumping tool:** `pg_dump`
+* **Direct Routing Implementation Plan:**
+  1. Add/modify the custom domain's **AAAA record** in the domain registrar's DNS management (the domain `iitpcep.online` is registered under a different Hostinger account than the VPS) pointing directly to the VPS IPv6: `2a02:4780:12:aa78::1`.
+  2. Run Certbot on the VPS via IPv6 to generate a standard Let's Encrypt SSL certificate for the domain.
+  3. Optionally enable Cloudflare proxying (orange cloud CDN) on the domain. This acts as an IPv4-to-IPv6 proxy, allowing IPv4-only users to connect to Cloudflare edge nodes, which then proxy the traffic to the VPS via IPv6. This requires no software tunnels running on the VPS.
+* **Legacy Cloudflare Tunnel Bypass:** The systemd service `cloudflared.service` is configured as a backup bypass tunnel using token-based authentication.
+

@@ -6,8 +6,9 @@ After=network.target
 User=root
 WorkingDirectory=/var/www/insurance-app
 Environment="PATH=/var/www/insurance-app/venv/bin"
-ExecStart=/var/www/insurance-app/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:5000 app:app
+ExecStart=/var/www/insurance-app/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 app:app
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
+
