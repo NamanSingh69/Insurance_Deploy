@@ -97,12 +97,12 @@ class TestLoadReportEndpoint:
     
     def test_load_report_success(self, authenticated_client, mock_sheets_db, sample_report_data):
         """Test loading existing report."""
-        mock_sheets_db.get_user_reports.return_value = [{
+        mock_sheets_db.get_report_by_id.return_value = {
             'id': 'test-id',
             'user_id': '1',
             'report_no': 'SR-001',
             'report_data_json': '{"survey_report": {}, "assessment": {}}'
-        }]
+        }
         
         response = authenticated_client.get('/load_report/test-id')
         
@@ -110,7 +110,7 @@ class TestLoadReportEndpoint:
     
     def test_load_report_not_found(self, authenticated_client, mock_sheets_db):
         """Test loading non-existent report."""
-        mock_sheets_db.get_user_reports.return_value = []
+        mock_sheets_db.get_report_by_id.return_value = None
         
         response = authenticated_client.get('/load_report/nonexistent-id')
         

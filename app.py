@@ -3208,12 +3208,7 @@ def load_report(report_id):
         # OR implement get_report_by_id in sheets_db. 
         # For MVP, filtering user reports is safe enough for small data.
         
-        reports = sheets_db.get_user_reports(current_user.id)
-        target_report = None
-        for r in reports:
-            if str(r.get('id')) == str(report_id):
-                target_report = r
-                break
+        target_report = sheets_db.get_report_by_id(report_id, current_user.id)
         
         if target_report:
             try:

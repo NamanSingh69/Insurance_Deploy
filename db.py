@@ -211,6 +211,27 @@ class PostgresDB:
              print(f"Error getting user reports: {e}")
              return []
 
+    def get_report_by_id(self, report_id, user_id):
+        """Fetches a single report by ID."""
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM reports WHERE id = %s AND user_id = %s;", (report_id, user_id))
+                row = cur.fetchone()
+                if row:
+                     row_dict = dict(row)
+                     row_dict['id'] = str(row_dict['id'])
+                     row_dict['saved_at'] = str(row_dict['saved_at']) if row_dict['saved_at'] else ''
+                     if isinstance(row_dict['report_data_json'], dict):
+                          row_dict['report_data_json'] = json.dumps(row_dict['report_data_json'])
+                     return row_dict
+            return None
+        except Exception as e:
+             print(f"Error getting report by ID: {e}")
+             return None
+
+
     def save_report(self, user_id, report_data_dict, existing_report_id=None):
         """Saves a report to PostgreSQL natively as JSONB!
         
