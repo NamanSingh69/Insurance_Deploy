@@ -464,6 +464,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (includeInConsolidatedCheckbox) {
             includeInConsolidatedCheckbox.checked = currentAssessmentData.page3_details.include_in_consolidated === true;
         }
+        const page3ApplyGstCheckbox = document.getElementById('page3-apply-gst');
+        if (page3ApplyGstCheckbox) {
+            page3ApplyGstCheckbox.checked = currentAssessmentData.page3_details.apply_gst !== false;
+        }
 
         // Populate Surveyor Bank Details
         const surveyor = currentAssessmentData.page3_details.surveyor_details || {};
@@ -540,6 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('assessment-nd-deduction-pc'),
             document.getElementById('assessment-nd-deduction-amt'),
             document.getElementById('assessment-towing-charges'),
+            document.getElementById('page3-apply-gst'),
             page3EstimatedAmountInput,
             page3PhotoCopiesCountInput,
             document.getElementById('input-vehicle_regn_date'),
@@ -1414,8 +1419,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function updatePage3TaxDisplay() {
         if (!assessmentLabourTaxTypeDropdown || !page3CgstRowDisplay || !page3SgstRowDisplay || !page3IgstRowDisplay) return;
         const selectedTaxType = assessmentLabourTaxTypeDropdown.value;
+        const applyGst = document.getElementById('page3-apply-gst') ? document.getElementById('page3-apply-gst').checked : true;
 
-        if (selectedTaxType === 'IGST') {
+        if (!applyGst) {
+            page3CgstRowDisplay.classList.add('hidden');
+            page3SgstRowDisplay.classList.add('hidden');
+            page3IgstRowDisplay.classList.add('hidden');
+        } else if (selectedTaxType === 'IGST') {
             page3CgstRowDisplay.classList.add('hidden');
             page3SgstRowDisplay.classList.add('hidden');
             page3IgstRowDisplay.classList.remove('hidden');
@@ -1454,12 +1464,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let p3Cgst = 0, p3Sgst = 0, p3Igst = 0;
         const selectedTaxType = assessmentLabourTaxTypeDropdown.value;
+        const applyGst = document.getElementById('page3-apply-gst') ? document.getElementById('page3-apply-gst').checked : true;
 
-        if (selectedTaxType === 'IGST') {
-            p3Igst = totalBeforeGst * 0.18;
-        } else {
-            p3Cgst = totalBeforeGst * 0.09;
-            p3Sgst = totalBeforeGst * 0.09;
+        if (applyGst) {
+            if (selectedTaxType === 'IGST') {
+                p3Igst = totalBeforeGst * 0.18;
+            } else {
+                p3Cgst = totalBeforeGst * 0.09;
+                p3Sgst = totalBeforeGst * 0.09;
+            }
         }
 
         if (page3CgstDisplay) page3CgstDisplay.value = formatCurrency(p3Cgst);
@@ -1732,6 +1745,7 @@ document.addEventListener('DOMContentLoaded', () => {
             photo_copies_count: page3PhotoCopiesCountInput?.value.trim() || '0',
             fee_items: page3FeeItems,
             include_in_consolidated: includeInConsolidatedCheckbox ? includeInConsolidatedCheckbox.checked : false,
+            apply_gst: document.getElementById('page3-apply-gst') ? document.getElementById('page3-apply-gst').checked : true,
             surveyor_details: {
                 gstin: getVal('surveyor-gstin'),
                 pan: getVal('surveyor-pan'),

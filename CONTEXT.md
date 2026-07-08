@@ -144,22 +144,21 @@ Gunicorn (3 workers) → Flask App → PostgreSQL
 * **No software tunnels** (e.g., `cloudflared`) are required on the VPS for this to work. This is standard CDN proxying.
 
 ### 4.3 Domain & DNS Configuration
-* **Production Domain:** `a-ppautomotivespvt.com`
-* **Domain Registrar:** Hostinger (registered June 5, 2026; **expires June 5, 2027**)
+* **Production Domain:** `skinsurance.tech`
+* **Domain Registrar:** Hostinger (registered July 3, 2026; **expires July 3, 2027**)
 * **Nameservers:** Cloudflare (`wesley.ns.cloudflare.com`, `delilah.ns.cloudflare.com`)
 * **Cloudflare Account:** `Namsingh419@gmail.com`
 * **DNS Records (configured in Cloudflare Dashboard):**
-  | Type | Name | Value | Proxy Status |
-  |------|------|-------|--------------|
-  | AAAA | `@` | `2a02:4780:12:aa78::1` | Proxied (Orange Cloud) |
-  | AAAA | `www` | `2a02:4780:12:aa78::1` | Proxied (Orange Cloud) |
-  | *(plus Hostinger email CNAME/MX/TXT records)* | | | |
+  | Domain | Type | Name | Value | Proxy Status |
+  |--------|------|------|-------|--------------|
+  | `skinsurance.tech` | AAAA | `@` | `2a02:4780:12:aa78::1` | Proxied (Orange Cloud) |
+  | `skinsurance.tech` | CNAME | `www` | `skinsurance.tech` | Proxied (Orange Cloud) |
 
 ### 4.4 SSL/TLS Configuration
-* **Origin SSL:** Let's Encrypt certificate installed on Nginx via Certbot.
-  * Certificate path: `/etc/letsencrypt/live/a-ppautomotivespvt.com/fullchain.pem`
-  * Key path: `/etc/letsencrypt/live/a-ppautomotivespvt.com/privkey.pem`
-  * **Expires:** September 30, 2026 (Certbot auto-renews via systemd timer)
+* **Origin SSL:** Let's Encrypt certificates installed on Nginx via Certbot.
+  * `skinsurance.tech` certificate path: `/etc/letsencrypt/live/skinsurance.tech/fullchain.pem`
+  * `skinsurance.tech` key path: `/etc/letsencrypt/live/skinsurance.tech/privkey.pem`
+  * **Expires:** October 1, 2026 (Certbot auto-renews via systemd timer)
 * **Cloudflare SSL Mode:** Full (Strict) — Cloudflare validates the origin Let's Encrypt certificate.
 
 ### 4.5 Is This a Permanent Solution?
@@ -176,15 +175,15 @@ Gunicorn (3 workers) → Flask App → PostgreSQL
 
 ## 5. Current Users & Database State
 
-### 5.1 Active Users (as of July 2, 2026)
+### 5.1 Active Users (as of July 3, 2026)
 
-| ID | Username | Full Name | Reports | Notes |
-|----|----------|-----------|---------|-------|
-| 1 | `USER` | SK ANOWAR ALI | 241 | Primary production user. Password in `.env` as `UH65A#DF` |
-| 2 | `NAMAN` | *(not set)* | 0 | Admin/dev account. Password in `.env` as `69420` |
-| 3 | `test_employee` | Test Employee | 0 | Created during testing |
-| 5 | `USER1` | User One | 0 | Created July 2, 2026. Password: `JH6%GT9` |
-| *(4 = tempuser, may have been deleted)* | | | | |
+| ID | Username | Full Name | Email | Notes |
+|----|----------|-----------|-------|-------|
+| 1 | `USER` | SK ANOWAR ALI | `skanowarali93@gmail.com` | Primary production user. Password in `.env` as `UH65A#DF` |
+| 2 | `NAMAN` | *(not set)* | *(not set)* | Admin/dev account. Password in `.env` as `69420` |
+| 3 | `test_employee` | Test Employee | *(not set)* | Created during testing |
+| 5 | `tempuser` | Temporary Test User | `tempuser@example.com` | Created during testing |
+| 6 | `USER1` | User One | *(not set)* | Created July 2, 2026. Password: `JH6%GT9` |
 
 ### 5.2 Database Connection (on VPS)
 ```
@@ -232,7 +231,7 @@ Alternatively, use the **Hostinger VPS Web Terminal** at: `https://hpanel.hostin
 ssh root@2a02:4780:12:aa78::1
 sudo PGPASSWORD='surveyorportal@2026' pg_dump -U insurance_user -d insurance_db -h 127.0.0.1 -F c -b -v -f /var/www/insurance-app/static/db_backup.dump
 ```
-Then download the backup via: `https://a-ppautomotivespvt.com/static/db_backup.dump`
+Then download the backup via: `https://skinsurance.tech/static/db_backup.dump`
 **Important:** Delete the backup file from `/static/` after downloading to prevent public access.
 
 ### 6.4 How to Restore the Database
@@ -264,17 +263,15 @@ sudo systemctl reload nginx
 ```
 
 ### 6.8 Domain Renewal
-* **Domain:** `a-ppautomotivespvt.com`
-* **Registered:** June 5, 2026
-* **Expires:** June 5, 2027
+* **Domain:** `skinsurance.tech` (Registered: July 3, 2026; Expires: July 3, 2027)
 * **Action Required:** Renew in Hostinger hPanel → Domains before expiry, or enable auto-renewal.
-* **Cost:** Standard `.com` renewal fee (~$10-$20/year).
+* **Cost:** Standard domain renewal fee (~$10-$20/year).
 
 ### 6.9 Cloudflare DNS Changes
 If the VPS IPv6 address changes (e.g., after a VPS rebuild):
 1. Log in to Cloudflare at `dash.cloudflare.com` (account: `Namsingh419@gmail.com`).
-2. Select `a-ppautomotivespvt.com` → DNS → Records.
-3. Edit the `AAAA` records for `@` and `www` to point to the new IPv6 address.
+2. Select `skinsurance.tech` → DNS → Records.
+3. Edit the `AAAA` record for `@` to point to the new IPv6 address.
 4. Re-run Certbot on the VPS if the domain name or certificate changed.
 
 ### 6.10 VPS Environment Variables
@@ -292,13 +289,13 @@ The VPS `.env` file is at `/var/www/insurance-app/.env` and contains:
 
 | Resource | URL / Address |
 |----------|---------------|
-| **Production Website** | `https://a-ppautomotivespvt.com` |
+| **Production Website** | `https://skinsurance.tech` |
 | **VPS SSH (IPv6 only)** | `ssh root@2a02:4780:12:aa78::1` |
 | **Hostinger hPanel** | `https://hpanel.hostinger.com` |
 | **Cloudflare Dashboard** | `https://dash.cloudflare.com` (account: `Namsingh419@gmail.com`) |
 | **VPS Web Terminal** | Hostinger hPanel → VPS → Web Terminal |
 | **Application Directory** | `/var/www/insurance-app/` |
-| **Nginx Config** | `/etc/nginx/sites-available/default` |
+| **Nginx Config** | `/etc/nginx/sites-available/skinsurance` |
 | **Gunicorn Service** | `/etc/systemd/system/insurance.service` |
-| **SSL Certificates** | `/etc/letsencrypt/live/a-ppautomotivespvt.com/` |
+| **SSL Certificates** | `/etc/letsencrypt/live/skinsurance.tech/` |
 | **Database Backup (temp)** | `/var/www/insurance-app/static/db_backup.dump` |

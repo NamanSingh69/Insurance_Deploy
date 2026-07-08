@@ -171,3 +171,53 @@ class TestPartDeprCalculation:
         # Normal rate would be 15, but policy overrides
         # The function returns the rate, policy logic is elsewhere
         assert rate == 15.0
+
+
+class TestPage3GSTCalculations:
+    """Test Page 3 Invoice Summary calculation helper under apply_gst true/false."""
+
+    def test_apply_gst_true(self):
+        from app import _calculate_report_assessment_summary
+        assessment_data = {
+            'labour_tax_type': 'CGST/SGST',
+            'page3_details': {
+                'apply_gst': True,
+                'estimated_amount': '1000',
+                'photo_copies_count': '10',
+                'fee_items': [
+                    {'name': 'Survey Fee', 'amount': '1500'}
+                ]
+            }
+        }
+        survey_data = {}
+        summary = _calculate_report_assessment_summary(assessment_data, survey_data)
+        # Subtotal: Fee(1500) + Photo(10 * 10 = 100) = 1600
+        # CGST: 1600 * 0.09 = 144.0
+        # SGST: 1600 * 0.09 = 144.0
+        # Gross Total: 1600 + 144 + 144 = 1888
+        assert summary['page3_cgst'] == 144.0
+        assert summary['page3_sgst'] == 144.0
+        assert summary['page3_gross_total'] == 1888.0
+
+    def test_apply_gst_false(self):
+        from app import _calculate_report_assessment_summary
+        assessment_data = {
+            'labour_tax_type': 'CGST/SGST',
+            'page3_details': {
+                'apply_gst': False,
+                'estimated_amount': '1000',
+                'photo_copies_count': '10',
+                'fee_items': [
+                    {'name': 'Survey Fee', 'amount': '1500'}
+                ]
+            }
+        }
+        survey_data = {}
+        summary = _calculate_report_assessment_summary(assessment_data, survey_data)
+        # Subtotal: Fee(1500) + Photo(100) = 1600
+        # CGST: 0.0
+        # SGST: 0.0
+        # Gross Total: 1600
+        assert summary['page3_cgst'] == 0.0
+        assert summary['page3_sgst'] == 0.0
+        assert summary['page3_gross_total'] == 1600.0

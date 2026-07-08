@@ -231,6 +231,31 @@ class PostgresDB:
              print(f"Error getting report by ID: {e}")
              return None
 
+    def get_last_surveyor_details(self, user_id):
+        """Fetches the surveyor_details from the user's most recently saved report."""
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT report_data_json 
+                    FROM reports 
+                    WHERE user_id = %s 
+                    ORDER BY saved_at DESC 
+                    LIMIT 1;
+                """, (user_id,))
+                row = cur.fetchone()
+                if row:
+                    data = row['report_data_json']
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    if data:
+                        return data.get('assessment', {}).get('page3_details', {}).get('surveyor_details')
+            return None
+        except Exception as e:
+            print(f"Error getting last surveyor details: {e}")
+            return None
+
 
     def save_report(self, user_id, report_data_dict, existing_report_id=None):
         """Saves a report to PostgreSQL natively as JSONB!

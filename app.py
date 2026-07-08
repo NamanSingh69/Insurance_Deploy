@@ -333,8 +333,68 @@ def get_generative_models(user=None):
     )
     return primary, secondary
 
-# --- In-memory storage for generated files (Temporary before download) ---
-generated_data_store = {}
+class DiskDataStore:
+    def __init__(self):
+        self.directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads', 'temp_pdfs')
+        os.makedirs(self.directory, exist_ok=True)
+
+    def _get_paths(self, key):
+        safe_key = "".join(c for c in key if c.isalnum() or c in ('-', '_'))
+        meta_path = os.path.join(self.directory, f"{safe_key}.json")
+        pdf_path = os.path.join(self.directory, f"{safe_key}.pdf")
+        return meta_path, pdf_path
+
+    def __setitem__(self, key, value):
+        meta_path, pdf_path = self._get_paths(key)
+        metadata = {
+            "report_no": value.get("report_no"),
+            "vehicle_no": value.get("vehicle_no")
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f)
+        with open(pdf_path, "wb") as f:
+            f.write(value.get("pdf_report"))
+
+    def __getitem__(self, key):
+        meta_path, pdf_path = self._get_paths(key)
+        if not os.path.exists(meta_path) or not os.path.exists(pdf_path):
+            raise KeyError(key)
+        with open(meta_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        return {
+            "pdf_report": pdf_bytes,
+            "report_no": metadata.get("report_no") or "",
+            "vehicle_no": metadata.get("vehicle_no") or ""
+        }
+
+    def __contains__(self, key):
+        meta_path, pdf_path = self._get_paths(key)
+        return os.path.exists(meta_path) and os.path.exists(pdf_path)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def clear(self):
+        import shutil
+        if os.path.exists(self.directory):
+            for filename in os.listdir(self.directory):
+                file_path = os.path.join(self.directory, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print(f'Failed to delete {file_path}. Reason: {e}')
+
+# --- Persistent storage for generated files (Shared across Gunicorn workers) ---
+generated_data_store = DiskDataStore()
+
 
 # --- Define the expected fields based on the template ---
 EXPECTED_FIELDS = [
@@ -1346,7 +1406,13 @@ def process_pdf():
         if not survey_data.get('tp_details'): survey_data['tp_details'] = "No ( As Per Claim Form )"
         if not survey_data.get('damages_extent'): survey_data['damages_extent'] = "The Spare Parts which are included in Assessment column, found pressed/deformed/torn/ distorted &/or broken."
         if not survey_data.get('remark'): survey_data['remark'] = "The declaration of the accident appeared consistent with the nature of the damages sustained"
-        # --- End Apply Defaults ---
+        # --- Inject Last Saved Surveyor Details ---
+        last_surveyor_details = sheets_db.get_last_surveyor_details(current_user.id)
+        if last_surveyor_details:
+            if 'assessment' in combined_data:
+                if 'page3_details' not in combined_data['assessment']:
+                    combined_data['assessment']['page3_details'] = {}
+                combined_data['assessment']['page3_details']['surveyor_details'] = last_surveyor_details
 
         return jsonify(combined_data)
 
@@ -1568,11 +1634,13 @@ def _calculate_report_assessment_summary(assessment_data_raw, survey_data_raw):
         p3_total_before_gst = p3_fees_subtotal + p3_photo_total_charge
         p3_cgst_calc = 0.0; p3_sgst_calc = 0.0; p3_igst_calc = 0.0
         
-        if labour_tax_type_main == 'IGST': 
-            p3_igst_calc = p3_total_before_gst * 0.18
-        else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
-            p3_cgst_calc = p3_total_before_gst * 0.09
-            p3_sgst_calc = p3_total_before_gst * 0.09
+        p3_apply_gst = page3_details_raw.get('apply_gst', True)
+        if p3_apply_gst:
+            if labour_tax_type_main == 'IGST': 
+                p3_igst_calc = p3_total_before_gst * 0.18
+            else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
+                p3_cgst_calc = p3_total_before_gst * 0.09
+                p3_sgst_calc = p3_total_before_gst * 0.09
         
         summary['page3_cgst'] = p3_cgst_calc
         summary['page3_sgst'] = p3_sgst_calc
@@ -1844,6 +1912,7 @@ def generate_files():
         
         # Surveyor Bank Details
         surveyor_details = page3_details_raw.get('surveyor_details', {})
+        p3_apply_gst = page3_details_raw.get('apply_gst', True)
 
         p3_photo_copies_str = str(page3_details_raw.get('photo_copies_count', '0')).strip()
         p3_photo_copies_count = 0 
@@ -2074,10 +2143,11 @@ def generate_files():
         p3_total_before_gst = p3_fees_subtotal + p3_photo_total_charge
         p3_cgst = 0.0; p3_sgst = 0.0; p3_igst = 0.0
         
-        if labour_tax_type_main == 'IGST': 
-            p3_igst = p3_total_before_gst * 0.18
-        else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
-            p3_cgst = p3_total_before_gst * 0.09; p3_sgst = p3_total_before_gst * 0.09
+        if p3_apply_gst:
+            if labour_tax_type_main == 'IGST': 
+                p3_igst = p3_total_before_gst * 0.18
+            else: # CGST/SGST (survey fee GST is always 18%, even when labour tax is Zero)
+                p3_cgst = p3_total_before_gst * 0.09; p3_sgst = p3_total_before_gst * 0.09
             
         p3_grand_total = p3_total_before_gst + p3_cgst + p3_sgst + p3_igst
         p3_grand_total_in_words_raw = number_to_words_indian(p3_grand_total)
@@ -2926,15 +2996,19 @@ def generate_files():
         photo_desc_raw = f"{p3_photo_copies_count} photograph copies @ Rs 10/- per Photograph"; photo_desc = normalize_pdf_text_for_fpdf(photo_desc_raw)
         pdf.cell(fee_name_width, line_h_page3, photo_desc, border=1); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_photo_total_charge), border=1, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         if p3_total_before_gst != 0:
-            pdf.set_font("Helvetica", '', base_font_size_page3); gst_lines_needed = 3 if labour_tax_type_main != 'IGST' else 2
-            if pdf.get_y() + (line_h_page3 * gst_lines_needed) > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
-            pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Sub Total"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_total_before_gst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            
-            if labour_tax_type_main == 'IGST':
-                if p3_igst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 18% IGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_igst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            else: # Survey fee GST is always 18% (CGST/SGST), even when labour tax is Zero
-                if p3_cgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% CGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_cgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                if p3_sgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% SGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_sgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_font("Helvetica", '', base_font_size_page3)
+            if p3_apply_gst:
+                gst_lines_needed = 3 if labour_tax_type_main != 'IGST' else 2
+                if pdf.get_y() + (line_h_page3 * gst_lines_needed) > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
+                pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Sub Total"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_total_before_gst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                
+                if labour_tax_type_main == 'IGST':
+                    if p3_igst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 18% IGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_igst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                else: # Survey fee GST is always 18% (CGST/SGST), even when labour tax is Zero
+                    if p3_cgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% CGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_cgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    if p3_sgst != 0: pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Add, 9% SGST"), border='LR', align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_sgst), border='LR', align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            else:
+                if pdf.get_y() + line_h_page3 > pdf.page_break_trigger-10: pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
             
             pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(fee_name_width, line_h_page3, normalize_pdf_text_for_fpdf("Total Rupees"), border=1, align='R'); pdf.cell(fee_amount_width, line_h_page3, format_pdf_number(p3_grand_total), border=1, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(line_h_page3 * 0.5)
