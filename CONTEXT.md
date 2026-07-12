@@ -127,7 +127,10 @@ graph TD
 * **OS:** Ubuntu 24.04 LTS
 * **IPv4 Address:** `185.199.52.85` (blocked by Hostinger edge routers — all inbound IPv4 traffic is dropped)
 * **IPv6 Address:** `2a02:4780:12:aa78::1` (fully open — SSH, HTTP, HTTPS all accessible externally)
-
+* **Hostinger hPanel Login:**
+  * **URL:** `https://hpanel.hostinger.com`
+  * **Username/Email:** `skanowarali93@gmail.com`
+  * **Password:** `appauto@26`
 ### 4.2 Network Path (How Users Reach the App)
 
 ```
@@ -239,13 +242,54 @@ Then download the backup via: `https://skinsurance.tech/static/db_backup.dump`
 sudo PGPASSWORD='surveyorportal@2026' pg_restore -U insurance_user -d insurance_db -h 127.0.0.1 --clean --if-exists /path/to/db_backup.dump
 ```
 
-### 6.5 How to Deploy Code Updates
+### 6.5 How to Deploy and Verify Code Updates
+
+**Step 1: Push changes to GitHub from the local machine**
 ```bash
-ssh root@2a02:4780:12:aa78::1
+git add <files>
+git commit -m "description of change"
+git push origin main
+```
+
+**Step 2: Connect to the VPS**
+The local dev machine does not have IPv6 connectivity, so direct SSH (`ssh root@2a02:4780:12:aa78::1`) will not work. Use the **Hostinger Web Terminal** instead:
+1. Log in to `https://hpanel.hostinger.com` (credentials: `skanowarali93@gmail.com` / `appauto@26`).
+2. Navigate to **VPS** → select the server → click **Terminal** (opens in a new browser tab).
+
+**Step 3: Pull and deploy on the VPS**
+```bash
 cd /var/www/insurance-app
 git pull origin main
+```
+If only Python/template code changed:
+```bash
 sudo systemctl restart insurance
 ```
+If Nginx configuration changed (files in `vps_setup/`):
+```bash
+cp vps_setup/skinsurance.nginx /etc/nginx/sites-available/skinsurance
+nginx -t                          # Must print "syntax is ok"
+sudo systemctl restart nginx
+```
+If the Gunicorn systemd service file changed:
+```bash
+cp vps_setup/insurance.service /etc/systemd/system/insurance.service
+sudo systemctl daemon-reload
+sudo systemctl restart insurance
+```
+
+**Step 4: Verify the deployment**
+Run these checks on the VPS terminal:
+```bash
+systemctl is-active insurance      # Should print "active"
+systemctl is-active nginx          # Should print "active"
+```
+Then from the local machine (or any browser), confirm the site loads:
+```bash
+curl.exe -s -o NUL -w "%%{http_code}" https://skinsurance.tech/login
+# Should print 200
+```
+Or simply open `https://skinsurance.tech` in a browser and confirm the login page appears.
 
 ### 6.6 How to Check Service Status
 ```bash
@@ -291,7 +335,7 @@ The VPS `.env` file is at `/var/www/insurance-app/.env` and contains:
 |----------|---------------|
 | **Production Website** | `https://skinsurance.tech` |
 | **VPS SSH (IPv6 only)** | `ssh root@2a02:4780:12:aa78::1` |
-| **Hostinger hPanel** | `https://hpanel.hostinger.com` |
+| **Hostinger hPanel** | `https://hpanel.hostinger.com` (login: `skanowarali93@gmail.com` / `appauto@26`) |
 | **Cloudflare Dashboard** | `https://dash.cloudflare.com` (account: `Namsingh419@gmail.com`) |
 | **VPS Web Terminal** | Hostinger hPanel → VPS → Web Terminal |
 | **Application Directory** | `/var/www/insurance-app/` |
