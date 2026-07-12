@@ -196,13 +196,16 @@ class TestGenerateFilesEndpoint:
     """Tests for /generate_files endpoint."""
     
     def test_generate_files_success(self, authenticated_client, sample_report_data):
-        """Test successful file generation."""
+        """Test successful file generation returns task_id (async pattern)."""
         response = authenticated_client.post('/generate_files',
                                              json=sample_report_data,
                                              content_type='application/json')
         
-        # May succeed or fail depending on mock setup
-        assert response.status_code in [200, 400, 500]
+        # Now returns 202 with task_id for async processing
+        assert response.status_code in [200, 202, 400, 500]
+        if response.status_code == 202:
+            data = response.get_json()
+            assert 'task_id' in data
     
     def test_generate_files_no_data(self, authenticated_client):
         """Test generate files without data."""
@@ -210,6 +213,7 @@ class TestGenerateFilesEndpoint:
                                              json={},
                                              content_type='application/json')
         
+        # Empty data is caught synchronously before async dispatch
         assert response.status_code in [400, 500]
 
 
@@ -222,20 +226,28 @@ class TestProcessPDFEndpoint:
                                              data={},
                                              content_type='multipart/form-data')
         
-        # Should return error
+        # Should return error synchronously (before async dispatch)
         assert response.status_code in [200, 400]
     
     def test_process_pdf_with_mock_file(self, authenticated_client):
-        """Test process PDF with mock file."""
+        """Test process PDF with mock file returns task_id (async pattern)."""
         # Create a simple PDF-like bytes
         pdf_content = b'%PDF-1.4 fake pdf content'
         data = {
-            'pdf': (io.BytesIO(pdf_content), 'test.pdf')
+            'pdf_file': (io.BytesIO(pdf_content), 'test.pdf', 'application/pdf')
         }
         
         response = authenticated_client.post('/process_pdf',
                                              data=data,
                                              content_type='multipart/form-data')
         
-        # Will likely fail Gemini processing but should not crash
-        assert response.status_code in [200, 400, 500]
+        # Now returns 202 with task_id for async processing
+        assert response.status_code in [200, 202, 400, 500]
+        if response.status_code == 202:
+            result = response.get_json()
+            assert 'task_id' in result
+
+    def test_process_pdf_status_not_found(self, authenticated_client):
+        """Test polling for a non-existent task."""
+        response = authenticated_client.get('/process_pdf/status/nonexistent-task-id')
+        assert response.status_code == 404

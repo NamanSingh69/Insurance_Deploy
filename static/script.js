@@ -1620,7 +1620,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', quality));
+                    // Return both base64 (for local preview) and blob (for upload)
+                    const base64 = canvas.toDataURL('image/jpeg', quality);
+                    canvas.toBlob((blob) => {
+                        resolve({ base64, blob });
+                    }, 'image/jpeg', quality);
                 };
                 img.onerror = error => reject(error);
             };
@@ -1628,21 +1632,46 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    async function uploadPhotoToServer(blob, filename) {
+        /**
+         * Upload a compressed photo to the server via /upload_photo.
+         * Returns the proxy URL (e.g., /proxy_image/<id>) on success.
+         * Falls back to base64 if upload fails (so photos still work).
+         */
+        const formData = new FormData();
+        formData.append('photo', blob, filename || 'photo.jpg');
+        const response = await fetch('/upload_photo', { method: 'POST', body: formData });
+        if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
+        const result = await response.json();
+        if (result.success && result.url) return result.url;
+        throw new Error(result.error || 'Upload returned no URL');
+    }
+
     function handlePhotoSelection(event, category) {
         const files = event.target.files;
         if (files.length > 0) {
-            showStatus('Processing photos...', 'processing');
+            showStatus(`Uploading ${files.length} photo(s)...`, 'processing');
 
-            const promises = Array.from(files).map(file => compressImage(file));
+            const uploadPromises = Array.from(files).map(async (file, index) => {
+                const { base64, blob } = await compressImage(file);
+                try {
+                    // Upload to server, get proxy URL
+                    const proxyUrl = await uploadPhotoToServer(blob, file.name);
+                    return proxyUrl; // Store URL, not base64
+                } catch (uploadErr) {
+                    console.warn(`Photo upload failed for ${file.name}, using base64 fallback:`, uploadErr);
+                    return base64; // Fallback to base64 if upload fails
+                }
+            });
 
-            Promise.all(promises).then(base64Images => {
-                base64Images.forEach(base64Data => {
-                    uploadedPhotos[category].push(base64Data);
+            Promise.all(uploadPromises).then(photoRefs => {
+                photoRefs.forEach(ref => {
+                    uploadedPhotos[category].push(ref);
                 });
                 renderPhotos(category);
-                showStatus('Photos added!', 'success');
+                showStatus(`${photoRefs.length} photo(s) uploaded!`, 'success');
             }).catch(err => {
-                console.error("Compression error:", err);
+                console.error("Photo processing error:", err);
                 showStatus('Error processing photos', 'error');
             });
         }
@@ -2023,14 +2052,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 response = await fetch('/process_pdf', { method: 'POST', body: formData });
             }
 
-            clearInterval(progressInterval); uploadProgress.style.width = '100%';
-
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status} ${response.statusText}`;
                 try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                 throw new Error(errorMsg);
             }
-            responseData = await response.json();
+            const submitResult = await response.json();
+            const taskId = submitResult.task_id;
+            if (!taskId) throw new Error('No task_id received from server');
+
+            // Poll for completion
+            showStatus('AI is analyzing document... This may take a minute.', 'processing');
+            while (true) {
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Poll every 3 seconds
+                const statusRes = await fetch(`/process_pdf/status/${taskId}`);
+                if (!statusRes.ok) throw new Error(`Status check failed: ${statusRes.status}`);
+                const statusData = await statusRes.json();
+
+                if (statusData.status === 'completed') {
+                    responseData = statusData.result;
+                    break;
+                } else if (statusData.status === 'error') {
+                    throw new Error(statusData.error || 'AI processing failed');
+                }
+                // else still processing, continue polling
+            }
+
+            clearInterval(progressInterval); uploadProgress.style.width = '100%';
             await new Promise(resolve => setTimeout(resolve, 300));
             uploadProgressContainer.classList.add('hidden');
 
@@ -2069,7 +2117,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                 throw new Error(errorMsg);
             }
-            const result = await response.json();
+            const submitResult = await response.json();
+            const taskId = submitResult.task_id;
+            if (!taskId) throw new Error('No task_id received from server');
+
+            // Poll for completion
+            showStatus('Generating PDF report... This may take a moment.', 'processing');
+            let result = null;
+            while (true) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                const statusRes = await fetch(`/generate_files/status/${taskId}`);
+                if (!statusRes.ok) throw new Error(`Status check failed: ${statusRes.status}`);
+                const statusData = await statusRes.json();
+
+                if (statusData.status === 'completed') {
+                    result = statusData.result;
+                    break;
+                } else if (statusData.status === 'error') {
+                    throw new Error(statusData.error || 'File generation failed');
+                }
+            }
+
             const reportNo = finalDataToSend.survey_report['report_no'] || 'SurveyReport';
             displayDownloadLinks(result.request_id, reportNo, result.drive_link);
         } catch (error) {
@@ -2412,7 +2480,26 @@ document.addEventListener('DOMContentLoaded', () => {
                     try { const errorData = await response.json(); errorMsg = errorData.error || errorMsg; } catch (e) { }
                     throw new Error(errorMsg);
                 }
-                const result = await response.json();
+                const submitResult = await response.json();
+                const taskId = submitResult.task_id;
+                if (!taskId) throw new Error('No task_id received from server');
+
+                // Poll for completion
+                showStatus('Generating PDF preview... This may take a moment.', 'processing');
+                let result = null;
+                while (true) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    const statusRes = await fetch(`/generate_files/status/${taskId}`);
+                    if (!statusRes.ok) throw new Error(`Status check failed: ${statusRes.status}`);
+                    const statusData = await statusRes.json();
+
+                    if (statusData.status === 'completed') {
+                        result = statusData.result;
+                        break;
+                    } else if (statusData.status === 'error') {
+                        throw new Error(statusData.error || 'Preview generation failed');
+                    }
+                }
 
                 // Open Modal with PDF
                 previewIframe.src = `/download/report_pdf/${result.request_id}?preview=true`;

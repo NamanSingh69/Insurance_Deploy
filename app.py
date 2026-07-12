@@ -5,6 +5,9 @@ import json
 import secrets
 import requests
 import uuid
+import threading
+import time as _time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
@@ -395,6 +398,51 @@ class DiskDataStore:
 # --- Persistent storage for generated files (Shared across Gunicorn workers) ---
 generated_data_store = DiskDataStore()
 
+# --- Async Task Infrastructure ---
+# Avoids Cloudflare Free plan's hard 100-second proxy timeout by returning
+# a task_id immediately and processing in a background thread.
+_task_store = {}  # { task_id: { "status": ..., "result": ..., "error": ..., "created_at": ... } }
+_task_lock = threading.Lock()
+_task_executor = ThreadPoolExecutor(max_workers=4)
+
+def _create_task():
+    """Create a new task entry and return its ID."""
+    task_id = str(uuid.uuid4())
+    with _task_lock:
+        _task_store[task_id] = {
+            "status": "processing",
+            "result": None,
+            "error": None,
+            "created_at": _time.time()
+        }
+        # Purge tasks older than 30 minutes to prevent memory leaks
+        cutoff = _time.time() - 1800
+        stale = [k for k, v in _task_store.items() if v["created_at"] < cutoff]
+        for k in stale:
+            del _task_store[k]
+    return task_id
+
+def _complete_task(task_id, result):
+    """Mark a task as completed with its result."""
+    with _task_lock:
+        if task_id in _task_store:
+            _task_store[task_id]["status"] = "completed"
+            _task_store[task_id]["result"] = result
+
+def _fail_task(task_id, error_msg):
+    """Mark a task as failed with an error message."""
+    with _task_lock:
+        if task_id in _task_store:
+            _task_store[task_id]["status"] = "error"
+            _task_store[task_id]["error"] = error_msg
+
+def _get_task(task_id):
+    """Get a copy of the task state."""
+    with _task_lock:
+        task = _task_store.get(task_id)
+        if task:
+            return dict(task)
+        return None
 
 # --- Define the expected fields based on the template ---
 EXPECTED_FIELDS = [
@@ -1291,10 +1339,30 @@ def upload_report_to_drive():
 @login_required
 @limiter.limit("10 per minute")
 def process_pdf():
-    # Handle multipart/form-data (Standard) OR JSON (Drive/Gemini Direct Upload)
-    pdf_content = None
+    """Accept a PDF and start async Gemini processing. Returns a task_id for polling."""
+    # --- Extract everything from the request context NOW (before background thread) ---
     pdf_part = None
-    
+    user_id = current_user.id
+    # Snapshot user object data for the background thread
+    user_data_snapshot = {
+        'id': current_user.id,
+        'username': current_user.username,
+        'password_hash': current_user.password_hash,
+        'full_name': current_user.full_name,
+        'qualifications': current_user.qualifications,
+        'designation': current_user.designation,
+        'license_no': current_user.license_no,
+        'expiry_date': current_user.expiry_date,
+        'membership_no': current_user.membership_no,
+        'address_line_1': current_user.address_line_1,
+        'address_line_2': current_user.address_line_2,
+        'address_line_3': current_user.address_line_3,
+        'contact_no': current_user.contact_no,
+        'email': current_user.email,
+        'gemini_api_key': current_user.gemini_api_key,
+        'gemini_model': current_user.gemini_model,
+    }
+
     if request.content_type == 'application/json':
         data = request.get_json()
         mime_type = data.get('mime_type', 'application/pdf')
@@ -1313,7 +1381,6 @@ def process_pdf():
                  
             print("Successfully downloaded from Drive. Uploading to Gemini...")
             import tempfile
-            import os
             
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                 temp_file.write(pdf_bytes)
@@ -1359,13 +1426,21 @@ def process_pdf():
     else:
          return jsonify({"error": "No file provided"}), 400
 
-    # Common Processing
+    # --- Dispatch to background thread ---
+    task_id = _create_task()
+    _task_executor.submit(_process_pdf_worker, task_id, pdf_part, user_data_snapshot, user_id)
+    return jsonify({"task_id": task_id}), 202
+
+
+def _process_pdf_worker(task_id, pdf_part, user_data_snapshot, user_id):
+    """Background worker for Gemini PDF processing. Runs outside request context."""
     try:
         prompt = build_gemini_prompt()
         prompt_part = {"text": prompt}
 
-        # Generate content using the configured model
-        dynamic_model, dynamic_secondary = get_generative_models(current_user)
+        # Reconstruct a User object for get_generative_models
+        user_obj = User(user_data_snapshot)
+        dynamic_model, dynamic_secondary = get_generative_models(user_obj)
         try:
             response = dynamic_model.generate_content([prompt_part, pdf_part], stream=False)
         except ResourceExhausted as e:
@@ -1377,21 +1452,21 @@ def process_pdf():
                 if response.prompt_feedback and response.prompt_feedback.block_reason:
                     reason = response.prompt_feedback.block_reason.name
                     print(f"Gemini response blocked. Reason: {reason}")
-                    return jsonify({"error": f"Content generation blocked due to safety settings ({reason}). Please check the input document."}), 400
+                    _fail_task(task_id, f"Content generation blocked due to safety settings ({reason}). Please check the input document.")
+                    return
                 else:
-                    # Sometimes Gemini might just return no parts without a specific block reason
                     print("Gemini returned an empty response with no specific block reason.")
-                    # Attempt to get text from the response object directly if possible
                     try:
                         response_text = response.text
                         if not response_text:
-                            return jsonify({"error": "Received an empty response from the AI model. Please try again or check the document."}), 500
-                        # If we got text, try parsing it anyway
+                            _fail_task(task_id, "Received an empty response from the AI model. Please try again or check the document.")
+                            return
                         print("Received text despite no parts, attempting parse...")
-                    except Exception: # Broad exception if .text access fails
-                            return jsonify({"error": "Received an empty or invalid response from the AI model. Please try again or check the document."}), 500
+                    except Exception:
+                            _fail_task(task_id, "Received an empty or invalid response from the AI model. Please try again or check the document.")
+                            return
         else:
-                response_text = response.text # Get text from the first part
+                response_text = response.text
 
         # Parse the combined data
         combined_data = parse_gemini_response(response_text)
@@ -1402,34 +1477,49 @@ def process_pdf():
         if not survey_data.get('dl_endorsement'): survey_data['dl_endorsement'] = "Not Known"
         if not survey_data.get('police_reported_to'): survey_data['police_reported_to'] = "Not Reported"
         if not survey_data.get('police_diary_case_no'): survey_data['police_diary_case_no'] = "N/A"
-        # police_date_reported default is handled by AI returning ""
         if not survey_data.get('tp_details'): survey_data['tp_details'] = "No ( As Per Claim Form )"
         if not survey_data.get('damages_extent'): survey_data['damages_extent'] = "The Spare Parts which are included in Assessment column, found pressed/deformed/torn/ distorted &/or broken."
         if not survey_data.get('remark'): survey_data['remark'] = "The declaration of the accident appeared consistent with the nature of the damages sustained"
         # --- Inject Last Saved Surveyor Details ---
-        last_surveyor_details = sheets_db.get_last_surveyor_details(current_user.id)
+        last_surveyor_details = sheets_db.get_last_surveyor_details(user_id)
         if last_surveyor_details:
             if 'assessment' in combined_data:
                 if 'page3_details' not in combined_data['assessment']:
                     combined_data['assessment']['page3_details'] = {}
                 combined_data['assessment']['page3_details']['surveyor_details'] = last_surveyor_details
 
-        return jsonify(combined_data)
+        _complete_task(task_id, combined_data)
 
     except ValueError as ve:
             print(f"Value Error during processing: {ve}")
             if "Failed to parse JSON response" in str(ve) or "unexpected error occurred during response parsing" in str(ve):
-                return jsonify({"error": "Failed to parse the AI response. Please try again or check the document."}), 500
+                _fail_task(task_id, "Failed to parse the AI response. Please try again or check the document.")
             else:
-                return jsonify({"error": "An error occurred while processing the document."}), 400
+                _fail_task(task_id, "An error occurred while processing the document.")
     except genai.types.BlockedPromptException as bpe:
             print(f"Gemini API Error - Blocked Prompt: {bpe}")
-            return jsonify({"error": "Content generation blocked by API. Please check the document content."}), 400
+            _fail_task(task_id, "Content generation blocked by API. Please check the document content.")
     except Exception as e:
         print(f"Error processing PDF with Gemini: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": "An unexpected error occurred during AI processing. Please try again."}), 500
+        _fail_task(task_id, "An unexpected error occurred during AI processing. Please try again.")
+
+
+@app.route('/process_pdf/status/<task_id>', methods=['GET'])
+@login_required
+def process_pdf_status(task_id):
+    """Poll for the status of an async PDF processing task."""
+    task = _get_task(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    if task["status"] == "completed":
+        return jsonify({"status": "completed", "result": task["result"]})
+    elif task["status"] == "error":
+        return jsonify({"status": "error", "error": task["error"]})
+    else:
+        return jsonify({"status": "processing"})
 
 # --- Depreciation Calculation Helper ---
 def get_backend_depreciation_rate(part_type, vehicle_year_str):
@@ -1892,10 +1982,44 @@ def proxy_image(file_id):
 @app.route('/generate_files', methods=['POST'])
 @login_required
 def generate_files():
+    """Accept report data and start async PDF generation. Returns a task_id for polling."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data received"}), 400
+
+    # Snapshot request-context values needed by the worker thread
+    user_full_name = current_user.full_name
+    user_id = current_user.id
+    from flask import session
+    access_token = session.get('google_access_token')
+
+    task_id = _create_task()
+    _task_executor.submit(_generate_files_worker, task_id, data, user_full_name, user_id, access_token)
+    return jsonify({"task_id": task_id}), 202
+
+
+@app.route('/generate_files/status/<task_id>', methods=['GET'])
+@login_required
+def generate_files_status(task_id):
+    """Poll for the status of an async file generation task."""
+    task = _get_task(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    if task["status"] == "completed":
+        return jsonify({"status": "completed", "result": task["result"]})
+    elif task["status"] == "error":
+        return jsonify({"status": "error", "error": task["error"]})
+    else:
+        return jsonify({"status": "processing"})
+
+
+def _generate_files_worker(task_id, data, user_full_name, user_id, access_token):
+    """Background worker for PDF generation. Runs outside request context."""
     try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No data received"}), 400
+        # Load user object from database for PDF header (needs full profile)
+        _user_data = sheets_db.get_user_by_id(user_id)
+        _user_obj = User(_user_data) if _user_data else None
 
         # --- Data Extraction ---
         survey_data = data.get('survey_report', {})
@@ -2169,8 +2293,8 @@ def generate_files():
         # --- Helper Functions ---
         def add_pdf_header(pdf_obj):
             if pdf_obj.page_no() == 1:
-                # Retrieve user details from current_user
-                u = current_user
+                # Use user object loaded at start of worker (no request context here)
+                u = _user_obj
                 
                 # --- Left Side ---
                 pdf_obj.set_y(10)
@@ -2569,7 +2693,7 @@ def generate_files():
             
             pdf.set_x(pdf.w - pdf.r_margin - 60)
             pdf.set_font("Helvetica", 'B', 10) # Signature stays slightly larger/standard
-            pdf.cell(60, 5, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C')
+            pdf.cell(60, 5, normalize_pdf_text_for_fpdf(user_full_name), 0, 1, 'C')
             
             pdf.set_x(pdf.w - pdf.r_margin - 60)
             pdf.set_font("Helvetica", '', 9)
@@ -2928,7 +3052,7 @@ def generate_files():
                 pdf.set_y(pdf.get_y() + 30) # Gap on new page
             else:
                 pdf.set_y(pdf.get_y() + gap_stamp)
-            pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.cell(60, line_h_page2, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C')
+            pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.cell(60, line_h_page2, normalize_pdf_text_for_fpdf(user_full_name), 0, 1, 'C')
             pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.cell(60, line_h_page2, "( Surveyor and Loss Assessor )", 0, 1, 'C')
 
             # --- Re-inspection Report Page (Optional) ---
@@ -2956,7 +3080,7 @@ def generate_files():
                     draw_table_row(row_data, re_cols, 6, border=1, alignments=re_aligns, current_font_size=9)
                 pdf.ln(5); pdf.set_font("Helvetica", 'B', 10); pdf.cell(0, 5, "Observations / Remarks:", 0, 1, 'L'); pdf.set_font("Helvetica", '', 10); pdf.multi_cell(0, 5, reinspection_note, 0, 'L'); pdf.ln(10)
                 if pdf.get_y() > 250: pdf.add_page(orientation='P'); add_pdf_header(pdf)
-                pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.set_font("Helvetica", 'B', 10); pdf.cell(60, 5, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C'); pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.set_font("Helvetica", '', 9); pdf.cell(60, 5, "( Surveyor and Loss Assessor )", 0, 1, 'C'); pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.set_font("Helvetica", 'B', 10); pdf.cell(60, 5, normalize_pdf_text_for_fpdf(user_full_name), 0, 1, 'C'); pdf.set_x(pdf.w - pdf.r_margin - 60); pdf.set_font("Helvetica", '', 9); pdf.cell(60, 5, "( Surveyor and Loss Assessor )", 0, 1, 'C'); pdf.set_auto_page_break(auto=True, margin=15)
 
             # --- Page 4: Survey Fee Bill (Portrait) ---
         pdf.add_page(orientation='P'); pdf.set_margins(10, 10, 10); add_pdf_header(pdf); pdf.set_font("Helvetica", size=base_font_size_page3); usable_width_page3 = pdf.w - pdf.l_margin - pdf.r_margin
@@ -3109,7 +3233,7 @@ def generate_files():
         pdf.ln(line_h_page3 * gap_lines)
         
         # 3. Signature
-        pdf.set_x(sig_start_x); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(sig_block_width, line_h_page3, normalize_pdf_text_for_fpdf(current_user.full_name), 0, 1, 'C')
+        pdf.set_x(sig_start_x); pdf.set_font("Helvetica", 'B', base_font_size_page3); pdf.cell(sig_block_width, line_h_page3, normalize_pdf_text_for_fpdf(user_full_name), 0, 1, 'C')
         pdf.set_x(sig_start_x); pdf.set_font("Helvetica", '', base_font_size_page3); pdf.cell(sig_block_width, line_h_page3, "( Surveyor and Loss Assessor )", 0, 1, 'C')
 
         # --- Add Photo Pages ---
@@ -3133,8 +3257,7 @@ def generate_files():
             filename_base = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no_raw.strip() else 'SurveyReport'
             filename_pdf = f"{filename_base}.pdf"
             
-            from flask import session
-            access_token = session.get('google_access_token')
+            # access_token was passed from the handler (no session in background thread)
             if access_token:
                 folder_name_to_use = "".join(c for c in vehicle_no_raw if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no_raw else 'Unknown_Vehicle'
                 drive_link = upload_pdf_to_drive(access_token, pdf_bytes, filename_pdf, folder_name_to_use)
@@ -3153,15 +3276,15 @@ def generate_files():
         except Exception as drive_err:
             print(f"Warning: Drive auto-upload error (non-critical): {drive_err}")
 
-        return jsonify({"request_id": request_id, "drive_link": drive_link})
+        _complete_task(task_id, {"request_id": request_id, "drive_link": drive_link})
     except FPDFException as fpdf_err:
         print(f"FPDF Error generating files: {fpdf_err}")
         import traceback; traceback.print_exc()
-        return jsonify({"error": f"An error occurred during PDF generation: {fpdf_err}"}), 500
+        _fail_task(task_id, f"An error occurred during PDF generation: {fpdf_err}")
     except Exception as e:
         print(f"Error generating files: {e}")
         import traceback; traceback.print_exc()
-        return jsonify({"error": f"An unexpected error occurred during file generation: {e}"}), 500
+        _fail_task(task_id, f"An unexpected error occurred during file generation: {e}")
     
 
 # --- Download Route ---
