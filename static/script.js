@@ -1636,12 +1636,18 @@ document.addEventListener('DOMContentLoaded', () => {
         /**
          * Upload a compressed photo to the server via /upload_photo.
          * Returns the proxy URL (e.g., /proxy_image/<id>) on success.
-         * Falls back to base64 if upload fails (so photos still work).
          */
         const formData = new FormData();
         formData.append('photo', blob, filename || 'photo.jpg');
         const response = await fetch('/upload_photo', { method: 'POST', body: formData });
-        if (!response.ok) throw new Error(`Upload failed: ${response.status}`);
+        if (!response.ok) {
+            let errMsg = `Upload failed: ${response.status} ${response.statusText}`;
+            try {
+                const errData = await response.json();
+                if (errData && errData.error) errMsg = errData.error;
+            } catch (e) {}
+            throw new Error(errMsg);
+        }
         const result = await response.json();
         if (result.success && result.url) return result.url;
         throw new Error(result.error || 'Upload returned no URL');
@@ -1653,23 +1659,33 @@ document.addEventListener('DOMContentLoaded', () => {
             showStatus(`Uploading ${files.length} photo(s)...`, 'processing');
 
             const uploadPromises = Array.from(files).map(async (file, index) => {
-                const { base64, blob } = await compressImage(file);
                 try {
+                    const { base64, blob } = await compressImage(file);
                     // Upload to server, get proxy URL
                     const proxyUrl = await uploadPhotoToServer(blob, file.name);
-                    return proxyUrl; // Store URL, not base64
+                    return { success: true, url: proxyUrl, filename: file.name };
                 } catch (uploadErr) {
-                    console.warn(`Photo upload failed for ${file.name}, using base64 fallback:`, uploadErr);
-                    return base64; // Fallback to base64 if upload fails
+                    console.error(`Photo upload failed for ${file.name}:`, uploadErr);
+                    return { success: false, filename: file.name, error: uploadErr.message || 'Unknown error' };
                 }
             });
 
-            Promise.all(uploadPromises).then(photoRefs => {
-                photoRefs.forEach(ref => {
-                    uploadedPhotos[category].push(ref);
+            Promise.all(uploadPromises).then(results => {
+                const successes = results.filter(r => r.success);
+                const failures = results.filter(r => !r.success);
+
+                successes.forEach(r => {
+                    uploadedPhotos[category].push(r.url);
                 });
                 renderPhotos(category);
-                showStatus(`${photoRefs.length} photo(s) uploaded!`, 'success');
+
+                if (failures.length > 0) {
+                    const failedNames = failures.map(f => f.filename).join(', ');
+                    showStatus(`Uploaded ${successes.length} photo(s). Failed to upload: ${failedNames}. Check storage quota!`, 'error');
+                    alert(`Failed to upload the following photo(s) to Google Drive:\n${failedNames}\n\nThis is usually caused by the Google Drive storage quota being full. Please contact administrator or run the cleanup script to free up space.`);
+                } else {
+                    showStatus(`${successes.length} photo(s) uploaded!`, 'success');
+                }
             }).catch(err => {
                 console.error("Photo processing error:", err);
                 showStatus('Error processing photos', 'error');
