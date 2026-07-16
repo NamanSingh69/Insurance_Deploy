@@ -1942,16 +1942,31 @@ def upload_photo():
         filename = secure_filename(f"{uuid.uuid4()}_{file.filename}")
         # Read file content
         content = file.read()
-        # Upload to Drive
-        result = sheets_db.upload_image_to_drive(content, filename, file.mimetype)
         
-        if result and result.get('id'):
-            # Return a proxy URL that will serve the image through the backend
-            # This avoids CORS issues and Google Drive redirect problems
-            proxy_url = f"/proxy_image/{result.get('id')}"
-            return jsonify({'success': True, 'url': proxy_url})
-        else:
-            return jsonify({'error': 'Failed to upload to Drive'}), 500
+        # 1. Try uploading to Drive
+        try:
+            result = sheets_db.upload_image_to_drive(content, filename, file.mimetype)
+            if result and result.get('id'):
+                # Return a proxy URL that will serve the image through the backend
+                proxy_url = f"/proxy_image/{result.get('id')}"
+                return jsonify({'success': True, 'url': proxy_url})
+        except Exception as e:
+            print(f"Drive upload exception: {e}")
+            
+        # 2. Local Fallback if Drive upload fails or returns None (quota exceeded)
+        print("Drive upload failed or quota exceeded. Falling back to local VPS storage...")
+        try:
+            upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+            os.makedirs(upload_dir, exist_ok=True)
+            local_path = os.path.join(upload_dir, filename)
+            with open(local_path, 'wb') as f:
+                f.write(content)
+            
+            proxy_url = f"/local_image/{filename}"
+            return jsonify({'success': True, 'url': proxy_url, 'warning': 'Saved to local storage (Drive full)'})
+        except Exception as local_err:
+            print(f"Local storage fallback failed: {local_err}")
+            return jsonify({'error': 'Failed to upload to Drive or local storage'}), 500
 
 # --- Photo Proxy Route ---
 @app.route('/proxy_image/<file_id>')
@@ -1977,6 +1992,19 @@ def proxy_image(file_id):
         return send_file(io.BytesIO(content), mimetype=mime_type)
     else:
         abort(404)
+
+# --- Local Photo Serve Route ---
+@app.route('/local_image/<filename>')
+@login_required
+def serve_local_image(filename):
+    """Serves locally stored backup images."""
+    # Validate filename to prevent directory traversal
+    import re as re_module
+    if not re_module.match(r'^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$', filename):
+        abort(400)
+    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+    from flask import send_from_directory
+    return send_from_directory(upload_dir, filename)
 
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])
@@ -2540,6 +2568,18 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
                             img_stream = io.BytesIO(img_data)
                         else:
                             print(f"Failed to fetch image from Drive: {file_id}")
+                            pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", 1, 0, 'C')
+                            continue
+                    elif photo_b64.startswith('/local_image/'):
+                        filename = photo_b64.replace('/local_image/', '')
+                        upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+                        local_path = os.path.join(upload_dir, filename)
+                        if os.path.exists(local_path):
+                            with open(local_path, 'rb') as f:
+                                img_data = f.read()
+                            img_stream = io.BytesIO(img_data)
+                        else:
+                            print(f"Failed to find local image file: {local_path}")
                             pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", 1, 0, 'C')
                             continue
                     elif photo_b64.startswith('http'):
