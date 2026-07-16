@@ -1,0 +1,39 @@
+# ── Large data / test files ──
+*.csv
+dummy_large_file.pdf
+uploads/
+
+# ── Logs & scratch files ──
+install_log.txt
+ls_out.txt
+vercel_out.txt
+vercel_status.txt
+diff.txt
+
+# ── Local virtual environments ──
+.venv/
+venv/
+
+# ── Test suite (not needed at runtime) ──
+tests/
+test_deps/
+test_drive.py
+test_local_e2e.py
+pytest.ini
+.pytest_cache/
+
+# ── Dev / local secrets ──
+.env
+.env.local
+
+# ── Python cache ──
+__pycache__/
+*.pyc
+
+# ── Misc ──
+debug_drive.py
+check_db.py
+fix_seq.py
+migrate_db.py
+old_requirements.txt
+docs/
