@@ -120,13 +120,14 @@ class TestConsolidatedCSVDownload:
     def test_download_csv_empty(self, authenticated_client, mock_sheets_db):
         """Test CSV download with no reports."""
         mock_sheets_db.get_user_reports.return_value = []
+        mock_sheets_db.get_user_fee_bills.return_value = []
         
         # Needs date params
         response = authenticated_client.get('/download_consolidated_csv?from_date=2024-01-01&to_date=2024-12-31')
         
         assert response.status_code == 200
         assert 'text/csv' in response.headers['Content-Type']
-        assert b"Sl No,Date" in response.data
+        assert b"Insured Name,Policy number" in response.data
         
     def test_download_csv_with_data(self, authenticated_client, mock_sheets_db):
         """Test CSV download with reports."""
@@ -136,16 +137,18 @@ class TestConsolidatedCSVDownload:
                 'saved_at': '2024-03-01T10:00:00',
                 'include_in_consolidated': True,
                 'report_data_json': json.dumps({
-                    'survey_report': {'report_no': 'R-001', 'insurer': 'Insurer A'},
+                    'survey_report': {'report_no': 'R-001', 'insurer': 'Insurer A', 'insured': 'John Doe'},
                     'assessment': {'parts': [], 'page3_details': {}}
                 })
             }
         ]
         mock_sheets_db.get_user_reports.return_value = mock_reports
+        mock_sheets_db.get_user_fee_bills.return_value = []
         
         # Needs date params
         response = authenticated_client.get('/download_consolidated_csv?from_date=2024-01-01&to_date=2024-12-31')
         
         assert response.status_code == 200
         assert b"R-001" in response.data
-        assert b"Insurer A" in response.data
+        assert b"John Doe" in response.data
+

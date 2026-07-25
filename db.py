@@ -929,5 +929,193 @@ class PostgresDB:
             print(f"Drive upload error: {e}")
             return None
 
+    def get_next_invoice_number(self, user_id, insurer_name, date_str=None):
+        import re
+        from datetime import datetime
 
-db = PostgresDB()
+        if not insurer_name:
+            insurer_name = "Company"
+
+        known_map = {
+            "oriental insurance company limited": "OICL",
+            "oriental insurance company": "OIC",
+            "national insurance company": "NIC",
+            "reliance general insurance co. ltd.": "RGI",
+            "reliance general insurance": "RGI",
+            "united india insurance": "UIIC",
+            "new india assurance": "NIA"
+        }
+        clean_name = insurer_name.strip().lower()
+        prefix_code = None
+        for key, val in known_map.items():
+            if key in clean_name:
+                prefix_code = val
+                break
+
+        if not prefix_code:
+            words = [w for w in re.findall(r'[A-Za-z0-9]+', insurer_name) if w.lower() not in ('co', 'ltd', 'limited')]
+            if words:
+                prefix_code = "".join([w[0].upper() for w in words])
+            else:
+                prefix_code = "BILL"
+
+        dt = datetime.now()
+        if date_str:
+            for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d-%m-%Y'):
+                try:
+                    dt = datetime.strptime(date_str, fmt)
+                    break
+                except ValueError:
+                    pass
+
+        month_str = dt.strftime('%b').upper()
+        year_str = dt.strftime('%y')
+        pattern = f"{prefix_code}/{month_str}-{year_str}/"
+
+        max_seq = 0
+
+        if self.conn:
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT invoice_no FROM fee_bills 
+                        WHERE user_id = %s AND invoice_no LIKE %s
+                    """, (int(user_id) if str(user_id).isdigit() else 1, f"{pattern}%"))
+                    rows = cur.fetchall()
+                    for r in rows:
+                        inv = r['invoice_no'] if isinstance(r, dict) else r[0]
+                        m = re.search(rf"{re.escape(pattern)}(\d+)", inv)
+                        if m:
+                            max_seq = max(max_seq, int(m.group(1)))
+
+                    cur.execute("""
+                        SELECT report_no FROM reports 
+                        WHERE user_id = %s AND report_no LIKE %s
+                    """, (int(user_id) if str(user_id).isdigit() else 1, f"{pattern}%"))
+                    rows2 = cur.fetchall()
+                    for r in rows2:
+                        inv = r['report_no'] if isinstance(r, dict) else r[0]
+                        m = re.search(rf"{re.escape(pattern)}(\d+)", inv)
+                        if m:
+                            max_seq = max(max_seq, int(m.group(1)))
+            except Exception as e:
+                print(f"Error querying invoice sequence: {e}")
+
+        if hasattr(self, '_memory_fee_bills'):
+            for b in self._memory_fee_bills:
+                if str(b.get('user_id')) == str(user_id) and b.get('invoice_no', '').startswith(pattern):
+                    m = re.search(rf"{re.escape(pattern)}(\d+)", b.get('invoice_no'))
+                    if m:
+                        max_seq = max(max_seq, int(m.group(1)))
+
+        next_seq = max_seq + 1
+        return f"{pattern}{next_seq:02d}"
+
+    def save_fee_bill(self, user_id, bill_data):
+        bill_id = bill_data.get('id') or str(uuid.uuid4())
+        invoice_no = bill_data.get('invoice_no') or self.get_next_invoice_number(user_id, bill_data.get('insurer_name', 'Company'), bill_data.get('invoice_date'))
+        invoice_date = bill_data.get('invoice_date', datetime.now().strftime('%Y-%m-%d'))
+        insurer_name = bill_data.get('insurer_name', '')
+        insured_name = bill_data.get('insured_name', '')
+        policy_no = bill_data.get('policy_no', '')
+        claim_no = bill_data.get('claim_no', '')
+        vehicle_no = bill_data.get('vehicle_no', '')
+        taxable_amount = float(bill_data.get('taxable_amount', 0.0))
+        gst_pc = float(bill_data.get('gst_pc', 18.0))
+        gst_amount = float(bill_data.get('gst_amount', 0.0))
+        total_amount = float(bill_data.get('total_amount', 0.0))
+        created_at = datetime.now().isoformat()
+
+        record = {
+            'id': bill_id,
+            'user_id': str(user_id),
+            'invoice_no': invoice_no,
+            'invoice_date': invoice_date,
+            'insurer_name': insurer_name,
+            'insured_name': insured_name,
+            'policy_no': policy_no,
+            'claim_no': claim_no,
+            'vehicle_no': vehicle_no,
+            'taxable_amount': taxable_amount,
+            'gst_pc': gst_pc,
+            'gst_amount': gst_amount,
+            'total_amount': total_amount,
+            'created_at': created_at,
+            'bill_data_json': bill_data
+        }
+
+        if not hasattr(self, '_memory_fee_bills'):
+            self._memory_fee_bills = []
+        self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
+        self._memory_fee_bills.append(record)
+
+        if self.conn:
+            try:
+                u_id = int(user_id) if str(user_id).isdigit() else 1
+                with self.conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO fee_bills (
+                            id, user_id, invoice_no, invoice_date, insurer_name, insured_name,
+                            policy_no, claim_no, vehicle_no, taxable_amount, gst_pc, gst_amount, total_amount, bill_data_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            invoice_no = EXCLUDED.invoice_no,
+                            invoice_date = EXCLUDED.invoice_date,
+                            insurer_name = EXCLUDED.insurer_name,
+                            insured_name = EXCLUDED.insured_name,
+                            policy_no = EXCLUDED.policy_no,
+                            claim_no = EXCLUDED.claim_no,
+                            vehicle_no = EXCLUDED.vehicle_no,
+                            taxable_amount = EXCLUDED.taxable_amount,
+                            gst_pc = EXCLUDED.gst_pc,
+                            gst_amount = EXCLUDED.gst_amount,
+                            total_amount = EXCLUDED.total_amount,
+                            bill_data_json = EXCLUDED.bill_data_json;
+                    """, (
+                        bill_id, u_id, invoice_no, invoice_date, insurer_name, insured_name,
+                        policy_no, claim_no, vehicle_no, taxable_amount, gst_pc, gst_amount, total_amount,
+                        json.dumps(bill_data)
+                    ))
+            except Exception as e:
+                print(f"Error saving fee bill to DB: {e}")
+
+        return bill_id
+
+    def get_user_fee_bills(self, user_id):
+        results = []
+        if self.conn:
+            try:
+                u_id = int(user_id) if str(user_id).isdigit() else 1
+                with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT * FROM fee_bills WHERE user_id = %s ORDER BY created_at DESC", (u_id,))
+                    rows = cur.fetchall()
+                    for r in rows:
+                        d = dict(r)
+                        if isinstance(d.get('created_at'), datetime):
+                            d['created_at'] = d['created_at'].isoformat()
+                        results.append(d)
+                    return results
+            except Exception as e:
+                print(f"Error fetching fee bills from DB: {e}")
+
+        if hasattr(self, '_memory_fee_bills'):
+            return [b for b in self._memory_fee_bills if str(b.get('user_id')) == str(user_id)]
+        return []
+
+    def delete_fee_bill(self, bill_id, user_id):
+        if hasattr(self, '_memory_fee_bills'):
+            self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
+
+        if self.conn:
+            try:
+                u_id = int(user_id) if str(user_id).isdigit() else 1
+                with self.conn.cursor() as cur:
+                    cur.execute("DELETE FROM fee_bills WHERE id = %s AND user_id = %s", (bill_id, u_id))
+                    return True
+            except Exception as e:
+                print(f"Error deleting fee bill: {e}")
+                return False
+        return True
+
+
+db = PostgresDB()

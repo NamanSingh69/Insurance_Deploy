@@ -3621,6 +3621,7 @@ def delete_report(report_id):
         return jsonify({"error": f"Failed to delete report: {e}"}), 500
 
 @app.route('/download_consolidated_csv', methods=['GET'])
+@app.route('/download_gst_excel', methods=['GET'])
 @login_required
 def download_consolidated_csv():
     try:
@@ -3632,116 +3633,207 @@ def download_consolidated_csv():
 
         try:
             from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
-            # For to_date, include the whole day by setting time to end of day
             to_date_dt = datetime.strptime(to_date_str, '%Y-%m-%d')
             to_date_end_of_day = datetime.combine(to_date_dt.date(), datetime.max.time())
+            from_date_start_of_day = datetime.combine(from_date, datetime.min.time())
         except ValueError:
             return jsonify({"error": "Invalid date format. Please use YYYY-MM-DD."}), 400
 
-        # Fetch all from sheets and filter
         all_reports = sheets_db.get_user_reports(current_user.id)
-        reports = []
+        all_fee_bills = sheets_db.get_user_fee_bills(current_user.id)
+
+        export_rows = []
+
         for r in all_reports:
-            # Filter by date and included flag
-            # Dates in sheet are ISO format string or similar
             saved_at_str = r.get('saved_at')
             if not saved_at_str: continue
             try:
                 saved_at = datetime.fromisoformat(saved_at_str)
-                # Check Include Flag (Sheets stores as boolean or string 'TRUE'/'FALSE')
-                # include_flag = r.get('include_in_consolidated')
-                # Strict filtering removed to allow all reports since default was False previously
-                # if str(include_flag).upper() != 'TRUE' and include_flag is not True:
-                #      continue
-                
-                # Check Date Range
-                if saved_at >= datetime.combine(from_date, datetime.min.time()) and saved_at <= to_date_end_of_day:
-                    reports.append(r)
-            except (ValueError, TypeError): 
-                continue
+                if not (from_date_start_of_day <= saved_at <= to_date_end_of_day):
+                    continue
 
-        # Sort
-        reports.sort(key=lambda x: datetime.fromisoformat(x.get('saved_at')) if x.get('saved_at') else datetime.min)
-        
-        # reports object is now a list of dicts, unlike SQLAlchemy objects
-        # Update usage below in simple content (report.report_data_json -> report['report_data_json'])
-        # I'll update the loop below as well.
+                report_data = json.loads(r.get('report_data_json', '{}')) if isinstance(r.get('report_data_json'), str) else r.get('report_data_json', {})
+                survey_data = report_data.get('survey_report', {})
+                assessment_data = report_data.get('assessment', {})
+                page3_details = assessment_data.get('page3_details', {})
+                fee_items = page3_details.get('fee_items', [])
 
-        if not reports:
-             pass 
+                taxable_sum = 0.0
+                for item in fee_items:
+                    try:
+                        taxable_sum += float(item.get('amount', 0.0))
+                    except (ValueError, TypeError):
+                        pass
+
+                if taxable_sum <= 0:
+                    calc = _calculate_report_assessment_summary(assessment_data, survey_data)
+                    taxable_sum = calc.get('page3_gross_total', 0.0)
+
+                gst_pc = 18.0
+                gst_amount = taxable_sum * (gst_pc / 100.0)
+                total_amount = taxable_sum + gst_amount
+
+                export_rows.append({
+                    "date_obj": saved_at,
+                    "insured_name": survey_data.get('insured', 'N/A'),
+                    "policy_no": survey_data.get('policy_no', 'N/A'),
+                    "claim_no": survey_data.get('claim_no', 'N/A'),
+                    "vehicle_no": survey_data.get('vehicle_regn_no', 'N/A'),
+                    "invoice_no": survey_data.get('report_no', 'N/A'),
+                    "invoice_date": survey_data.get('report_date', saved_at.strftime('%Y-%m-%d')),
+                    "gst_pc": f"{gst_pc:g}%",
+                    "gst_amount": f"{gst_amount:.2f}",
+                    "taxable_amount": f"{taxable_sum:.2f}",
+                    "total_amount": f"{total_amount:.2f}"
+                })
+            except Exception as e_rep:
+                print(f"Error parsing survey report for CSV export: {e_rep}")
+
+        for fb in all_fee_bills:
+            created_at_str = fb.get('created_at') or fb.get('invoice_date')
+            try:
+                if 'T' in str(created_at_str):
+                    dt_val = datetime.fromisoformat(str(created_at_str))
+                else:
+                    dt_val = datetime.strptime(str(created_at_str), '%Y-%m-%d')
+
+                if not (from_date_start_of_day <= dt_val <= to_date_end_of_day):
+                    continue
+
+                taxable = float(fb.get('taxable_amount', 0.0))
+                gst_pc = float(fb.get('gst_pc', 18.0))
+                gst_amt = float(fb.get('gst_amount', taxable * (gst_pc / 100.0)))
+                total_amt = float(fb.get('total_amount', taxable + gst_amt))
+
+                export_rows.append({
+                    "date_obj": dt_val,
+                    "insured_name": fb.get('insured_name', 'N/A'),
+                    "policy_no": fb.get('policy_no', 'N/A'),
+                    "claim_no": fb.get('claim_no', 'N/A'),
+                    "vehicle_no": fb.get('vehicle_no', 'N/A'),
+                    "invoice_no": fb.get('invoice_no', 'N/A'),
+                    "invoice_date": fb.get('invoice_date', dt_val.strftime('%Y-%m-%d')),
+                    "gst_pc": f"{gst_pc:g}%",
+                    "gst_amount": f"{gst_amt:.2f}",
+                    "taxable_amount": f"{taxable:.2f}",
+                    "total_amount": f"{total_amt:.2f}"
+                })
+            except Exception as e_fb:
+                print(f"Error parsing fee bill for CSV export: {e_fb}")
+
+        export_rows.sort(key=lambda x: x['date_obj'])
 
         output = io.StringIO()
         csv_writer = csv.writer(output)
 
         headers = [
-            "Sl No", "Date", "Name of the Insurer", "Voucher No.", "GSTIN/UIN",
-            "GROSS TOTAL", "CGST", "SGST", "IGST",
-            "Estimated Amount", "Assessed Amount"
+            "Insured Name",
+            "Policy number",
+            "Claim number",
+            "Vehicle number",
+            "Invoice no",
+            "Invoice date",
+            "Gst %",
+            "Gst amount",
+            "Taxable amount",
+            "Total amount (including GST)"
         ]
         csv_writer.writerow(headers)
-        
-        sl_no_counter = 1
-        for report in reports:
-            try:
-                report_data = json.loads(report.get('report_data_json'))
-                survey_data = report_data.get('survey_report', {})
-                assessment_data = report_data.get('assessment', {})
 
-                # Use the helper to get calculated summary values
-                calculated_summary = _calculate_report_assessment_summary(assessment_data, survey_data)
-
-                report_date_val = survey_data.get('report_date', 'N/A')
-                insurer_name_val = survey_data.get('insurer', 'N/A')
-                voucher_no_val = survey_data.get('report_no', 'N/A')
-                
-                customer_gstin_val = calculated_summary.get('customer_gstin', 'N/A') if calculated_summary.get('customer_gstin') else 'N/A'
-
-                page3_gross_total_val = f"{calculated_summary.get('page3_gross_total', 0.0):.2f}"
-                
-                page3_cgst_val = f"{calculated_summary.get('page3_cgst', 0.0):.2f}" if calculated_summary.get('page3_cgst', 0.0) > 0 else 'N/A'
-                page3_sgst_val = f"{calculated_summary.get('page3_sgst', 0.0):.2f}" if calculated_summary.get('page3_sgst', 0.0) > 0 else 'N/A'
-                page3_igst_val = f"{calculated_summary.get('page3_igst', 0.0):.2f}" if calculated_summary.get('page3_igst', 0.0) > 0 else 'N/A'
-
-                estimated_amount_val = f"{calculated_summary.get('estimated_amount', 0.0):.2f}" if calculated_summary.get('estimated_amount') else 'N/A'
-                assessed_amount_val = f"{calculated_summary.get('assessed_amount', 0.0):.2f}"
-
-                row_data = [
-                    sl_no_counter,
-                    report_date_val,
-                    insurer_name_val,
-                    voucher_no_val,
-                    customer_gstin_val,
-                    page3_gross_total_val,
-                    page3_cgst_val,
-                    page3_sgst_val,
-                    page3_igst_val,
-                    estimated_amount_val,
-                    assessed_amount_val
-                ]
-                csv_writer.writerow(row_data)
-                sl_no_counter += 1
-            except Exception as e_inner:
-                print(f"Skipping report ID {report.get('id')} due to error during processing for CSV: {e_inner}")
-                # Optionally write a placeholder row indicating an error for this report
-                csv_writer.writerow([sl_no_counter, 'ERROR', f"Error processing report ID {report.get('id')}", '', '', '', '', '', '', '', ''])
-                sl_no_counter += 1
-
+        for row in export_rows:
+            csv_writer.writerow([
+                row["insured_name"],
+                row["policy_no"],
+                row["claim_no"],
+                row["vehicle_no"],
+                row["invoice_no"],
+                row["invoice_date"],
+                row["gst_pc"],
+                row["gst_amount"],
+                row["taxable_amount"],
+                row["total_amount"]
+            ])
 
         output.seek(0)
-        
-        filename = f"Consolidated_Reports_{from_date_str}_to_{to_date_str}.csv"
-        
+        filename = f"Consolidated_GST_Report_{from_date_str}_to_{to_date_str}.csv"
         return send_file(
             io.BytesIO(output.getvalue().encode('utf-8')),
             mimetype='text/csv',
             as_attachment=True,
             download_name=filename
         )
-
     except Exception as e:
-        print(f"Error generating consolidated CSV: {e}")
-        import traceback; traceback.print_exc()
-        return jsonify({"error": "An unexpected error occurred while generating the CSV. Please try again."}), 500
+        print(f"Error generating consolidated GST CSV: {e}")
+        return jsonify({"error": f"Failed to generate consolidated report: {e}"}), 500
+
+
+@app.route('/api/next_invoice_no', methods=['GET'])
+@login_required
+def get_next_invoice_no():
+    insurer = request.args.get('insurer', 'Company')
+    date_val = request.args.get('date')
+    inv_no = sheets_db.get_next_invoice_number(current_user.id, insurer, date_val)
+    return jsonify({"invoice_no": inv_no})
+
+
+@app.route('/api/fee_bills', methods=['GET', 'POST'])
+@login_required
+def handle_fee_bills():
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        bill_id = sheets_db.save_fee_bill(current_user.id, data)
+        return jsonify({"success": True, "id": bill_id}), 201
+
+    bills = sheets_db.get_user_fee_bills(current_user.id)
+    return jsonify(bills), 200
+
+
+@app.route('/api/fee_bills/<bill_id>', methods=['DELETE'])
+@login_required
+def delete_fee_bill_route(bill_id):
+    success = sheets_db.delete_fee_bill(bill_id, current_user.id)
+    if success:
+        return jsonify({"success": True}), 200
+    return jsonify({"error": "Failed to delete fee bill"}), 400
+
+
+@app.route('/generate_fee_pdf', methods=['POST'])
+@login_required
+def generate_fee_pdf_route():
+    try:
+        data = request.get_json() or {}
+        include_sig = data.get('include_signature', True)
+        from modules.pdf import render_fee_report
+        user_snapshot = {
+            'full_name': current_user.full_name or 'Surveyor',
+            'qualifications': current_user.qualifications or '',
+            'designation': current_user.designation or '',
+            'license_no': current_user.license_no or '',
+            'expiry_date': current_user.expiry_date or '',
+            'membership_no': current_user.membership_no or '',
+            'address_line_1': current_user.address_line_1 or '',
+            'address_line_2': current_user.address_line_2 or '',
+            'address_line_3': current_user.address_line_3 or '',
+            'contact_no': current_user.contact_no or '',
+            'email': current_user.email or ''
+        }
+        res = render_fee_report(data, user_snapshot, current_user.id, include_signature=include_sig)
+        pdf_bytes = res['pdf_bytes']
+        inv_no = res['invoice_no']
+        safe_name = "".join(c for c in inv_no if c.isalnum() or c in ('_', '-')) or 'FeeBill'
+
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"{safe_name}.pdf"
+        )
+    except Exception as e:
+        print(f"Error generating fee PDF: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+
 
 # --- Initial User Creation Helper (Manual Trigger via API or Script recommended for Sheets) ---
 # Since we removed DB init, users must be added to the Sheet manually or via a new CLI command.

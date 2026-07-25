@@ -1896,7 +1896,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return {
             survey_report: surveyData,
             assessment: assessmentDataForGeneration,
-            photos: photosData
+            photos: photosData,
+            include_signature: document.getElementById('include-signature-checkbox') ? document.getElementById('include-signature-checkbox').checked : true
         };
     }
 
@@ -2729,6 +2730,179 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    // --- Standalone Fee Bill & GST Export Event Handlers ---
+    const btnOpenFeeBillModal = document.getElementById('btn-open-fee-bill-modal');
+    const btnCloseFeeBillModal = document.getElementById('btn-close-fee-bill-modal');
+    const feeBillModal = document.getElementById('fee-bill-modal');
+
+    const fbInsurerName = document.getElementById('fb-insurer-name');
+    const fbInvoiceNo = document.getElementById('fb-invoice-no');
+    const fbInvoiceDate = document.getElementById('fb-invoice-date');
+    const fbInsuredName = document.getElementById('fb-insured-name');
+    const fbPolicyNo = document.getElementById('fb-policy-no');
+    const fbClaimNo = document.getElementById('fb-claim-no');
+    const fbVehicleNo = document.getElementById('fb-vehicle-no');
+    const fbTaxableAmount = document.getElementById('fb-taxable-amount');
+    const fbGstPc = document.getElementById('fb-gst-pc');
+    const fbGstAmount = document.getElementById('fb-gst-amount');
+    const fbTotalAmount = document.getElementById('fb-total-amount');
+    const fbIncludeSig = document.getElementById('fb-include-signature');
+    const btnSaveFeeBill = document.getElementById('btn-save-fee-bill');
+    const btnGenerateFeePdf = document.getElementById('btn-generate-fee-pdf');
+
+    const downloadGstExcelBtn = document.getElementById('download-gst-excel-button');
+    const gstExcelDateFrom = document.getElementById('gst-excel-date-from');
+    const gstExcelDateTo = document.getElementById('gst-excel-date-to');
+
+    if (fbInvoiceDate) {
+        fbInvoiceDate.value = new Date().toISOString().split('T')[0];
+    }
+
+    function calculateFeeBillAmounts() {
+        if (!fbTaxableAmount || !fbGstPc || !fbGstAmount || !fbTotalAmount) return;
+        const taxable = parseFloat(fbTaxableAmount.value) || 0;
+        const gstPc = parseFloat(fbGstPc.value) || 0;
+        const gstAmt = taxable * (gstPc / 100);
+        const total = taxable + gstAmt;
+
+        fbGstAmount.value = gstAmt.toFixed(2);
+        fbTotalAmount.value = total.toFixed(2);
+    }
+
+    if (fbTaxableAmount) fbTaxableAmount.addEventListener('input', calculateFeeBillAmounts);
+    if (fbGstPc) fbGstPc.addEventListener('input', calculateFeeBillAmounts);
+
+    async function fetchNextInvoiceNumber() {
+        if (!fbInsurerName || !fbInvoiceNo) return;
+        const insurer = fbInsurerName.value.trim();
+        const dateVal = fbInvoiceDate ? fbInvoiceDate.value : '';
+        if (!insurer) return;
+
+        try {
+            const res = await fetch(`/api/next_invoice_no?insurer=${encodeURIComponent(insurer)}&date=${encodeURIComponent(dateVal)}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.invoice_no) {
+                    fbInvoiceNo.value = data.invoice_no;
+                }
+            }
+        } catch (e) {
+            console.error("Error fetching auto invoice number:", e);
+        }
+    }
+
+    if (fbInsurerName) fbInsurerName.addEventListener('change', fetchNextInvoiceNumber);
+    if (fbInvoiceDate) fbInvoiceDate.addEventListener('change', fetchNextInvoiceNumber);
+
+    if (btnOpenFeeBillModal && feeBillModal) {
+        btnOpenFeeBillModal.addEventListener('click', () => {
+            feeBillModal.classList.remove('hidden');
+            fetchNextInvoiceNumber();
+        });
+    }
+
+    if (btnCloseFeeBillModal && feeBillModal) {
+        btnCloseFeeBillModal.addEventListener('click', () => {
+            feeBillModal.classList.add('hidden');
+        });
+    }
+
+    function collectFeeBillPayload() {
+        calculateFeeBillAmounts();
+        return {
+            insurer_name: fbInsurerName?.value.trim() || '',
+            invoice_no: fbInvoiceNo?.value.trim() || '',
+            invoice_date: fbInvoiceDate?.value || '',
+            insured_name: fbInsuredName?.value.trim() || '',
+            policy_no: fbPolicyNo?.value.trim() || '',
+            claim_no: fbClaimNo?.value.trim() || '',
+            vehicle_no: fbVehicleNo?.value.trim() || '',
+            taxable_amount: parseFloat(fbTaxableAmount?.value || 0),
+            gst_pc: parseFloat(fbGstPc?.value || 18),
+            gst_amount: parseFloat(fbGstAmount?.value || 0),
+            total_amount: parseFloat(fbTotalAmount?.value || 0),
+            include_signature: fbIncludeSig ? fbIncludeSig.checked : true
+        };
+    }
+
+    if (btnSaveFeeBill) {
+        btnSaveFeeBill.addEventListener('click', async () => {
+            const payload = collectFeeBillPayload();
+            if (!payload.insurer_name || !payload.insured_name) {
+                showStatus("Please enter Insurance Company and Insured Name.", "error", true);
+                return;
+            }
+            try {
+                btnSaveFeeBill.disabled = true;
+                const res = await fetch('/api/fee_bills', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    showStatus("Fee Bill saved successfully!", "success", true);
+                } else {
+                    showStatus("Failed to save fee bill.", "error", true);
+                }
+            } catch (e) {
+                showStatus(`Error saving fee bill: ${e.message}`, "error", true);
+            } finally {
+                btnSaveFeeBill.disabled = false;
+            }
+        });
+    }
+
+    if (btnGenerateFeePdf) {
+        btnGenerateFeePdf.addEventListener('click', async () => {
+            const payload = collectFeeBillPayload();
+            if (!payload.insurer_name || !payload.insured_name) {
+                showStatus("Please enter Insurance Company and Insured Name.", "error", true);
+                return;
+            }
+            try {
+                btnGenerateFeePdf.disabled = true;
+                btnGenerateFeePdf.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+                const res = await fetch('/generate_fee_pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                const blob = await res.blob();
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `${payload.invoice_no.replace(/[/\\?%*:|"<>]/g, '_') || 'FeeBill'}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+                showStatus("Fee Bill PDF downloaded!", "success", true);
+            } catch (e) {
+                showStatus(`Error generating Fee PDF: ${e.message}`, "error", true);
+            } finally {
+                btnGenerateFeePdf.disabled = false;
+                btnGenerateFeePdf.innerHTML = '<i class="fas fa-file-pdf"></i> Download PDF';
+            }
+        });
+    }
+
+    if (downloadGstExcelBtn) {
+        downloadGstExcelBtn.addEventListener('click', () => {
+            const fromDate = gstExcelDateFrom ? gstExcelDateFrom.value : '';
+            const toDate = gstExcelDateTo ? gstExcelDateTo.value : '';
+            if (!fromDate || !toDate) {
+                showStatus('Please select both From and To dates for GST report.', 'error', true);
+                return;
+            }
+            if (new Date(fromDate) > new Date(toDate)) {
+                showStatus('"From" date cannot be after "To" date.', 'error', true);
+                return;
+            }
+            showStatus('Downloading GST 10-Column Excel report...', 'processing', true);
+            window.location.href = `/download_gst_excel?from_date=${fromDate}&to_date=${toDate}`;
+        });
+    }
+
     // Initialize on page load
     initHeaderDriveButton();
 

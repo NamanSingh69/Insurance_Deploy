@@ -1,0 +1,14 @@
+[Unit]
+Description=Motor Survey Report Generator worker
+After=network.target postgresql.service
+
+[Service]
+User=root
+WorkingDirectory=/var/www/insurance-app
+Environment="PATH=/var/www/insurance-app/venv/bin"
+ExecStart=/var/www/insurance-app/venv/bin/python worker.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
