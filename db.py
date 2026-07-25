@@ -57,7 +57,7 @@ class PostgresDB:
             in_flask = False
 
         if in_flask:
-            if 'db_conn' not in g:
+            if 'db_conn' not in g or g.db_conn is None or getattr(g.db_conn, 'closed', 0) != 0:
                 if not self.pool:
                     self.connect()
                 if self.pool:
@@ -68,7 +68,7 @@ class PostgresDB:
             return g.db_conn
 
         # Outside Flask (e.g. worker thread or CLI script)
-        if not hasattr(self._local_conns, 'conn') or self._local_conns.conn is None:
+        if not hasattr(self._local_conns, 'conn') or self._local_conns.conn is None or getattr(self._local_conns.conn, 'closed', 0) != 0:
             if not self.pool:
                 self.connect()
             if self.pool:
@@ -90,7 +90,10 @@ class PostgresDB:
             conn = g.pop('db_conn', None)
             if conn and self.pool:
                 try:
-                    self.pool.putconn(conn)
+                    if getattr(conn, 'closed', 0) != 0:
+                        self.pool.putconn(conn, close=True)
+                    else:
+                        self.pool.putconn(conn)
                 except Exception:
                     pass
             return
@@ -100,7 +103,10 @@ class PostgresDB:
             self._local_conns.conn = None
             if self.pool:
                 try:
-                    self.pool.putconn(conn)
+                    if getattr(conn, 'closed', 0) != 0:
+                        self.pool.putconn(conn, close=True)
+                    else:
+                        self.pool.putconn(conn)
                 except Exception:
                     pass
 

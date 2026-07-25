@@ -16,7 +16,8 @@ class TestDownloadFileEndpoint:
         # data['report_no'] used for filename
         generated_data_store['test-id'] = {
             'pdf_report': b'fake pdf content',
-            'report_no': 'TestReport-001'
+            'report_no': 'TestReport-001',
+            'user_id': '1'
         }
         
         # URL uses 'report_pdf' as file_type

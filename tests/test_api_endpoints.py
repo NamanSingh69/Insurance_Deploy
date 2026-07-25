@@ -50,15 +50,20 @@ class TestGetSavedReportsEndpoint:
     
     def test_get_reports_empty(self, authenticated_client, mock_sheets_db):
         """Test getting reports when none exist."""
-        mock_sheets_db.get_user_reports_metadata_only.return_value = []
+        mock_sheets_db.get_user_reports_page.return_value = {
+            'items': [],
+            'page': 1,
+            'page_size': 50,
+            'total': 0
+        }
         
         response = authenticated_client.get('/get_saved_reports')
         
         assert response.status_code == 200
         data = response.get_json()
-        assert response.status_code == 200
-        assert isinstance(data, list)
-        assert len(data) == 0
+        assert isinstance(data, dict)
+        assert len(data.get('items', [])) == 0
+        assert data.get('total') == 0
     
     def test_get_reports_with_data(self, authenticated_client, mock_sheets_db):
         """Test getting reports with existing data."""
@@ -71,21 +76,30 @@ class TestGetSavedReportsEndpoint:
                 'saved_at': '2026-01-29T12:00:00'
             }
         ]
-        mock_sheets_db.get_user_reports_metadata_only.return_value = mock_reports
+        mock_sheets_db.get_user_reports_page.return_value = {
+            'items': mock_reports,
+            'page': 1,
+            'page_size': 50,
+            'total': 1
+        }
         
         response = authenticated_client.get('/get_saved_reports')
         
         assert response.status_code == 200
         data = response.get_json()
-        assert isinstance(data, list)
-        assert len(data) == 1
-        assert data[0]['report_no'] == 'SR-001'
+        assert isinstance(data, dict)
+        items = data.get('items', [])
+        assert len(items) == 1
+        assert items[0]['report_no'] == 'SR-001'
     
     def test_get_reports_with_search(self, authenticated_client, mock_sheets_db):
         """Test searching reports."""
-        mock_sheets_db.get_user_reports_metadata_only.return_value = [
-            {'id': '1', 'report_no': 'SR-001', 'insured_name': 'John'}
-        ]
+        mock_sheets_db.get_user_reports_page.return_value = {
+            'items': [{'id': '1', 'report_no': 'SR-001', 'insured_name': 'john'}],
+            'page': 1,
+            'page_size': 50,
+            'total': 1
+        }
         
         response = authenticated_client.get('/get_saved_reports?query=john')
         

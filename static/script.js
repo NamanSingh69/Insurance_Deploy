@@ -1382,19 +1382,36 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const responseData = await response.json();
+            const taskId = responseData.task_id;
 
-            if (!responseData || typeof responseData.parts === 'undefined') {
-                throw new Error("Invalid response format received from invoice processing.");
-            }
+            showInvoiceStatus('AI is analyzing invoice... This may take a minute.', 'processing');
 
-            if (page3CustomerGstinInput && typeof responseData.customer_gstin !== 'undefined') {
-                page3CustomerGstinInput.value = responseData.customer_gstin;
-                if (currentAssessmentData && currentAssessmentData.page3_details) {
-                    currentAssessmentData.page3_details.customer_gstin = responseData.customer_gstin;
+            let invoiceResult = null;
+            while (true) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                const statusRes = await fetch(`/process_pdf/status/${taskId}`);
+                if (!statusRes.ok) throw new Error(`Status check failed: ${statusRes.status}`);
+                const statusData = await statusRes.json();
+                if (statusData.status === 'completed') {
+                    invoiceResult = statusData.result;
+                    break;
+                } else if (statusData.status === 'error') {
+                    throw new Error(statusData.error || 'AI processing failed');
                 }
             }
 
-            mergeInvoiceParts(responseData.parts);
+            if (!invoiceResult || typeof invoiceResult.parts === 'undefined') {
+                throw new Error("Invalid response format received from invoice processing.");
+            }
+
+            if (page3CustomerGstinInput && typeof invoiceResult.customer_gstin !== 'undefined') {
+                page3CustomerGstinInput.value = invoiceResult.customer_gstin;
+                if (currentAssessmentData && currentAssessmentData.page3_details) {
+                    currentAssessmentData.page3_details.customer_gstin = invoiceResult.customer_gstin;
+                }
+            }
+
+            mergeInvoiceParts(invoiceResult.parts);
             showInvoiceStatus('Invoice parts merged successfully!', 'success');
             invoiceFileInput.value = '';
             selectedInvoiceFileName.textContent = '';

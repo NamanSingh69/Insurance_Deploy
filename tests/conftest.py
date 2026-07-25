@@ -40,6 +40,13 @@ def mock_sheets_db():
     mock_db.save_report = MagicMock(return_value="test-report-id")
     mock_db.get_user_reports = MagicMock(return_value=[])
     mock_db.get_user_reports_metadata_only = MagicMock(return_value=[])
+    mock_db.get_user_reports_page = MagicMock(return_value={
+        'items': [],
+        'page': 1,
+        'page_size': 50,
+        'total': 0
+    })
+    mock_db.get_job_by_request_id = MagicMock(return_value=None)
     mock_db.delete_report = MagicMock(return_value=True)
     mock_db.upload_image_to_drive = MagicMock(return_value={
         'id': 'drive-file-id',
@@ -52,13 +59,12 @@ def mock_sheets_db():
 @pytest.fixture
 def app(mock_sheets_db):
     """Create Flask test application with mocked dependencies."""
-    with patch('sheets_db.db', mock_sheets_db):
-        with patch('app.sheets_db', mock_sheets_db):
-            from app import app as flask_app
-            flask_app.config['TESTING'] = True
-            flask_app.config['WTF_CSRF_ENABLED'] = False
-            flask_app.config['LOGIN_DISABLED'] = False
-            yield flask_app
+    from app import create_app
+    flask_app = create_app(db_adapter=mock_sheets_db, task_executor=MagicMock())
+    flask_app.config['TESTING'] = True
+    flask_app.config['WTF_CSRF_ENABLED'] = False
+    flask_app.config['LOGIN_DISABLED'] = False
+    yield flask_app
 
 
 @pytest.fixture
@@ -94,14 +100,12 @@ def authenticated_client(app, mock_sheets_db, mock_user):
     mock_sheets_db.get_user_by_username.return_value = mock_user
     mock_sheets_db.get_user_by_id.return_value = mock_user
     
-    with patch('sheets_db.db', mock_sheets_db):
-        with patch('app.sheets_db', mock_sheets_db):
-            with app.test_client() as client:
-                # Use Flask-Login's test login
-                with client.session_transaction() as sess:
-                    sess['_user_id'] = '1'
-                    sess['_fresh'] = True
-                yield client
+    with app.test_client() as client:
+        # Use Flask-Login's test login
+        with client.session_transaction() as sess:
+            sess['_user_id'] = '1'
+            sess['_fresh'] = True
+        yield client
 
 
 @pytest.fixture

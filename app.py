@@ -53,6 +53,14 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Fix for Vercel to handle secure cookies
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+@app.teardown_appcontext
+def teardown_db(exception=None):
+    try:
+        sheets_db.close_scoped_connection()
+    except Exception as e:
+        app.logger.error(f"Error closing database connection: {e}")
+
+
 # --- Rate Limiting (Flask-Limiter) ---
 def get_real_client_ip():
     try:
@@ -3817,6 +3825,7 @@ def create_app(db_adapter=None, task_executor=None):
     new_app.before_request_funcs = app.before_request_funcs.copy()
     new_app.after_request_funcs = app.after_request_funcs.copy()
     new_app.teardown_request_funcs = app.teardown_request_funcs.copy()
+    new_app.teardown_appcontext_funcs = app.teardown_appcontext_funcs.copy()
     new_app.error_handler_spec = app.error_handler_spec.copy()
     new_app.cli = app.cli
     
