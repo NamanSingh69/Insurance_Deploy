@@ -5,7 +5,9 @@ import json
 import uuid
 from datetime import datetime, timedelta
 import psycopg2
+import psycopg2.pool
 from psycopg2.extras import RealDictCursor
+
 import requests
 from google.oauth2.service_account import Credentials
 import threading
