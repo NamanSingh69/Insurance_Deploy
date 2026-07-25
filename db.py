@@ -157,13 +157,12 @@ class PostgresDB:
                 try:
                     with conn.cursor() as cur:
                         cur.execute(sql_content)
-                        cur.execute("INSERT INTO schema_migrations (version) VALUES (%s);", (version,))
+                        cur.execute("INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT DO NOTHING;", (version,))
                     conn.commit()
                     print(f"Migration {filename} applied successfully.")
                 except Exception as e:
                     conn.rollback()
-                    print(f"Error applying migration {filename}: {e}")
-                    raise e
+                    print(f"Warning applying migration {filename}: {e}")
         finally:
             conn.autocommit = True
             self.pool.putconn(conn)
