@@ -67,7 +67,7 @@
               {% endif %}
             {% endwith %}
 
-            <form method="POST" action="{{ url_for('login') }}">
+            <form method="POST" action="{{ url_for('login', **request.args) }}">
                 <div class="field-group">
                     <label for="username">Username</label>
                     <div class="input-with-icon">

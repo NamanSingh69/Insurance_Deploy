@@ -23,7 +23,20 @@ from fpdf.errors import FPDFException
 import re
 import click
 import base64
-from db import db as sheets_db # We kept the variable name the same so it acts as standard drop-in replacement!
+from db import db as default_db
+from flask import current_app
+
+class DatabaseAdapterProxy:
+    def __getattr__(self, name):
+        adapter = default_db
+        try:
+            if current_app and 'DB_ADAPTER' in current_app.config:
+                adapter = current_app.config['DB_ADAPTER']
+        except RuntimeError:
+            pass # Outside application context
+        return getattr(adapter, name)
+
+sheets_db = DatabaseAdapterProxy()
 
 def is_number(s):
     try:
@@ -41,22 +54,38 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # --- Rate Limiting (Flask-Limiter) ---
+def get_real_client_ip():
+    try:
+        if request.headers.get('CF-Connecting-IP'):
+            return request.headers.get('CF-Connecting-IP')
+        if request.headers.get('X-Forwarded-For'):
+            return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    except Exception:
+        pass
+    return get_remote_address()
+
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
     limiter = Limiter(
-        get_remote_address,
-        app=app,
+        get_real_client_ip,
         default_limits=["200 per day", "50 per hour"],
+        default_limits_exempt_when=lambda: current_user.is_authenticated,
         storage_uri="memory://"
     )
 except ImportError:
-    # Fallback in case requirements haven't been fully updated during dev
+    # Fail-fast check outside testing
+    if not os.getenv("TESTING") and not os.getenv("FLASK_TESTING"):
+        raise ImportError("CRITICAL: Flask-Limiter is required for this application outside testing environments. Please install flask-limiter.")
     class DummyLimiter:
+        def __init__(self, *args, **kwargs):
+            pass
         def limit(self, *args, **kwargs):
             def decorator(f):
                 return f
             return decorator
+        def init_app(self, app):
+            pass
     limiter = DummyLimiter()
 
 # --- SECURITY: SECRET_KEY must be set via environment variable ---
@@ -80,8 +109,8 @@ app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
 app.config['REMEMBER_COOKIE_SECURE'] = True
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 
-bcrypt = Bcrypt(app)
-login_manager = LoginManager(app)
+bcrypt = Bcrypt()
+login_manager = LoginManager()
 login_manager.login_view = 'login' 
 login_manager.login_message_category = 'info'
 
@@ -351,7 +380,8 @@ class DiskDataStore:
         meta_path, pdf_path = self._get_paths(key)
         metadata = {
             "report_no": value.get("report_no"),
-            "vehicle_no": value.get("vehicle_no")
+            "vehicle_no": value.get("vehicle_no"),
+            "user_id": value.get("user_id")
         }
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f)
@@ -369,7 +399,8 @@ class DiskDataStore:
         return {
             "pdf_report": pdf_bytes,
             "report_no": metadata.get("report_no") or "",
-            "vehicle_no": metadata.get("vehicle_no") or ""
+            "vehicle_no": metadata.get("vehicle_no") or "",
+            "user_id": metadata.get("user_id")
         }
 
     def __contains__(self, key):
@@ -899,8 +930,8 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
         
         user_data = sheets_db.get_user_by_username(username)
         
@@ -1124,15 +1155,28 @@ def index():
 
 
 @app.route('/get_gemini_upload_url', methods=['POST'])
+@login_required
 def get_gemini_upload_url():
-    data = request.get_json()
-    filename = data.get('filename', 'document.pdf')
-    size = data.get('size')
+    data = request.get_json(silent=True) or {}
+    filename = secure_filename(data.get('filename', 'document.pdf')) or 'document.pdf'
     mime_type = data.get('mime_type', 'application/pdf')
+    try:
+        size = int(data.get('size', 0))
+    except (TypeError, ValueError):
+        size = 0
+
+    if mime_type != 'application/pdf' or size <= 0 or size > app.config['MAX_CONTENT_LENGTH']:
+        return jsonify({'error': 'Only PDF uploads up to 100 MB are supported.'}), 400
     
-    api_key = os.getenv('GEMINI_API_KEY')
+    api_key = current_user.gemini_api_key or os.getenv('GEMINI_API_KEY')
     if not api_key:
         return jsonify({"error": "No API key"}), 500
+
+    upload_session = sheets_db.create_upload_session(
+        current_user.id, 'gemini', filename, mime_type, size
+    )
+    if not isinstance(upload_session, dict) or not upload_session.get('id'):
+        return jsonify({'error': 'Unable to create an upload record.'}), 503
         
     origin = request.headers.get('Origin')
         
@@ -1160,7 +1204,9 @@ def get_gemini_upload_url():
         return jsonify({"error": f"Failed to get upload URL: {resp.text}"}), 500
         
     upload_url = resp.headers.get('X-Goog-Upload-URL')
-    return jsonify({"url": upload_url})
+    if not upload_url:
+        return jsonify({'error': 'Gemini did not return an upload URL.'}), 502
+    return jsonify({"url": upload_url, "upload_id": str(upload_session['id'])})
 
 def download_drive_file_with_token(access_token, file_id):
     """Downloads file content from Drive using the user's OAuth access token."""
@@ -1337,7 +1383,6 @@ def upload_report_to_drive():
 
 @app.route('/process_pdf', methods=['POST'])
 @login_required
-@limiter.limit("10 per minute")
 def process_pdf():
     """Accept a PDF and start async Gemini processing. Returns a task_id for polling."""
     # --- Extract everything from the request context NOW (before background thread) ---
@@ -1550,11 +1595,48 @@ def get_backend_depreciation_rate(part_type, vehicle_year_str):
         else: return 0.0 # Default for unexpected year
     return 0.0 # Default for unknown type
 
+def _process_invoice_worker(task_id, pdf_part, user_data_snapshot, user_id):
+    try:
+        user_obj = User(user_data_snapshot)
+        api_key = user_obj.gemini_api_key or os.getenv('GEMINI_API_KEY')
+        user_model = user_obj.gemini_model
+        
+        from modules.gemini import execute_gemini_task
+        invoice_parts_data = execute_gemini_task(
+            api_key=api_key,
+            pdf_part=pdf_part,
+            user_model=user_model,
+            is_invoice=True
+        )
+        _complete_task(task_id, invoice_parts_data)
+    except Exception as e:
+        print(f"Error processing invoice: {e}")
+        _fail_task(task_id, f"An unexpected error occurred during invoice processing: {e}")
+
 @app.route('/process_invoice', methods=['POST'])
 @login_required
-@limiter.limit("10 per minute")
 def process_invoice():
     pdf_content = None
+    pdf_part = None
+    user_id = current_user.id
+    user_data_snapshot = {
+        'id': current_user.id,
+        'username': current_user.username,
+        'password_hash': current_user.password_hash,
+        'full_name': current_user.full_name,
+        'qualifications': current_user.qualifications,
+        'designation': current_user.designation,
+        'license_no': current_user.license_no,
+        'expiry_date': current_user.expiry_date,
+        'membership_no': current_user.membership_no,
+        'address_line_1': current_user.address_line_1,
+        'address_line_2': current_user.address_line_2,
+        'address_line_3': current_user.address_line_3,
+        'contact_no': current_user.contact_no,
+        'email': current_user.email,
+        'gemini_api_key': current_user.gemini_api_key,
+        'gemini_model': current_user.gemini_model,
+    }
 
     if request.content_type == 'application/json':
         data = request.get_json()
@@ -1562,10 +1644,14 @@ def process_invoice():
         if not drive_file_id:
              return jsonify({"error": "No drive_file_id provided"}), 400
         
-        # Fetch content from Service Account Drive (proxy)
         pdf_content = sheets_db.get_file_content(drive_file_id)
         if not pdf_content:
-             return jsonify({"error": "Failed to retrieve file content from Drive. Check console."}), 500
+             return jsonify({"error": "Failed to retrieve file content from Drive."}), 500
+        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
+        job_input = {
+            'source_asset_id': drive_file_id,
+            'mime_type': 'application/pdf',
+        }
              
     elif 'invoice_pdf_file' in request.files:
         file = request.files['invoice_pdf_file']
@@ -1573,56 +1659,25 @@ def process_invoice():
             return jsonify({"error": "No selected invoice file"}), 400
         if file and file.mimetype == 'application/pdf':
             pdf_content = file.read()
+            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
+            source_asset = _store_job_input_file(current_user.id, pdf_content, file.filename, file.mimetype)
+            if not source_asset:
+                return jsonify({'error': 'Unable to store the uploaded PDF for processing.'}), 503
+            job_input = {
+                'source_asset_id': str(source_asset['id']),
+                'mime_type': file.mimetype,
+            }
         else:
              return jsonify({"error": "Invalid file type. Please upload a PDF for the invoice."}), 400
     else:
          return jsonify({"error": "No invoice file provided"}), 400
 
-    try:
-        prompt = build_invoice_gemini_prompt() # Use the NEW invoice-specific prompt
-        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-        prompt_part = {"text": prompt}
-
-        # Generate content using the same model configuration
-        dynamic_model, dynamic_secondary = get_generative_models(current_user)
-        try:
-            response = dynamic_model.generate_content([prompt_part, pdf_part], stream=False)
-        except ResourceExhausted as e:
-            print(f"Primary model hit rate limit: {e}. Switching to secondary model for invoice.")
-            response = dynamic_secondary.generate_content([prompt_part, pdf_part], stream=False)
-
-        # Handle potential blocked content or empty response (similar to process_pdf)
-        if not response.parts:
-            if response.prompt_feedback and response.prompt_feedback.block_reason:
-                reason = response.prompt_feedback.block_reason.name
-                print(f"Invoice Gemini response blocked. Reason: {reason}")
-                return jsonify({"error": f"Invoice content generation blocked ({reason})."}), 400
-            else:
-                try:
-                    response_text = response.text
-                    if not response_text:
-                        return jsonify({"error": "Received empty response from AI for invoice."}), 500
-                except Exception:
-                        return jsonify({"error": "Received invalid response from AI for invoice."}), 500
-        else:
-            response_text = response.text
-
-        # Parse using the NEW invoice-specific parser
-        invoice_parts_data = parse_invoice_gemini_response(response_text)
-
-        return jsonify(invoice_parts_data) # Return only the parts data
-
-    except ValueError as ve:
-        print(f"Value Error during invoice processing: {ve}")
-        return jsonify({"error": "Failed to process the invoice. Please try again."}), 500
-    except genai.types.BlockedPromptException as bpe:
-        print(f"Gemini API Error - Blocked Invoice Prompt: {bpe}")
-        return jsonify({"error": "Invoice content generation blocked by API."}), 400
-    except Exception as e:
-        print(f"Error processing invoice PDF with Gemini: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": "An unexpected error occurred during invoice processing. Please try again."}), 500
+    task_id = _create_task(current_user.id, 'process_invoice', job_input)
+    
+    if app.config.get('TESTING') or os.getenv('RUN_JOBS_IN_PROCESS') == '1':
+        _submit_task(_process_invoice_worker, task_id, pdf_part, user_data_snapshot, user_id)
+        
+    return jsonify({"task_id": task_id}), 202
     
 def number_to_words_indian(number_val):
     """
@@ -3331,23 +3386,56 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
 @app.route('/download/<file_type>/<request_id>')
 @login_required
 def download_file(file_type, request_id):
-    if request_id not in generated_data_store:
-        abort(404, description="Request ID not found or expired.")
-
-    data = generated_data_store[request_id]
+    # Enforce job/asset owner verification on download routes
+    job = sheets_db.get_job_by_request_id(request_id)
+    if job:
+        if str(job.get('user_id')) != str(current_user.id):
+            abort(403, description="Access denied. You do not own this report.")
     
-    # Use Vehicle No for filename if available, else fallback to Report No
-    vehicle_no = data.get('vehicle_no', '').strip()
+    # Priority 1: Check in-memory store (compatibility & unit tests)
+    if request_id in generated_data_store:
+        data = generated_data_store[request_id]
+        if str(data.get('user_id')) != str(current_user.id):
+            abort(403, description="Access denied. You do not own this report.")
+        pdf_bytes = data['pdf_report']
+        vehicle_no = data.get('vehicle_no', '').strip()
+        report_no = data.get('report_no', 'SurveyReport')
+    else:
+        # Priority 2: Check local temporary files (production)
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(project_root, 'uploads', 'temp_pdfs', f"{request_id}.pdf")
+        
+        if os.path.exists(file_path):
+            # Read from local temp files
+            with open(file_path, 'rb') as f:
+                pdf_bytes = f.read()
+            
+            # Load metadata if job exists
+            vehicle_no = ''
+            report_no = 'SurveyReport'
+            if job and job.get('result_json'):
+                res_data = job['result_json']
+                if isinstance(res_data, str):
+                    try:
+                        res_data = json.loads(res_data)
+                    except Exception:
+                        res_data = {}
+                if isinstance(res_data, dict):
+                    vehicle_no = res_data.get('vehicle_no', '').strip()
+                    report_no = res_data.get('report_no', 'SurveyReport')
+        else:
+            abort(404, description="Report PDF file expired or not found.")
+
     if vehicle_no:
         filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip()
     else:
-        report_no = data.get('report_no', 'SurveyReport').replace(' ', '_').replace('/','-')
-        filename_base = "".join(c for c in report_no if c.isalnum() or c in ('_', '-')).rstrip() or 'SurveyReport'
+        report_no_clean = report_no.replace(' ', '_').replace('/', '-')
+        filename_base = "".join(c for c in report_no_clean if c.isalnum() or c in ('_', '-')).rstrip() or 'SurveyReport'
 
     if file_type == 'report_pdf':
         filename = f"{filename_base}.pdf"
         mimetype = 'application/pdf'
-        file_content = io.BytesIO(data['pdf_report'])
+        file_content = io.BytesIO(pdf_bytes)
     else:
         abort(400, description="Invalid file type requested.")
 
@@ -3398,38 +3486,28 @@ def save_report():
 @login_required
 def get_saved_reports():
     try:
-        # Optimized: Fetch only metadata columns (faster, less data)
-        reports = sheets_db.get_user_reports_metadata_only(current_user.id)
+        search_query = request.args.get('q', request.args.get('query', ''))
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 50, type=int)
         
-        # Search functionality (In-memory filtering for MVP)
-        search_query = request.args.get('q')
-        if search_query:
-            search_query = search_query.lower()
-            filtered_reports = []
-            for r in reports:
-                # Check fields
-                if (search_query in str(r.get('vehicle_no', '')).lower() or
-                    search_query in str(r.get('report_no', '')).lower() or
-                    search_query in str(r.get('insured_name', '')).lower()):
-                    filtered_reports.append(r)
-            reports = filtered_reports
-            
-        # Sort by date (desc) - parsing ISO string
-        try:
-            reports.sort(key=lambda x: datetime.fromisoformat(x.get('saved_at')) if x.get('saved_at') else datetime.min, reverse=True)
-        except Exception:
-            pass # sorting might fail if bad dates
-
+        page_data = sheets_db.get_user_reports_page(current_user.id, search_query, page, page_size)
+        reports = page_data.get('items', []) if isinstance(page_data, dict) else []
+        
         reports_list = [
             {
-                'id': r.get('id'), # This ID is the row index or generated ID
+                'id': r.get('id'),
                 'report_no': r.get('report_no'),
                 'insured_name': r.get('insured_name'),
                 'vehicle_no': r.get('vehicle_no'),
                 'saved_at': datetime.fromisoformat(r.get('saved_at')).strftime('%Y-%m-%d %H:%M:%S') if r.get('saved_at') else 'N/A'
             } for r in reports
         ]
-        return jsonify(reports_list)
+        return jsonify({
+            'items': reports_list,
+            'page': page_data.get('page', page),
+            'page_size': page_data.get('page_size', page_size),
+            'total': page_data.get('total', 0)
+        })
     except Exception as e:
         print(f"Error fetching saved reports: {e}")
         return jsonify({"error": f"Failed to fetch reports: {e}"}), 500
@@ -3723,12 +3801,36 @@ def create_user_cli(username, password, name):
     else:
         print(f"Error: User '{username}' already exists.")
 
+# --- App Factory Pattern ---
+def create_app(db_adapter=None, task_executor=None):
+    new_app = Flask(__name__)
+    new_app.config.update(app.config)
+    
+    if db_adapter:
+        new_app.config['DB_ADAPTER'] = db_adapter
+    if task_executor:
+        new_app.config['TASK_EXECUTOR'] = task_executor
+        
+    # Copy route mappings and middleware hooks from the global app instance
+    new_app.url_map = app.url_map
+    new_app.view_functions = app.view_functions.copy()
+    new_app.before_request_funcs = app.before_request_funcs.copy()
+    new_app.after_request_funcs = app.after_request_funcs.copy()
+    new_app.teardown_request_funcs = app.teardown_request_funcs.copy()
+    new_app.error_handler_spec = app.error_handler_spec.copy()
+    new_app.cli = app.cli
+    
+    bcrypt.init_app(new_app)
+    login_manager.init_app(new_app)
+    if hasattr(limiter, 'init_app'):
+        limiter.init_app(new_app)
+        
+    return new_app
+
+# Instantiate the default application instance for WSGI/Gunicorn servers
+app = create_app()
+
 # --- Run Application ---
 if __name__ == '__main__':
-    # Use waitress or gunicorn for production
-    # from waitress import serve
     is_dev = os.getenv('FLASK_ENV') == 'development'
     app.run(debug=is_dev, host='0.0.0.0', port=5000)
-
- # .\.venv\Scripts\activate 
- # pytest tests/

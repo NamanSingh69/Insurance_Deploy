@@ -3,11 +3,13 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
 from google.oauth2.service_account import Credentials
+import threading
+from contextlib import contextmanager
 
 SCOPE = [
     'https://www.googleapis.com/auth/spreadsheets',
@@ -16,19 +18,25 @@ SCOPE = [
 
 class PostgresDB:
     def __init__(self):
-        self.conn = None
+        self.pool = None
         self.creds = None
+        self._local_conns = threading.local()
 
     def connect(self):
         DATABASE_URL = os.getenv("DATABASE_URL")
         if not DATABASE_URL:
-            # We don't want to crash on import if it's missing, just print warning
             print("Warning: DATABASE_URL not found.")
             return
 
-        self.conn = psycopg2.connect(DATABASE_URL)
-        self.conn.autocommit = True
-        self._init_db()
+        try:
+            # Thread-safe connection pool: min 1 connection, max 20 connections
+            self.pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+        except Exception as e:
+            self.pool = None
+            print(f"Warning: PostgreSQL connection pool failed: {e}")
+            return
+
+        self._run_migrations()
 
         # Connect Drive API
         creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
@@ -39,68 +47,131 @@ class PostgresDB:
             except Exception as e:
                 print(f"Error initializing Google Drive credentials: {e}")
 
+    @property
+    def conn(self):
+        """Return a scoped database connection from the pool."""
+        try:
+            from flask import has_app_context, g
+            in_flask = has_app_context()
+        except ImportError:
+            in_flask = False
+
+        if in_flask:
+            if 'db_conn' not in g:
+                if not self.pool:
+                    self.connect()
+                if self.pool:
+                    g.db_conn = self.pool.getconn()
+                    g.db_conn.autocommit = True
+                else:
+                    return None
+            return g.db_conn
+
+        # Outside Flask (e.g. worker thread or CLI script)
+        if not hasattr(self._local_conns, 'conn') or self._local_conns.conn is None:
+            if not self.pool:
+                self.connect()
+            if self.pool:
+                self._local_conns.conn = self.pool.getconn()
+                self._local_conns.conn.autocommit = True
+            else:
+                return None
+        return self._local_conns.conn
+
+    def close_scoped_connection(self):
+        """Return the scoped connection back to the pool."""
+        try:
+            from flask import has_app_context, g
+            in_flask = has_app_context()
+        except ImportError:
+            in_flask = False
+
+        if in_flask:
+            conn = g.pop('db_conn', None)
+            if conn and self.pool:
+                try:
+                    self.pool.putconn(conn)
+                except Exception:
+                    pass
+            return
+
+        conn = getattr(self._local_conns, 'conn', None)
+        if conn:
+            self._local_conns.conn = None
+            if self.pool:
+                try:
+                    self.pool.putconn(conn)
+                except Exception:
+                    pass
+
+    def _run_migrations(self):
+        """Execute numbered SQL migrations in numerical order."""
+        if not self.pool:
+            return
+        
+        conn = self.pool.getconn()
+        try:
+            conn.autocommit = False
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+            conn.commit()
+
+            migrations_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'migrations')
+            if not os.path.exists(migrations_dir):
+                return
+
+            migration_files = []
+            for f in os.listdir(migrations_dir):
+                if f.endswith('.sql'):
+                    parts = f.split('_', 1)
+                    if len(parts) == 2 and parts[0].isdigit():
+                        version = int(parts[0])
+                        migration_files.append((version, f))
+
+            migration_files.sort()
+
+            for version, filename in migration_files:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1 FROM schema_migrations WHERE version = %s;", (version,))
+                    if cur.fetchone():
+                        continue
+
+                print(f"Applying migration {filename} (version {version})...")
+                filepath = os.path.join(migrations_dir, filename)
+                with open(filepath, 'r', encoding='utf-8') as file:
+                    sql_content = file.read()
+
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(sql_content)
+                        cur.execute("INSERT INTO schema_migrations (version) VALUES (%s);", (version,))
+                    conn.commit()
+                    print(f"Migration {filename} applied successfully.")
+                except Exception as e:
+                    conn.rollback()
+                    print(f"Error applying migration {filename}: {e}")
+                    raise e
+        finally:
+            conn.autocommit = True
+            self.pool.putconn(conn)
+
     def _init_db(self):
-        with self.conn.cursor() as cur:
-            # Create Users Table
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    username VARCHAR(255) UNIQUE NOT NULL,
-                    password_hash VARCHAR(255) NOT NULL,
-                    full_name VARCHAR(255),
-                    qualifications VARCHAR(255),
-                    designation VARCHAR(255),
-                    license_no VARCHAR(255),
-                    expiry_date VARCHAR(255),
-                    membership_no VARCHAR(255),
-                    address_line_1 VARCHAR(255),
-                    address_line_2 VARCHAR(255),
-                    address_line_3 VARCHAR(255),
-                    contact_no VARCHAR(255),
-                    email VARCHAR(255),
-                    gemini_api_key VARCHAR(255),
-                    gemini_model VARCHAR(255)
-                );
-            """)
+        """No-op for backward compatibility."""
+        pass
 
-            # Safeguard: Ensure gemini_api_key and gemini_model exist in existing DB schemas
-            cur.execute("""
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                   WHERE table_name='users' AND column_name='gemini_api_key') THEN
-                        ALTER TABLE users ADD COLUMN gemini_api_key VARCHAR(255);
-                    END IF;
-                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                                   WHERE table_name='users' AND column_name='gemini_model') THEN
-                        ALTER TABLE users ADD COLUMN gemini_model VARCHAR(255);
-                    END IF;
-                END $$;
-            """)
-            
-            # Create Reports Table - Note id is UUID and payload is JSONB natively!
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS reports (
-                    id VARCHAR(255) PRIMARY KEY,
-                    user_id INTEGER REFERENCES users(id),
-                    report_no TEXT,
-                    insured_name TEXT,
-                    vehicle_no TEXT,
-                    claim_no TEXT,
-                    policy_no TEXT,
-                    saved_at TIMESTAMP,
-                    include_in_consolidated BOOLEAN DEFAULT TRUE,
-                    report_data_json JSONB
-                );
-            """)
-
-    # --- User Methods ---
     def get_user_by_username(self, username):
+        if not username:
+            return None
         if not self.conn: self.connect()
         if not self.conn: return None # Still none after trying
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM users WHERE username = %s;", (username,))
+                cur.execute("SELECT * FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM(%s));", (username.strip(),))
                 return cur.fetchone()
         except Exception as e:
              print(f"Error fetching user by username: {e}")
@@ -257,6 +328,372 @@ class PostgresDB:
             return None
 
 
+    # --- Asset Methods ---
+    def create_asset(self, user_id, storage_kind, storage_locator, filename='', mime_type='', expires_at=None, report_id=None):
+        """Create an application-owned reference to a private stored file."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        asset_id = str(uuid.uuid4())
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO assets (
+                        id, user_id, storage_kind, storage_locator, filename,
+                        mime_type, expires_at, report_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *;
+                """, (asset_id, user_id, storage_kind, storage_locator, filename, mime_type, expires_at, report_id))
+                return dict(cur.fetchone())
+        except Exception as e:
+            print(f"Error creating asset: {e}")
+            return None
+
+    def get_asset_for_user(self, asset_id, user_id):
+        """Return an asset only when the requesting user owns it and it has not expired."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM assets
+                    WHERE id = %s
+                      AND user_id = %s
+                      AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
+                """, (asset_id, user_id))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching asset: {e}")
+            return None
+
+    def delete_expired_assets(self):
+        """Return storage records that a cleanup worker must remove from their provider."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    DELETE FROM assets
+                    WHERE expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP
+                    RETURNING *;
+                """)
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error deleting expired assets: {e}")
+            return []
+
+    def migrate_legacy_photo_references(self):
+        """Replace Report photo URLs with owned asset URLs without changing report content otherwise."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return 0
+        migrated_reports = 0
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id, user_id, report_data_json FROM reports;")
+                reports = cur.fetchall()
+                for report in reports:
+                    payload = report['report_data_json']
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    changed = False
+
+                    def migrate_value(value):
+                        nonlocal changed
+                        if isinstance(value, dict):
+                            return {key: migrate_value(item) for key, item in value.items()}
+                        if isinstance(value, list):
+                            return [migrate_value(item) for item in value]
+                        if not isinstance(value, str):
+                            return value
+
+                        if value.startswith('/proxy_image/'):
+                            storage_kind, locator = 'drive', value.removeprefix('/proxy_image/')
+                        elif value.startswith('/local_image/'):
+                            storage_kind, locator = 'legacy_local', value.removeprefix('/local_image/')
+                        else:
+                            return value
+
+                        cur.execute("""
+                            SELECT id FROM assets
+                            WHERE user_id = %s AND storage_kind = %s AND storage_locator = %s
+                            LIMIT 1;
+                        """, (report['user_id'], storage_kind, locator))
+                        existing = cur.fetchone()
+                        if existing:
+                            asset_id = str(existing['id'])
+                        else:
+                            asset_id = str(uuid.uuid4())
+                            cur.execute("""
+                                INSERT INTO assets (id, user_id, storage_kind, storage_locator, filename, report_id)
+                                VALUES (%s, %s, %s, %s, %s, %s);
+                            """, (asset_id, report['user_id'], storage_kind, locator, locator, report['id']))
+                        changed = True
+                        return f'/assets/{asset_id}/content'
+
+                    migrated = migrate_value(payload)
+                    if changed:
+                        cur.execute("UPDATE reports SET report_data_json = %s::jsonb WHERE id = %s;", (json.dumps(migrated), report['id']))
+                        migrated_reports += 1
+            return migrated_reports
+        except Exception as e:
+            print(f"Error migrating legacy photo references: {e}")
+            return 0
+
+    def create_upload_session(self, user_id, provider, filename, mime_type, expected_size, ttl_minutes=30):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        upload_id = str(uuid.uuid4())
+        expires_at = datetime.utcnow() + timedelta(minutes=ttl_minutes)
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO upload_sessions (
+                        id, user_id, provider, filename, mime_type, expected_size, expires_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *;
+                """, (upload_id, user_id, provider, filename, mime_type, expected_size, expires_at))
+                return dict(cur.fetchone())
+        except Exception as e:
+            print(f"Error creating upload session: {e}")
+            return None
+
+    def get_upload_session_for_user(self, upload_id, user_id, provider='gemini'):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM upload_sessions
+                    WHERE id = %s AND user_id = %s AND provider = %s AND expires_at > CURRENT_TIMESTAMP;
+                """, (upload_id, user_id, provider))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching upload session: {e}")
+            return None
+
+    def set_upload_session_uri(self, upload_id, user_id, provider_uri):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE upload_sessions
+                    SET provider_uri = %s
+                    WHERE id = %s AND user_id = %s AND expires_at > CURRENT_TIMESTAMP;
+                """, (provider_uri, upload_id, user_id))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error setting upload session URI: {e}")
+            return False
+
+    def create_job(self, user_id, kind, input_data=None):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        job_id = str(uuid.uuid4())
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO jobs (id, user_id, kind, status, input_json)
+                    VALUES (%s, %s, %s, 'queued', %s::jsonb)
+                    RETURNING *;
+                """, (job_id, user_id, kind, json.dumps(input_data) if input_data is not None else '{}'))
+                return dict(cur.fetchone())
+        except Exception as e:
+            print(f"Error creating job: {e}")
+            return None
+
+    def get_job_for_user(self, job_id, user_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM jobs WHERE id = %s AND user_id = %s;", (job_id, user_id))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching job: {e}")
+            return None
+
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM jobs WHERE id = %s AND user_id = %s;", (job_id, user_id))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching job: {e}")
+            return None
+
+    def claim_next_job(self, worker_id):
+        """Atomically claim one queued job. Safe for multiple worker processes."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    WITH next_job AS (
+                        SELECT id FROM jobs
+                        WHERE status = 'queued'
+                        ORDER BY created_at
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT 1
+                    )
+                    UPDATE jobs
+                    SET status = 'running', started_at = CURRENT_TIMESTAMP,
+                        locked_at = CURRENT_TIMESTAMP, worker_id = %s,
+                        attempts = attempts + 1
+                    WHERE id IN (SELECT id FROM next_job)
+                    RETURNING *;
+                """, (worker_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error claiming job: {e}")
+            return None
+
+    def complete_job(self, job_id, result_data):
+        return self._finish_job(job_id, 'completed', result_data=result_data)
+
+    def fail_job(self, job_id, error_message):
+        return self._finish_job(job_id, 'error', error_message=error_message)
+
+    def requeue_job(self, job_id):
+        if not self.conn:
+            self.connect()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE jobs
+                    SET status = 'queued', locked_at = NULL, worker_id = NULL
+                    WHERE id = %s;
+                """, (job_id,))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error requeuing job: {e}")
+            return False
+
+    def get_job_by_request_id(self, request_id):
+        if not self.conn:
+            self.connect()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM jobs
+                    WHERE result_json->>'request_id' = %s;
+                """, (request_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching job by request_id: {e}")
+            return None
+
+    def _finish_job(self, job_id, status, result_data=None, error_message=None):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE jobs
+                    SET status = %s, result_json = %s::jsonb, error_message = %s,
+                        completed_at = CURRENT_TIMESTAMP, locked_at = NULL
+                    WHERE id = %s;
+                """, (status, json.dumps(result_data) if result_data is not None else None, error_message, job_id))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error completing job: {e}")
+            return False
+
+    def requeue_stale_jobs(self, stale_after_minutes=15):
+        """Recover work left running by a restarted worker."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return 0
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE jobs
+                    SET status = 'queued', locked_at = NULL, worker_id = NULL,
+                        started_at = NULL
+                    WHERE status = 'running'
+                      AND locked_at < CURRENT_TIMESTAMP - (%s * INTERVAL '1 minute');
+                """, (stale_after_minutes,))
+                return cur.rowcount
+        except Exception as e:
+            print(f"Error recovering jobs: {e}")
+            return 0
+
+    # --- Report Query and Numbering Methods ---
+    def get_user_reports_page(self, user_id, search_query='', page=1, page_size=50):
+        """Search report metadata in PostgreSQL instead of filtering it in Flask."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+        page = max(1, int(page))
+        page_size = min(100, max(1, int(page_size)))
+        pattern = f"%{search_query.strip()}%"
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                where_sql = """
+                    user_id = %s AND (
+                        %s = '' OR report_no ILIKE %s OR insured_name ILIKE %s
+                        OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s
+                    )
+                """
+                params = (user_id, search_query.strip(), pattern, pattern, pattern, pattern, pattern)
+                cur.execute(f"SELECT COUNT(*) AS total FROM reports WHERE {where_sql};", params)
+                total = int(cur.fetchone()['total'])
+                cur.execute(f"""
+                    SELECT id, user_id, report_no, insured_name, vehicle_no, claim_no,
+                           policy_no, saved_at, include_in_consolidated
+                    FROM reports WHERE {where_sql}
+                    ORDER BY saved_at DESC
+                    LIMIT %s OFFSET %s;
+                """, params + (page_size, (page - 1) * page_size))
+                items = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    item['id'] = str(item['id'])
+                    item['saved_at'] = str(item['saved_at']) if item['saved_at'] else ''
+                    items.append(item)
+                return {'items': items, 'page': page, 'page_size': page_size, 'total': total}
+        except Exception as e:
+            print(f"Error searching report metadata: {e}")
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+
+    def reserve_report_number(self, user_id, prefix, report_year):
+        """Reserve a report sequence atomically; unused reservations intentionally leave gaps."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO report_number_counters (user_id, prefix, report_year, next_sequence)
+                    VALUES (%s, %s, %s, 2)
+                    ON CONFLICT (user_id, prefix, report_year)
+                    DO UPDATE SET next_sequence = report_number_counters.next_sequence + 1
+                    RETURNING next_sequence - 1 AS sequence;
+                """, (user_id, prefix, report_year))
+                return int(cur.fetchone()['sequence'])
+        except Exception as e:
+            print(f"Error reserving report number: {e}")
+            return None
+
+
     def save_report(self, user_id, report_data_dict, existing_report_id=None):
         """Saves a report to PostgreSQL natively as JSONB!
         
@@ -298,7 +735,7 @@ class PostgresDB:
                         existing_report_id = None  # Fall through to insert
 
                 if not existing_report_id:
-                    # No existing ID provided — this is a new report. Insert fresh row.
+                    # No existing ID provided â€” this is a new report. Insert fresh row.
                     new_id = str(uuid.uuid4())
                     cur.execute("""
                         INSERT INTO reports (
@@ -403,9 +840,6 @@ class PostgresDB:
             if response.status_code in [200, 201]:
                 file_info = response.json()
                 file_id = file_info.get('id')
-                perm_url = f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions"
-                perm_data = {'type': 'anyone', 'role': 'reader'}
-                requests.post(perm_url, headers=headers, json=perm_data)
                 
                 return {
                     'id': file_id,

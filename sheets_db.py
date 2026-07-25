@@ -86,13 +86,14 @@ class SheetsDB:
 
     # --- User Methods ---
     def get_user_by_username(self, username):
+        if not username:
+            return None
         if not self.users_worksheet: self.connect()
         try:
-            # cell = self.users_worksheet.find(username) # Find by cell content (might be slow or find partial matches)
-            # Safer to fetch all records and filter
             records = self.users_worksheet.get_all_records()
+            target_username = str(username).strip().lower()
             for record in records:
-                if record['username'] == username:
+                if str(record.get('username', '')).strip().lower() == target_username:
                     return record
             return None
         except Exception as e:

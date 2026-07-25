@@ -42,6 +42,32 @@ class TestLoginRoute:
         # Should redirect to index on success
         assert response.status_code in [200, 302]
     
+    def test_login_success_with_next(self, client, mock_sheets_db):
+        """Test successful login with next query parameter."""
+        mock_sheets_db.get_user_by_username.return_value = self.mock_user
+        
+        with patch('app.bcrypt.check_password_hash', return_value=True):
+            response = client.post('/login?next=%2F', data={
+                'username': 'testuser',
+                'password': 'password123'
+            }, follow_redirects=False)
+        
+        assert response.status_code == 302
+        assert response.location == '/'
+
+    def test_login_username_trimmed_and_case_insensitive(self, client, mock_sheets_db):
+        """Test login with leading/trailing whitespace and uppercase username."""
+        mock_sheets_db.get_user_by_username.return_value = self.mock_user
+        
+        with patch('app.bcrypt.check_password_hash', return_value=True):
+            response = client.post('/login', data={
+                'username': '  TESTUSER  ',
+                'password': 'password123'
+            }, follow_redirects=False)
+        
+        assert response.status_code in [200, 302]
+        mock_sheets_db.get_user_by_username.assert_called_with('TESTUSER')
+
     def test_login_invalid_password(self, client, mock_sheets_db):
         """Test login with invalid password."""
         mock_sheets_db.get_user_by_username.return_value = self.mock_user
