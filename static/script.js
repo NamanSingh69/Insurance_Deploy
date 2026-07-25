@@ -2322,7 +2322,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function renderSavedReports(reports) {
+    function renderSavedReports(reportsData) {
+        const reports = Array.isArray(reportsData) ? reportsData : (reportsData && Array.isArray(reportsData.items) ? reportsData.items : []);
         savedReportsTbody.innerHTML = '';
         if (reports.length === 0) {
             savedReportsTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 1rem; color: var(--text-muted);">No saved reports found.</td></tr>';
