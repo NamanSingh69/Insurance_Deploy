@@ -3347,12 +3347,25 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
         pdf_bytes = pdf.output()
         request_id = str(uuid.uuid4())
         vehicle_no_raw = final_survey_data.get('vehicle_regn_no', '')
-        # Store vehicle_regn_no for filename generation
+        
+        # Store metadata and user_id for download authorization and filename generation
         generated_data_store[request_id] = { 
             "pdf_report": pdf_bytes, 
+            "user_id": user_id,
             "report_no": final_survey_data.get('report_no', 'SurveyReport'),
             "vehicle_no": vehicle_no_raw
         }
+
+        # Write to disk so all worker processes (e.g. multi-process Gunicorn) can serve the file
+        try:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            temp_pdf_dir = os.path.join(project_root, 'uploads', 'temp_pdfs')
+            os.makedirs(temp_pdf_dir, exist_ok=True)
+            temp_pdf_path = os.path.join(temp_pdf_dir, f"{request_id}.pdf")
+            with open(temp_pdf_path, 'wb') as f:
+                f.write(pdf_bytes)
+        except Exception as disk_err:
+            print(f"Warning: Could not write temp PDF to disk: {disk_err}")
 
         # Auto-upload to Google Drive (if user connected their personal Drive via Settings)
         drive_link = None
@@ -3394,45 +3407,73 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
 @app.route('/download/<file_type>/<request_id>')
 @login_required
 def download_file(file_type, request_id):
-    # Enforce job/asset owner verification on download routes
+    # Enforce job/asset owner verification on download routes safely
     job = sheets_db.get_job_by_request_id(request_id)
-    if job:
+    if job and job.get('user_id') is not None:
         if str(job.get('user_id')) != str(current_user.id):
             abort(403, description="Access denied. You do not own this report.")
     
-    # Priority 1: Check in-memory store (compatibility & unit tests)
+    # Priority 1: Check in-memory store
     if request_id in generated_data_store:
         data = generated_data_store[request_id]
-        if str(data.get('user_id')) != str(current_user.id):
+        if data.get('user_id') is not None and str(data.get('user_id')) != str(current_user.id):
             abort(403, description="Access denied. You do not own this report.")
         pdf_bytes = data['pdf_report']
         vehicle_no = data.get('vehicle_no', '').strip()
         report_no = data.get('report_no', 'SurveyReport')
     else:
-        # Priority 2: Check local temporary files (production)
+        # Priority 2: Check local temporary files (production cross-process)
         project_root = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(project_root, 'uploads', 'temp_pdfs', f"{request_id}.pdf")
         
         if os.path.exists(file_path):
-            # Read from local temp files
             with open(file_path, 'rb') as f:
                 pdf_bytes = f.read()
             
-            # Load metadata if job exists
             vehicle_no = ''
             report_no = 'SurveyReport'
             if job and job.get('result_json'):
                 res_data = job['result_json']
                 if isinstance(res_data, str):
-                    try:
-                        res_data = json.loads(res_data)
-                    except Exception:
-                        res_data = {}
+                    try: res_data = json.loads(res_data)
+                    except Exception: res_data = {}
                 if isinstance(res_data, dict):
                     vehicle_no = res_data.get('vehicle_no', '').strip()
                     report_no = res_data.get('report_no', 'SurveyReport')
         else:
-            abort(404, description="Report PDF file expired or not found.")
+            # Priority 3: Check if request_id is a saved report_id in database
+            saved_report = sheets_db.get_report_by_id(request_id, current_user.id)
+            if saved_report:
+                if str(saved_report.get('user_id')) != str(current_user.id):
+                    abort(403, description="Access denied. You do not own this report.")
+                report_data_json = saved_report.get('report_data_json', '{}')
+                if isinstance(report_data_json, str):
+                    try: report_data_dict = json.loads(report_data_json)
+                    except Exception: report_data_dict = {}
+                else:
+                    report_data_dict = report_data_json or {}
+
+                from modules.pdf import render_report
+                user_snapshot = {
+                    'full_name': current_user.full_name or 'Surveyor',
+                    'qualifications': current_user.qualifications or '',
+                    'designation': current_user.designation or '',
+                    'license_no': current_user.license_no or '',
+                    'expiry_date': current_user.expiry_date or '',
+                    'membership_no': current_user.membership_no or '',
+                    'address_line_1': current_user.address_line_1 or '',
+                    'address_line_2': current_user.address_line_2 or '',
+                    'address_line_3': current_user.address_line_3 or '',
+                    'contact_no': current_user.contact_no or '',
+                    'email': current_user.email or ''
+                }
+                pdf_res = render_report(report_data_dict, user_snapshot, current_user.id)
+                pdf_bytes = pdf_res['pdf_bytes']
+                survey_info = report_data_dict.get('survey_report', {})
+                vehicle_no = survey_info.get('vehicle_regn_no', '').strip()
+                report_no = survey_info.get('report_no', 'SurveyReport')
+            else:
+                abort(404, description="Report PDF file expired or not found.")
 
     if vehicle_no:
         filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip()

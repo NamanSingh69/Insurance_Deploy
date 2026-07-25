@@ -172,8 +172,16 @@
         <!-- Preview Section -->
         <div id="preview-section" class="hidden">
             <div class="card">
-                <h2><i class="fas fa-edit"></i> Review & Edit Extracted Data</h2>
-                <p>Review the extracted data. Make corrections before generating/saving.</p>
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
+                    <div>
+                        <h2 style="margin: 0;"><i class="fas fa-edit"></i> Review & Edit Extracted Data</h2>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.9rem; color: var(--text-secondary);">Review the extracted data. Make corrections before generating/saving.</p>
+                    </div>
+                    <div style="display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(255,255,255,0.05); padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid var(--border);">
+                        <input type="checkbox" id="include-signature-checkbox" checked style="width: 18px; height: 18px; cursor: pointer;">
+                        <label for="include-signature-checkbox" style="font-size: 0.9rem; cursor: pointer; color: var(--text-primary); margin: 0; font-weight: 500;"><i class="fas fa-signature"></i> Include Digital Seal & Signature</label>
+                    </div>
+                </div>
 
                 <form id="preview-form">
                     <div class="form-grid">
@@ -1296,10 +1304,6 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                     </div> <!-- End form-grid -->
 
                     <div class="form-actions" style="display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 1rem;">
-                        <div style="display: inline-flex; align-items: center; gap: 0.5rem; margin-right: auto; background: rgba(255,255,255,0.05); padding: 0.4rem 0.8rem; border-radius: 4px; border: 1px solid var(--border);">
-                            <input type="checkbox" id="include-signature-checkbox" checked style="width: 18px; height: 18px; cursor: pointer;">
-                            <label for="include-signature-checkbox" style="font-size: 0.9rem; cursor: pointer; color: var(--text-primary); margin: 0;"><i class="fas fa-signature"></i> Include Digital Seal & Signature</label>
-                        </div>
                         <button type="button" id="back-to-upload" class="btn btn-secondary">
                             <i class="fas fa-arrow-left"></i> Back to Upload/Load
                         </button>
@@ -1431,73 +1435,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
         </div>
     </div>
 
-    <!-- Standalone Fee Bill Modal -->
-    <div id="fee-bill-modal" class="modal hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 1rem;">
-        <div class="modal-content card" style="max-width: 700px; width: 100%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); padding: 1.5rem; border-radius: 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;">
-                <h3><i class="fas fa-receipt"></i> Create Standalone Fee Bill ("Only Fees")</h3>
-                <button type="button" id="btn-close-fee-bill-modal" class="btn btn-sm btn-secondary" style="border: none; background: transparent; font-size: 1.2rem; cursor: pointer; color: var(--text-primary);">&times;</button>
-            </div>
-            <form id="fee-bill-form">
-                <div class="two-col-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                    <div class="field-group">
-                        <label for="fb-insurer-name">Insurance Company:</label>
-                        <input type="text" id="fb-insurer-name" placeholder="e.g. National Insurance Company" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-invoice-no">Invoice Number (Auto-generated):</label>
-                        <input type="text" id="fb-invoice-no" placeholder="NIC/JUL-26/01" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-invoice-date">Invoice Date:</label>
-                        <input type="date" id="fb-invoice-date" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-insured-name">Insured Name:</label>
-                        <input type="text" id="fb-insured-name" placeholder="Name of Insured" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-policy-no">Policy Number:</label>
-                        <input type="text" id="fb-policy-no" placeholder="Policy No" class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-claim-no">Claim Number:</label>
-                        <input type="text" id="fb-claim-no" placeholder="Claim No" class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-vehicle-no">Vehicle Number:</label>
-                        <input type="text" id="fb-vehicle-no" placeholder="e.g. WB25M4413" class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-taxable-amount">Taxable Amount (Rs.):</label>
-                        <input type="number" step="0.01" id="fb-taxable-amount" value="0.00" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-gst-pc">GST %:</label>
-                        <input type="number" step="0.01" id="fb-gst-pc" value="18.0" required class="form-control-select">
-                    </div>
-                    <div class="field-group">
-                        <label for="fb-gst-amount">GST Amount (Rs.):</label>
-                        <input type="number" step="0.01" id="fb-gst-amount" value="0.00" readonly class="form-control-select" style="background: rgba(255,255,255,0.05);">
-                    </div>
-                    <div class="field-group" style="grid-column: span 2;">
-                        <label for="fb-total-amount">Total Amount including GST (Rs.):</label>
-                        <input type="number" step="0.01" id="fb-total-amount" value="0.00" readonly class="form-control-select" style="font-weight: bold; font-size: 1.1rem; background: rgba(255,255,255,0.05);">
-                    </div>
-                    <div class="field-group" style="grid-column: span 2; display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
-                        <input type="checkbox" id="fb-include-signature" checked style="width: 18px; height: 18px; cursor: pointer;">
-                        <label for="fb-include-signature" style="margin: 0; cursor: pointer; font-weight: 500;"><i class="fas fa-signature"></i> Include Digital Seal & Signature on PDF</label>
-                    </div>
-                </div>
-                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
-                    <button type="button" id="btn-save-fee-bill" class="btn btn-primary"><i class="fas fa-save"></i> Save Bill</button>
-                    <button type="button" id="btn-generate-fee-pdf" class="btn btn-success"><i class="fas fa-file-pdf"></i> Download PDF</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <script src="{{ url_for('static', filename='script.js') }}?v=1.0.1"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=1.0.2"></script>
 
 </body>
 </html>
