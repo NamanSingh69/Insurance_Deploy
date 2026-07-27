@@ -1419,6 +1419,22 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                         Models are dynamically fetched and ranked based on intelligence capabilities.
                     </small>
                 </div>
+                <div class="field-group" style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                    <label style="font-weight: 600;"><i class="fas fa-signature"></i> Digital Seal & Signature Image</label>
+                    <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem;">
+                        <input type="file" id="settings-signature-input" accept="image/png, image/jpeg" style="display: none;">
+                        <button type="button" id="settings-signature-btn" class="btn btn-secondary btn-sm">
+                            <i class="fas fa-upload"></i> Upload Signature Image
+                        </button>
+                        <span id="settings-signature-status" style="font-size: 0.85rem; color: var(--text-secondary);">
+                            No image uploaded (PNG with transparent background recommended)
+                        </span>
+                    </div>
+                    <div id="settings-signature-preview-container" style="margin-top: 0.75rem; display: none;">
+                        <span style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Active Signature Preview:</span>
+                        <img id="settings-signature-preview" src="" alt="Signature Preview" style="max-height: 60px; background: #ffffff; padding: 4px; border-radius: 4px; border: 1px solid #cbd5e1;">
+                    </div>
+                </div>
                 <div class="form-actions" style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
                     <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Profile</button>
                     <div style="display: flex; align-items: center; gap: 0.75rem;">

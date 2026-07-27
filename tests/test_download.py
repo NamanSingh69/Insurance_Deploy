@@ -28,3 +28,25 @@ class TestDownloadFileEndpoint:
         mock_sheets_db.get_report_by_id.return_value = None
         response = authenticated_client.get('/download/report_pdf/nonexistent-id')
         assert response.status_code == 404
+
+    def test_upload_signature_and_status(self, authenticated_client):
+        """Test uploading a signature image and checking signature status."""
+        # 1. Status initially
+        status_res = authenticated_client.get('/signature_status')
+        assert status_res.status_code == 200
+        
+        # 2. Upload fake image
+        data = {
+            'signature': (io.BytesIO(b'fake png image data'), 'test_signature.png')
+        }
+        upload_res = authenticated_client.post('/upload_signature', data=data, content_type='multipart/form-data')
+        assert upload_res.status_code == 200
+        json_data = upload_res.get_json()
+        assert json_data['success'] is True
+        assert '/static/signature.png' in json_data['url']
+
+        # 3. Status after upload
+        status_res2 = authenticated_client.get('/signature_status')
+        assert status_res2.status_code == 200
+        json_data2 = status_res2.get_json()
+        assert json_data2['has_signature'] is True

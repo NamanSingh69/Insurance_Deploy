@@ -1982,6 +1982,42 @@ def update_user_profile():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/upload_signature', methods=['POST'])
+@login_required
+def upload_signature():
+    if 'signature' not in request.files:
+        return jsonify({'error': 'No signature file provided'}), 400
+    file = request.files['signature']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    uploads_dir = os.path.join(project_root, 'uploads')
+    os.makedirs(uploads_dir, exist_ok=True)
+    sig_path = os.path.join(uploads_dir, 'signature.png')
+    file.save(sig_path)
+    
+    # Also mirror to static directory for direct URL serving
+    static_dir = os.path.join(project_root, 'static')
+    os.makedirs(static_dir, exist_ok=True)
+    static_sig_path = os.path.join(static_dir, 'signature.png')
+    try:
+        import shutil
+        shutil.copy2(sig_path, static_sig_path)
+    except Exception as copy_err:
+        print(f"Signature copy error: {copy_err}")
+    
+    ts = int(_time.time())
+    return jsonify({'success': True, 'message': 'Digital seal & signature uploaded successfully!', 'url': f'/static/signature.png?v={ts}'})
+
+@app.route('/signature_status', methods=['GET'])
+@login_required
+def get_signature_status():
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    sig_exists = os.path.exists(os.path.join(project_root, 'uploads', 'signature.png')) or os.path.exists(os.path.join(project_root, 'static', 'signature.png'))
+    ts = int(_time.time())
+    return jsonify({'has_signature': sig_exists, 'url': f'/static/signature.png?v={ts}' if sig_exists else None})
+
 @app.route('/api/available_models', methods=['GET'])
 @login_required
 def available_models():

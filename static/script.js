@@ -2903,7 +2903,80 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function initSignatureUpload() {
+        const sigBtn = document.getElementById('settings-signature-btn');
+        const sigInput = document.getElementById('settings-signature-input');
+        const sigStatus = document.getElementById('settings-signature-status');
+        const sigPreviewContainer = document.getElementById('settings-signature-preview-container');
+        const sigPreviewImg = document.getElementById('settings-signature-preview');
+
+        async function checkSigStatus() {
+            try {
+                const res = await fetch('/signature_status');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.has_signature && data.url) {
+                        if (sigStatus) {
+                            sigStatus.textContent = 'Active signature file uploaded ✓';
+                            sigStatus.style.color = '#10b981';
+                        }
+                        if (sigPreviewImg) sigPreviewImg.src = data.url;
+                        if (sigPreviewContainer) sigPreviewContainer.style.display = 'block';
+                    } else {
+                        if (sigStatus) {
+                            sigStatus.textContent = 'No image uploaded (PNG with transparent background recommended)';
+                            sigStatus.style.color = 'var(--text-secondary)';
+                        }
+                        if (sigPreviewContainer) sigPreviewContainer.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                console.error("Error checking signature status:", e);
+            }
+        }
+
+        if (sigBtn && sigInput) {
+            sigBtn.addEventListener('click', () => sigInput.click());
+            sigInput.addEventListener('change', async () => {
+                if (!sigInput.files || sigInput.files.length === 0) return;
+                const file = sigInput.files[0];
+                const formData = new FormData();
+                formData.append('signature', file);
+
+                sigBtn.disabled = true;
+                sigBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+
+                try {
+                    const res = await fetch('/upload_signature', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        if (sigStatus) {
+                            sigStatus.textContent = 'Signature image updated successfully! ✓';
+                            sigStatus.style.color = '#10b981';
+                        }
+                        if (sigPreviewImg) sigPreviewImg.src = data.url;
+                        if (sigPreviewContainer) sigPreviewContainer.style.display = 'block';
+                        showStatus('Digital Seal & Signature image updated!', 'success', true);
+                    } else {
+                        showStatus(data.error || 'Failed to upload signature image.', 'error', true);
+                    }
+                } catch (err) {
+                    showStatus('Error uploading signature image: ' + err.message, 'error', true);
+                } finally {
+                    sigBtn.disabled = false;
+                    sigBtn.innerHTML = '<i class="fas fa-upload"></i> Upload Signature Image';
+                }
+            });
+        }
+
+        checkSigStatus();
+    }
+
     // Initialize on page load
     initHeaderDriveButton();
+    initSignatureUpload();
 
 });
