@@ -1619,6 +1619,8 @@ def _process_invoice_worker(task_id, pdf_part, user_data_snapshot, user_id):
         _complete_task(task_id, invoice_parts_data)
     except Exception as e:
         print(f"Error processing invoice: {e}")
+        import traceback
+        traceback.print_exc()
         _fail_task(task_id, f"An unexpected error occurred during invoice processing: {e}")
 
 @app.route('/process_invoice', methods=['POST'])
@@ -1647,7 +1649,7 @@ def process_invoice():
     }
 
     if request.content_type == 'application/json':
-        data = request.get_json()
+        data = request.get_json() or {}
         drive_file_id = data.get('drive_file_id')
         if not drive_file_id:
              return jsonify({"error": "No drive_file_id provided"}), 400
@@ -1656,35 +1658,21 @@ def process_invoice():
         if not pdf_content:
              return jsonify({"error": "Failed to retrieve file content from Drive."}), 500
         pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-        job_input = {
-            'source_asset_id': drive_file_id,
-            'mime_type': 'application/pdf',
-        }
              
     elif 'invoice_pdf_file' in request.files:
         file = request.files['invoice_pdf_file']
         if file.filename == '':
             return jsonify({"error": "No selected invoice file"}), 400
-        if file and file.mimetype == 'application/pdf':
+        if file and (file.mimetype == 'application/pdf' or file.filename.lower().endswith('.pdf')):
             pdf_content = file.read()
             pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-            source_asset = _store_job_input_file(current_user.id, pdf_content, file.filename, file.mimetype)
-            if not source_asset:
-                return jsonify({'error': 'Unable to store the uploaded PDF for processing.'}), 503
-            job_input = {
-                'source_asset_id': str(source_asset['id']),
-                'mime_type': file.mimetype,
-            }
         else:
              return jsonify({"error": "Invalid file type. Please upload a PDF for the invoice."}), 400
     else:
          return jsonify({"error": "No invoice file provided"}), 400
 
-    task_id = _create_task(current_user.id, 'process_invoice', job_input)
-    
-    if app.config.get('TESTING') or os.getenv('RUN_JOBS_IN_PROCESS') == '1':
-        _submit_task(_process_invoice_worker, task_id, pdf_part, user_data_snapshot, user_id)
-        
+    task_id = _create_task()
+    _task_executor.submit(_process_invoice_worker, task_id, pdf_part, user_data_snapshot, user_id)
     return jsonify({"task_id": task_id}), 202
     
 def number_to_words_indian(number_val):

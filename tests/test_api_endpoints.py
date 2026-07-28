@@ -265,3 +265,32 @@ class TestProcessPDFEndpoint:
         """Test polling for a non-existent task."""
         response = authenticated_client.get('/process_pdf/status/nonexistent-task-id')
         assert response.status_code == 404
+
+
+class TestProcessInvoiceEndpoint:
+    """Tests for /process_invoice endpoint."""
+    
+    def test_process_invoice_no_file(self, authenticated_client):
+        """Test process invoice without file returns 400."""
+        response = authenticated_client.post('/process_invoice',
+                                             data={},
+                                             content_type='multipart/form-data')
+        assert response.status_code == 400
+        result = response.get_json()
+        assert 'error' in result
+
+    def test_process_invoice_with_mock_file(self, authenticated_client):
+        """Test process invoice with mock PDF file returns 202 and task_id."""
+        pdf_content = b'%PDF-1.4 fake invoice pdf content'
+        data = {
+            'invoice_pdf_file': (io.BytesIO(pdf_content), 'MR ASRAFUL ISLAM P I.pdf', 'application/pdf')
+        }
+        
+        response = authenticated_client.post('/process_invoice',
+                                             data=data,
+                                             content_type='multipart/form-data')
+        
+        assert response.status_code == 202
+        result = response.get_json()
+        assert 'task_id' in result
+
