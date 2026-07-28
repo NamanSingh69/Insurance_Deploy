@@ -1981,30 +1981,57 @@ def upload_signature():
     
     project_root = os.path.dirname(os.path.abspath(__file__))
     uploads_dir = os.path.join(project_root, 'uploads')
+    static_dir = os.path.join(project_root, 'static')
     os.makedirs(uploads_dir, exist_ok=True)
-    sig_path = os.path.join(uploads_dir, 'signature.png')
+    os.makedirs(static_dir, exist_ok=True)
+
+    user_id_str = str(current_user.id)
+    sig_user_filename = f'signature_{user_id_str}.png'
+    sig_path = os.path.join(uploads_dir, sig_user_filename)
     file.save(sig_path)
     
-    # Also mirror to static directory for direct URL serving
-    static_dir = os.path.join(project_root, 'static')
-    os.makedirs(static_dir, exist_ok=True)
-    static_sig_path = os.path.join(static_dir, 'signature.png')
+    # Also save as signature.png for fallback
+    global_sig_path = os.path.join(uploads_dir, 'signature.png')
+    
+    # Mirror to static directory for direct URL serving
+    static_sig_path = os.path.join(static_dir, sig_user_filename)
+    global_static_sig_path = os.path.join(static_dir, 'signature.png')
+    
     try:
         import shutil
         shutil.copy2(sig_path, static_sig_path)
+        shutil.copy2(sig_path, global_sig_path)
+        shutil.copy2(sig_path, global_static_sig_path)
     except Exception as copy_err:
         print(f"Signature copy error: {copy_err}")
     
     ts = int(_time.time())
-    return jsonify({'success': True, 'message': 'Digital seal & signature uploaded successfully!', 'url': f'/static/signature.png?v={ts}'})
+    return jsonify({'success': True, 'message': 'Digital seal & signature uploaded successfully!', 'url': f'/static/{sig_user_filename}?v={ts}'})
 
 @app.route('/signature_status', methods=['GET'])
 @login_required
 def get_signature_status():
     project_root = os.path.dirname(os.path.abspath(__file__))
-    sig_exists = os.path.exists(os.path.join(project_root, 'uploads', 'signature.png')) or os.path.exists(os.path.join(project_root, 'static', 'signature.png'))
+    user_id_str = str(current_user.id)
+    sig_user_filename = f'signature_{user_id_str}.png'
+    
+    per_user_uploads = os.path.join(project_root, 'uploads', sig_user_filename)
+    per_user_static = os.path.join(project_root, 'static', sig_user_filename)
+    global_uploads = os.path.join(project_root, 'uploads', 'signature.png')
+    global_static = os.path.join(project_root, 'static', 'signature.png')
+    
+    if os.path.exists(per_user_uploads) or os.path.exists(per_user_static):
+        sig_url = f'/static/{sig_user_filename}'
+        sig_exists = True
+    elif os.path.exists(global_uploads) or os.path.exists(global_static):
+        sig_url = '/static/signature.png'
+        sig_exists = True
+    else:
+        sig_url = None
+        sig_exists = False
+        
     ts = int(_time.time())
-    return jsonify({'has_signature': sig_exists, 'url': f'/static/signature.png?v={ts}' if sig_exists else None})
+    return jsonify({'has_signature': sig_exists, 'url': f'{sig_url}?v={ts}' if sig_exists else None})
 
 @app.route('/api/available_models', methods=['GET'])
 @login_required

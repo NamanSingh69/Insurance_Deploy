@@ -43,7 +43,7 @@ class TestDownloadFileEndpoint:
         assert upload_res.status_code == 200
         json_data = upload_res.get_json()
         assert json_data['success'] is True
-        assert '/static/signature.png' in json_data['url']
+        assert 'signature' in json_data['url']
 
         # 3. Status after upload
         status_res2 = authenticated_client.get('/signature_status')

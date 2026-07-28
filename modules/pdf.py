@@ -1185,9 +1185,16 @@ def render_report(data, user_data_snapshot, user_id):
     if sig_included:
         sig_img_path = None
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        user_id_str = str(user_id) if user_id else ''
+        per_user_static = os.path.join(project_root, 'static', f'signature_{user_id_str}.png')
+        per_user_uploads = os.path.join(project_root, 'uploads', f'signature_{user_id_str}.png')
         user_sig_file = os.path.join(project_root, 'static', 'signature.png')
         uploads_sig = os.path.join(project_root, 'uploads', 'signature.png')
-        if os.path.exists(user_sig_file):
+        if os.path.exists(per_user_static):
+            sig_img_path = per_user_static
+        elif os.path.exists(per_user_uploads):
+            sig_img_path = per_user_uploads
+        elif os.path.exists(user_sig_file):
             sig_img_path = user_sig_file
         elif os.path.exists(uploads_sig):
             sig_img_path = uploads_sig
@@ -1331,9 +1338,16 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
     if sig_included:
         sig_img_path = None
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        user_id_str = str(user_id) if user_id else ''
+        per_user_static = os.path.join(project_root, 'static', f'signature_{user_id_str}.png')
+        per_user_uploads = os.path.join(project_root, 'uploads', f'signature_{user_id_str}.png')
         user_sig_file = os.path.join(project_root, 'static', 'signature.png')
         uploads_sig = os.path.join(project_root, 'uploads', 'signature.png')
-        if os.path.exists(user_sig_file):
+        if os.path.exists(per_user_static):
+            sig_img_path = per_user_static
+        elif os.path.exists(per_user_uploads):
+            sig_img_path = per_user_uploads
+        elif os.path.exists(user_sig_file):
             sig_img_path = user_sig_file
         elif os.path.exists(uploads_sig):
             sig_img_path = uploads_sig
