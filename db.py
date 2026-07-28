@@ -146,8 +146,10 @@ class PostgresDB:
             for version, filename in migration_files:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1 FROM schema_migrations WHERE version = %s;", (version,))
-                    if cur.fetchone():
-                        continue
+                    is_applied = cur.fetchone()
+                conn.commit()
+                if is_applied:
+                    continue
 
                 print(f"Applying migration {filename} (version {version})...")
                 filepath = os.path.join(migrations_dir, filename)
