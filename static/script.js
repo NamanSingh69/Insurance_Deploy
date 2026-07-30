@@ -2509,7 +2509,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/get_user_profile');
             if (!res.ok) return;
             workspaceState.profile = await res.json();
-            const workspaceId = workspaceState.profile.workspace_admin_id || workspaceState.profile.id;
+            const workspaceId = workspaceState.profile.workspace_admin_id;
             if (!workspaceId) return;
             document.getElementById('operations-workspace')?.classList.remove('hidden');
             document.getElementById('claim-register-section')?.classList.remove('hidden');

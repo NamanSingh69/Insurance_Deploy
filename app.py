@@ -194,14 +194,9 @@ def workspace_admin_id_for(user=None):
         return int(user.id)
     admin_id = getattr(user, 'admin_id', None)
     try:
-        if admin_id is not None:
-            return int(admin_id)
-        return int(user.id)
+        return int(admin_id) if admin_id is not None else None
     except (TypeError, ValueError):
-        try:
-            return int(user.id)
-        except (TypeError, ValueError):
-            return None
+        return None
 
 def has_user_permission(permission, user=None):
     user = user or current_user
