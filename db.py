@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import psycopg2
 import psycopg2.pool
 from psycopg2.extras import RealDictCursor
@@ -206,8 +206,9 @@ class PostgresDB:
                     INSERT INTO users (
                         username, password_hash, full_name, qualifications, designation,
                         license_no, expiry_date, membership_no, address_line_1,
-                        address_line_2, address_line_3, contact_no, email, gemini_api_key, gemini_model
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
+                        address_line_2, address_line_3, contact_no, email, gemini_api_key, gemini_model,
+                        role, admin_id, is_locked, permissions, must_change_password
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
                 """, (
                     user_data.get('username'), user_data.get('password_hash'),
                     user_data.get('full_name'), user_data.get('qualifications'),
@@ -215,7 +216,10 @@ class PostgresDB:
                     user_data.get('expiry_date'), user_data.get('membership_no'),
                     user_data.get('address_line_1'), user_data.get('address_line_2'),
                     user_data.get('address_line_3'), user_data.get('contact_no'),
-                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model')
+                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model'),
+                    user_data.get('role', 'employee'), user_data.get('admin_id'),
+                    bool(user_data.get('is_locked', False)), json.dumps(user_data.get('permissions') or {}),
+                    bool(user_data.get('must_change_password', False))
                 ))
                 return cur.fetchone()[0]
         except Exception as e:
@@ -247,6 +251,114 @@ class PostgresDB:
         except Exception as e:
              print(f"Error updating user profile: {e}")
              return False
+
+    # --- Workspace User Management ---
+    def get_workspace_id_for_user(self, user_id):
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return None
+        if user.get('role') == 'admin':
+            return user.get('id')
+        return user.get('admin_id')
+
+    def list_admin_users(self, admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, username, full_name, email, role, is_locked, permissions,
+                           must_change_password, admin_id
+                    FROM users
+                    WHERE admin_id = %s AND role = 'employee'
+                    ORDER BY username ASC;
+                """, (admin_id,))
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error listing admin users: {e}")
+            return []
+
+    def get_admin_user(self, admin_id, user_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM users WHERE id = %s AND admin_id = %s AND role = 'employee';", (user_id, admin_id))
+                return cur.fetchone()
+        except Exception as e:
+            print(f"Error fetching managed user: {e}")
+            return None
+
+    def set_user_locked(self, admin_id, user_id, is_locked):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET is_locked = %s
+                    WHERE id = %s AND admin_id = %s AND role = 'employee'
+                    RETURNING id;
+                """, (bool(is_locked), user_id, admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error locking user: {e}")
+            return False
+
+    def reset_user_password(self, admin_id, user_id, password_hash):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET password_hash = %s, must_change_password = TRUE
+                    WHERE id = %s AND admin_id = %s AND role = 'employee'
+                    RETURNING id;
+                """, (password_hash, user_id, admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error resetting password: {e}")
+            return False
+
+    def update_user_permissions(self, admin_id, user_id, permissions):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET permissions = %s::jsonb
+                    WHERE id = %s AND admin_id = %s AND role = 'employee'
+                    RETURNING id;
+                """, (json.dumps(permissions or {}), user_id, admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error updating permissions: {e}")
+            return False
+
+    def change_user_password(self, user_id, password_hash):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("UPDATE users SET password_hash = %s, must_change_password = FALSE WHERE id = %s RETURNING id;", (password_hash, user_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error changing password: {e}")
+            return False
+
+    def promote_user_to_admin(self, username):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET role = 'admin', admin_id = NULL, is_locked = FALSE
+                    WHERE LOWER(TRIM(username)) = LOWER(TRIM(%s))
+                    RETURNING id;
+                """, (username,))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error promoting admin: {e}")
+            return False
 
     # --- Report Methods ---
     def get_user_reports_metadata_only(self, user_id):
@@ -769,6 +881,400 @@ class PostgresDB:
              print(f"Error deleting report: {e}")
              return False
 
+    # --- Shared Claim Register / Workspace Report Methods ---
+    def _report_row_to_dict(self, row):
+        item = dict(row)
+        item['id'] = str(item.get('id'))
+        for key in ('saved_at', 'updated_at', 'email_received_date'):
+            if item.get(key) is not None:
+                item[key] = item[key].isoformat() if isinstance(item[key], datetime) else str(item[key])
+        if isinstance(item.get('report_data_json'), dict):
+            item['report_data_json'] = json.dumps(item['report_data_json'])
+        return item
+
+    def get_workspace_reports_page(self, workspace_admin_id, search_query='', page=1, page_size=50,
+                                   status=None, month=None, insurer=None):
+        """Return only records created in an admin-owned shared workspace."""
+        if not self.conn: self.connect()
+        if not self.conn:
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+        page = max(1, int(page))
+        page_size = min(100, max(1, int(page_size)))
+        pattern = f"%{(search_query or '').strip()}%"
+        filters = ["workspace_admin_id = %s", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
+        params = [workspace_admin_id, (search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
+        if status:
+            filters.append("status = %s")
+            params.append(status)
+        if month:
+            filters.append("TO_CHAR(COALESCE(email_received_date, saved_at), 'YYYY-MM') = %s")
+            params.append(month)
+        if insurer:
+            filters.append("COALESCE(report_data_json->'survey_report'->>'insurer', '') ILIKE %s")
+            params.append(f"%{insurer.strip()}%")
+        where_sql = ' AND '.join(filters)
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT COUNT(*) AS total FROM reports WHERE {where_sql};", tuple(params))
+                total = int(cur.fetchone()['total'])
+                cur.execute(f"""
+                    SELECT id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no, claim_no,
+                           policy_no, saved_at, updated_at, status, survey_type, email_received_date,
+                           COALESCE(report_data_json->'survey_report'->>'insurer', '') AS insurer
+                    FROM reports WHERE {where_sql}
+                    ORDER BY COALESCE(email_received_date, saved_at) DESC
+                    LIMIT %s OFFSET %s;
+                """, tuple(params + [page_size, (page - 1) * page_size]))
+                return {
+                    'items': [self._report_row_to_dict(row) for row in cur.fetchall()],
+                    'page': page,
+                    'page_size': page_size,
+                    'total': total,
+                }
+        except Exception as e:
+            print(f"Error fetching workspace reports: {e}")
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+
+    def get_accessible_reports_page(self, workspace_admin_id, user_id, search_query='', page=1, page_size=50):
+        """Return shared workspace records plus legacy records owned by this user only."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+        page = max(1, int(page))
+        page_size = min(100, max(1, int(page_size)))
+        pattern = f"%{(search_query or '').strip()}%"
+        if workspace_admin_id:
+            ownership_sql = "(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))"
+            params = [workspace_admin_id, user_id]
+        else:
+            ownership_sql = "workspace_admin_id IS NULL AND user_id = %s"
+            params = [user_id]
+        filters = [
+            ownership_sql,
+            "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)",
+        ]
+        params.extend([(search_query or '').strip(), pattern, pattern, pattern, pattern, pattern])
+        where_sql = ' AND '.join(filters)
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT COUNT(*) AS total FROM reports WHERE {where_sql};", tuple(params))
+                total = int(cur.fetchone()['total'])
+                cur.execute(f"""
+                    SELECT id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no, claim_no,
+                           policy_no, saved_at, updated_at, status, survey_type, email_received_date,
+                           workspace_admin_id IS NULL AS is_legacy
+                    FROM reports WHERE {where_sql}
+                    ORDER BY COALESCE(email_received_date, saved_at) DESC
+                    LIMIT %s OFFSET %s;
+                """, tuple(params + [page_size, (page - 1) * page_size]))
+                return {
+                    'items': [self._report_row_to_dict(row) for row in cur.fetchall()],
+                    'page': page,
+                    'page_size': page_size,
+                    'total': total,
+                }
+        except Exception as e:
+            print(f"Error fetching accessible reports: {e}")
+            return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
+
+    def get_accessible_report_by_id(self, report_id, workspace_admin_id, user_id):
+        """Fetch a shared record or an unshared legacy record owned by this user."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        params = [report_id]
+        if workspace_admin_id:
+            ownership_sql = "(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))"
+            params.extend([workspace_admin_id, user_id])
+        else:
+            ownership_sql = "workspace_admin_id IS NULL AND user_id = %s"
+            params.append(user_id)
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT * FROM reports WHERE id = %s AND {ownership_sql};", tuple(params))
+                row = cur.fetchone()
+                return self._report_row_to_dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching accessible report: {e}")
+            return None
+
+    def get_workspace_report_by_id(self, report_id, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM reports WHERE id = %s AND workspace_admin_id = %s;", (report_id, workspace_admin_id))
+                row = cur.fetchone()
+                return self._report_row_to_dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching workspace report: {e}")
+            return None
+
+    def find_workspace_report_by_claim_no(self, workspace_admin_id, claim_no):
+        if not claim_no:
+            return None
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM reports
+                    WHERE workspace_admin_id = %s AND LOWER(TRIM(claim_no)) = LOWER(TRIM(%s))
+                    ORDER BY saved_at DESC LIMIT 1;
+                """, (workspace_admin_id, claim_no))
+                row = cur.fetchone()
+                return self._report_row_to_dict(row) if row else None
+        except Exception as e:
+            print(f"Error finding claim report: {e}")
+            return None
+
+    def save_workspace_report(self, user_id, workspace_admin_id, report_data_dict, existing_report_id=None,
+                              status='new_appointment', survey_type='final', gmail_message_id=None,
+                              email_received_date=None):
+        """Save a shared operational report while keeping its author and workspace distinct."""
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        survey = report_data_dict.get('survey_report', {}) or {}
+        report_no = str(survey.get('report_no', '')).strip()
+        insured_name = str(survey.get('insured', '')).strip()
+        vehicle_no = str(survey.get('vehicle_regn_no', '')).strip()
+        claim_no = str(survey.get('claim_no', '')).strip()
+        policy_no = str(survey.get('policy_no', '')).strip()
+        now = datetime.utcnow()
+        payload = json.dumps(report_data_dict)
+        try:
+            with self.conn.cursor() as cur:
+                if existing_report_id:
+                    cur.execute("SELECT id FROM reports WHERE id = %s AND workspace_admin_id = %s;", (existing_report_id, workspace_admin_id))
+                    if cur.fetchone():
+                        cur.execute("""
+                            UPDATE reports SET report_no = %s, insured_name = %s, vehicle_no = %s,
+                                claim_no = %s, policy_no = %s, saved_at = %s, updated_at = %s,
+                                updated_by = %s, status = %s, survey_type = %s,
+                                report_data_json = %s::jsonb
+                            WHERE id = %s RETURNING id;
+                        """, (report_no, insured_name, vehicle_no, claim_no, policy_no, now, now,
+                              user_id, status, survey_type, payload, existing_report_id))
+                        return cur.fetchone()[0]
+
+                report_id = str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO reports (
+                        id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no,
+                        claim_no, policy_no, saved_at, updated_at, updated_by, status, survey_type,
+                        gmail_message_id, email_received_date, include_in_consolidated, report_data_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s::jsonb)
+                    RETURNING id;
+                """, (report_id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no,
+                      claim_no, policy_no, now, now, user_id, status, survey_type,
+                      gmail_message_id, email_received_date, payload))
+                return cur.fetchone()[0]
+        except Exception as e:
+            print(f"Error saving workspace report: {e}")
+            return None
+
+    def update_workspace_report_status(self, report_id, workspace_admin_id, user_id, status):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE reports SET status = %s, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s AND workspace_admin_id = %s RETURNING id;
+                """, (status, user_id, report_id, workspace_admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error updating report status: {e}")
+            return False
+
+    def delete_workspace_report(self, report_id, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM reports WHERE id = %s AND workspace_admin_id = %s RETURNING id;", (report_id, workspace_admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error deleting workspace report: {e}")
+            return False
+
+    def delete_accessible_report(self, report_id, workspace_admin_id, user_id):
+        """Delete a shared report or only the requesting user's legacy report."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        params = [report_id]
+        if workspace_admin_id:
+            ownership_sql = "(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))"
+            params.extend([workspace_admin_id, user_id])
+        else:
+            ownership_sql = "workspace_admin_id IS NULL AND user_id = %s"
+            params.append(user_id)
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(f"DELETE FROM reports WHERE id = %s AND {ownership_sql} RETURNING id;", tuple(params))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error deleting accessible report: {e}")
+            return False
+
+    def get_workspace_dashboard(self, workspace_admin_id):
+        """Return operational counters and financial aggregates for a workspace."""
+        default = {'total_claims': 0, 'pending_claims': 0, 'completed_claims': 0,
+                   'new_appointment': 0, 'inspection_pending': 0, 'documents_awaited': 0,
+                   'report_under_preparation': 0, 'report_submitted': 0, 'closed': 0,
+                   'total_invoiced': 0.0, 'amount_received': 0.0, 'outstanding_fees': 0.0,
+                   'overdue_count': 0}
+        if not self.conn: self.connect()
+        if not self.conn: return default
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT status, COUNT(*) AS count FROM reports
+                    WHERE workspace_admin_id = %s GROUP BY status;
+                """, (workspace_admin_id,))
+                for row in cur.fetchall():
+                    default[row['status']] = int(row['count'])
+                    default['total_claims'] += int(row['count'])
+                default['completed_claims'] = default['report_submitted'] + default['closed']
+                default['pending_claims'] = default['total_claims'] - default['completed_claims']
+                cur.execute("""
+                    SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
+                           COALESCE(SUM(amount_received), 0) AS amount_received,
+                           COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
+                           COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
+                    FROM fee_bills WHERE workspace_admin_id = %s;
+                """, (workspace_admin_id,))
+                fees = cur.fetchone() or {}
+                for key in ('total_invoiced', 'amount_received', 'outstanding_fees'):
+                    default[key] = float(fees.get(key) or 0)
+                default['overdue_count'] = int(fees.get('overdue_count') or 0)
+                return default
+        except Exception as e:
+            print(f"Error fetching dashboard: {e}")
+            return default
+
+    # --- Gmail Workspace Integration ---
+    def get_gmail_integration(self, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM gmail_integrations WHERE workspace_admin_id = %s;", (workspace_admin_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error reading Gmail integration: {e}")
+            return None
+
+    def save_gmail_integration(self, workspace_admin_id, encrypted_token, mailbox_email=None):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO gmail_integrations (workspace_admin_id, encrypted_token, mailbox_email)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (workspace_admin_id) DO UPDATE SET
+                        encrypted_token = EXCLUDED.encrypted_token,
+                        mailbox_email = EXCLUDED.mailbox_email,
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (workspace_admin_id, encrypted_token, mailbox_email))
+                return True
+        except Exception as e:
+            print(f"Error saving Gmail integration: {e}")
+            return False
+
+    def delete_gmail_integration(self, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM gmail_integrations WHERE workspace_admin_id = %s;", (workspace_admin_id,))
+                return True
+        except Exception as e:
+            print(f"Error deleting Gmail integration: {e}")
+            return False
+
+    def get_gmail_sender_domains(self, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id, domain, created_at FROM gmail_sender_domains WHERE workspace_admin_id = %s ORDER BY domain;", (workspace_admin_id,))
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error reading Gmail sender domains: {e}")
+            return []
+
+    def add_gmail_sender_domain(self, workspace_admin_id, domain):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO gmail_sender_domains (workspace_admin_id, domain)
+                    VALUES (%s, LOWER(%s))
+                    ON CONFLICT (workspace_admin_id, domain) DO UPDATE SET domain = EXCLUDED.domain
+                    RETURNING id, domain;
+                """, (workspace_admin_id, domain.strip()))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error adding Gmail sender domain: {e}")
+            return None
+
+    def delete_gmail_sender_domain(self, workspace_admin_id, domain_id):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM gmail_sender_domains WHERE id = %s AND workspace_admin_id = %s RETURNING id;", (domain_id, workspace_admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error deleting Gmail sender domain: {e}")
+            return False
+
+    def get_gmail_sync_message(self, gmail_message_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM gmail_sync_messages WHERE gmail_message_id = %s;", (gmail_message_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error reading Gmail sync message: {e}")
+            return None
+
+    def record_gmail_sync_message(self, gmail_message_id, workspace_admin_id, report_id=None,
+                                  sender_email=None, subject=None, received_at=None,
+                                  parse_data=None, sync_status='processed', error_message=None):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO gmail_sync_messages (
+                        gmail_message_id, workspace_admin_id, report_id, sender_email, subject,
+                        received_at, parse_data_json, sync_status, error_message
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                    ON CONFLICT (gmail_message_id) DO UPDATE SET
+                        report_id = EXCLUDED.report_id,
+                        parse_data_json = EXCLUDED.parse_data_json,
+                        sync_status = EXCLUDED.sync_status,
+                        error_message = EXCLUDED.error_message,
+                        processed_at = CURRENT_TIMESTAMP;
+                """, (gmail_message_id, workspace_admin_id, report_id, sender_email, subject,
+                      received_at, json.dumps(parse_data or {}), sync_status, error_message))
+                return True
+        except Exception as e:
+            print(f"Error recording Gmail sync message: {e}")
+            return False
+
     # --- Drive Methods (Unchanged, relies on Google Auth) ---
     def get_resumable_upload_url(self, filename, mime_type='application/pdf', origin=None):
         result = self.get_resumable_upload_url_with_token(filename, mime_type, origin)
@@ -930,7 +1436,7 @@ class PostgresDB:
             print(f"Drive upload error: {e}")
             return None
 
-    def get_next_invoice_number(self, user_id, insurer_name, date_str=None):
+    def get_next_invoice_number(self, user_id, insurer_name, date_str=None, workspace_admin_id=None):
         import re
         from datetime import datetime
 
@@ -975,13 +1481,15 @@ class PostgresDB:
 
         max_seq = 0
 
+        scope_column = 'workspace_admin_id' if workspace_admin_id else 'user_id'
+        scope_value = workspace_admin_id or user_id
         if self.conn:
             try:
                 with self.conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT invoice_no FROM fee_bills 
-                        WHERE user_id = %s AND invoice_no LIKE %s
-                    """, (int(user_id) if str(user_id).isdigit() else 1, f"{pattern}%"))
+                    cur.execute(f"""
+                        SELECT invoice_no FROM fee_bills
+                        WHERE {scope_column} = %s AND invoice_no LIKE %s
+                    """, (int(scope_value) if str(scope_value).isdigit() else 1, f"{pattern}%"))
                     rows = cur.fetchall()
                     for r in rows:
                         inv = r['invoice_no'] if isinstance(r, dict) else r[0]
@@ -989,10 +1497,10 @@ class PostgresDB:
                         if m:
                             max_seq = max(max_seq, int(m.group(1)))
 
-                    cur.execute("""
-                        SELECT report_no FROM reports 
-                        WHERE user_id = %s AND report_no LIKE %s
-                    """, (int(user_id) if str(user_id).isdigit() else 1, f"{pattern}%"))
+                    cur.execute(f"""
+                        SELECT report_no FROM reports
+                        WHERE {scope_column} = %s AND report_no LIKE %s
+                    """, (int(scope_value) if str(scope_value).isdigit() else 1, f"{pattern}%"))
                     rows2 = cur.fetchall()
                     for r in rows2:
                         inv = r['report_no'] if isinstance(r, dict) else r[0]
@@ -1004,7 +1512,8 @@ class PostgresDB:
 
         if hasattr(self, '_memory_fee_bills'):
             for b in self._memory_fee_bills:
-                if str(b.get('user_id')) == str(user_id) and b.get('invoice_no', '').startswith(pattern):
+                memory_scope = b.get('workspace_admin_id') if workspace_admin_id else b.get('user_id')
+                if str(memory_scope) == str(scope_value) and b.get('invoice_no', '').startswith(pattern):
                     m = re.search(rf"{re.escape(pattern)}(\d+)", b.get('invoice_no'))
                     if m:
                         max_seq = max(max_seq, int(m.group(1)))
@@ -1012,74 +1521,139 @@ class PostgresDB:
         next_seq = max_seq + 1
         return f"{pattern}{next_seq:02d}"
 
-    def save_fee_bill(self, user_id, bill_data):
+    def save_fee_bill(self, user_id, bill_data, workspace_admin_id=None):
+        """Save a fee register row and mirror it to a linked workspace report in one transaction."""
         bill_id = bill_data.get('id') or str(uuid.uuid4())
-        invoice_no = bill_data.get('invoice_no') or self.get_next_invoice_number(user_id, bill_data.get('insurer_name', 'Company'), bill_data.get('invoice_date'))
+        invoice_no = bill_data.get('invoice_no') or self.get_next_invoice_number(
+            user_id, bill_data.get('insurer_name', 'Company'), bill_data.get('invoice_date'), workspace_admin_id=workspace_admin_id)
         invoice_date = bill_data.get('invoice_date', datetime.now().strftime('%Y-%m-%d'))
         insurer_name = bill_data.get('insurer_name', '')
         insured_name = bill_data.get('insured_name', '')
         policy_no = bill_data.get('policy_no', '')
         claim_no = bill_data.get('claim_no', '')
         vehicle_no = bill_data.get('vehicle_no', '')
-        taxable_amount = float(bill_data.get('taxable_amount', 0.0))
-        gst_pc = float(bill_data.get('gst_pc', 18.0))
-        gst_amount = float(bill_data.get('gst_amount', 0.0))
-        total_amount = float(bill_data.get('total_amount', 0.0))
+        professional_fee = float(bill_data.get('professional_fee', bill_data.get('taxable_amount', 0.0)) or 0)
+        gst_pc = float(bill_data.get('gst_pc', 18.0) or 0)
+        gst_amount = float(bill_data.get('gst_amount', professional_fee * (gst_pc / 100.0)) or 0)
+        gross_invoice_value = float(bill_data.get('gross_invoice_value', bill_data.get('total_amount', professional_fee + gst_amount)) or 0)
+        tds_amount = float(bill_data.get('tds_amount', 0.0) or 0)
+        amount_received = float(bill_data.get('amount_received', 0.0) or 0)
+        outstanding_amount = float(bill_data.get('outstanding_amount', 0.0) or 0)
+        due_date = bill_data.get('due_date') or None
+        payment_status = bill_data.get('payment_status', 'unpaid') or 'unpaid'
+        invoice_status = bill_data.get('invoice_status', 'draft') or 'draft'
+        report_id = bill_data.get('report_id') or None
         created_at = datetime.now().isoformat()
-
-        record = {
-            'id': bill_id,
-            'user_id': str(user_id),
-            'invoice_no': invoice_no,
-            'invoice_date': invoice_date,
-            'insurer_name': insurer_name,
-            'insured_name': insured_name,
-            'policy_no': policy_no,
-            'claim_no': claim_no,
-            'vehicle_no': vehicle_no,
-            'taxable_amount': taxable_amount,
+        fee_breakdown = {
+            'professional_fee': professional_fee,
             'gst_pc': gst_pc,
             'gst_amount': gst_amount,
-            'total_amount': total_amount,
-            'created_at': created_at,
-            'bill_data_json': bill_data
+            'gross_invoice_value': gross_invoice_value,
+            'tds_amount': tds_amount,
+            'amount_received': amount_received,
+            'outstanding_amount': outstanding_amount,
+            'due_date': due_date,
+            'payment_status': payment_status,
+            'invoice_status': invoice_status,
+            'invoice_no': invoice_no,
+            'invoice_date': invoice_date,
+            'fee_updated_at': created_at,
         }
-
+        merged_data = dict(bill_data)
+        merged_data.update(fee_breakdown)
+        merged_data['report_id'] = report_id
+        record = {
+            'id': bill_id, 'user_id': str(user_id), 'workspace_admin_id': workspace_admin_id,
+            'report_id': report_id, 'invoice_no': invoice_no, 'invoice_date': invoice_date,
+            'insurer_name': insurer_name, 'insured_name': insured_name, 'policy_no': policy_no,
+            'claim_no': claim_no, 'vehicle_no': vehicle_no, 'taxable_amount': professional_fee,
+            'professional_fee': professional_fee, 'gst_pc': gst_pc, 'gst_amount': gst_amount,
+            'total_amount': gross_invoice_value, 'gross_invoice_value': gross_invoice_value,
+            'tds_amount': tds_amount, 'amount_received': amount_received,
+            'outstanding_amount': outstanding_amount, 'due_date': due_date,
+            'payment_status': payment_status, 'invoice_status': invoice_status,
+            'fee_updated_at': created_at, 'created_at': created_at, 'bill_data_json': merged_data,
+        }
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            if not hasattr(self, '_memory_fee_bills'):
+                self._memory_fee_bills = []
+            self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
+            self._memory_fee_bills.append(record)
+            return bill_id
+        conn = self.conn
+        was_autocommit = conn.autocommit
+        saved = False
+        try:
+            if was_autocommit:
+                conn.autocommit = False
+            u_id = int(user_id) if str(user_id).isdigit() else 1
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                report_data = None
+                if report_id and workspace_admin_id:
+                    cur.execute("""
+                        SELECT report_data_json FROM reports
+                        WHERE id = %s AND workspace_admin_id = %s FOR UPDATE;
+                    """, (report_id, workspace_admin_id))
+                    linked_report = cur.fetchone()
+                    if not linked_report:
+                        raise ValueError('The linked report does not belong to this workspace.')
+                    report_data = linked_report.get('report_data_json') or {}
+                    if isinstance(report_data, str):
+                        report_data = json.loads(report_data or '{}')
+                cur.execute("""
+                    INSERT INTO fee_bills (
+                        id, user_id, workspace_admin_id, report_id, invoice_no, invoice_date,
+                        insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
+                        professional_fee, gst_pc, gst_amount, total_amount, gross_invoice_value,
+                        tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                        invoice_status, fee_updated_at, bill_data_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
+                    ON CONFLICT (id) DO UPDATE SET
+                        workspace_admin_id = EXCLUDED.workspace_admin_id, report_id = EXCLUDED.report_id,
+                        invoice_no = EXCLUDED.invoice_no, invoice_date = EXCLUDED.invoice_date,
+                        insurer_name = EXCLUDED.insurer_name, insured_name = EXCLUDED.insured_name,
+                        policy_no = EXCLUDED.policy_no, claim_no = EXCLUDED.claim_no, vehicle_no = EXCLUDED.vehicle_no,
+                        taxable_amount = EXCLUDED.taxable_amount, professional_fee = EXCLUDED.professional_fee,
+                        gst_pc = EXCLUDED.gst_pc, gst_amount = EXCLUDED.gst_amount,
+                        total_amount = EXCLUDED.total_amount, gross_invoice_value = EXCLUDED.gross_invoice_value,
+                        tds_amount = EXCLUDED.tds_amount, amount_received = EXCLUDED.amount_received,
+                        outstanding_amount = EXCLUDED.outstanding_amount, due_date = EXCLUDED.due_date,
+                        payment_status = EXCLUDED.payment_status, invoice_status = EXCLUDED.invoice_status,
+                        fee_updated_at = CURRENT_TIMESTAMP, bill_data_json = EXCLUDED.bill_data_json
+                    WHERE fee_bills.workspace_admin_id = EXCLUDED.workspace_admin_id
+                       OR (fee_bills.workspace_admin_id IS NULL AND EXCLUDED.workspace_admin_id IS NULL
+                           AND fee_bills.user_id = EXCLUDED.user_id)
+                    RETURNING id;
+                """, (bill_id, u_id, workspace_admin_id, report_id, invoice_no, invoice_date,
+                      insurer_name, insured_name, policy_no, claim_no, vehicle_no, professional_fee,
+                      professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
+                      tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                      invoice_status, json.dumps(merged_data)))
+                if not cur.fetchone():
+                    raise ValueError('This fee bill belongs to another workspace.')
+                if report_id and workspace_admin_id:
+                    report_data['fee_breakdown'] = fee_breakdown
+                    cur.execute("""
+                        UPDATE reports SET report_data_json = %s::jsonb, updated_at = CURRENT_TIMESTAMP,
+                            updated_by = %s WHERE id = %s AND workspace_admin_id = %s;
+                    """, (json.dumps(report_data), u_id, report_id, workspace_admin_id))
+            conn.commit()
+            saved = True
+        except Exception as e:
+            try: conn.rollback()
+            except Exception: pass
+            print(f"Error saving fee bill to DB: {e}")
+        finally:
+            try: conn.autocommit = was_autocommit
+            except Exception: pass
+        if not saved:
+            return None
         if not hasattr(self, '_memory_fee_bills'):
             self._memory_fee_bills = []
         self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
         self._memory_fee_bills.append(record)
-
-        if self.conn:
-            try:
-                u_id = int(user_id) if str(user_id).isdigit() else 1
-                with self.conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO fee_bills (
-                            id, user_id, invoice_no, invoice_date, insurer_name, insured_name,
-                            policy_no, claim_no, vehicle_no, taxable_amount, gst_pc, gst_amount, total_amount, bill_data_json
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET
-                            invoice_no = EXCLUDED.invoice_no,
-                            invoice_date = EXCLUDED.invoice_date,
-                            insurer_name = EXCLUDED.insurer_name,
-                            insured_name = EXCLUDED.insured_name,
-                            policy_no = EXCLUDED.policy_no,
-                            claim_no = EXCLUDED.claim_no,
-                            vehicle_no = EXCLUDED.vehicle_no,
-                            taxable_amount = EXCLUDED.taxable_amount,
-                            gst_pc = EXCLUDED.gst_pc,
-                            gst_amount = EXCLUDED.gst_amount,
-                            total_amount = EXCLUDED.total_amount,
-                            bill_data_json = EXCLUDED.bill_data_json;
-                    """, (
-                        bill_id, u_id, invoice_no, invoice_date, insurer_name, insured_name,
-                        policy_no, claim_no, vehicle_no, taxable_amount, gst_pc, gst_amount, total_amount,
-                        json.dumps(bill_data)
-                    ))
-            except Exception as e:
-                print(f"Error saving fee bill to DB: {e}")
-
         return bill_id
 
     def get_user_fee_bills(self, user_id):
@@ -1103,7 +1677,37 @@ class PostgresDB:
             return [b for b in self._memory_fee_bills if str(b.get('user_id')) == str(user_id)]
         return []
 
-    def delete_fee_bill(self, bill_id, user_id):
+    def get_workspace_fee_bills(self, workspace_admin_id, month=None, insurer=None, report_id=None):
+        if not self.conn: self.connect()
+        if not self.conn:
+            return [b for b in getattr(self, '_memory_fee_bills', []) if b.get('workspace_admin_id') == workspace_admin_id]
+        filters = ['workspace_admin_id = %s']
+        params = [workspace_admin_id]
+        if month:
+            filters.append("TO_CHAR(invoice_date::date, 'YYYY-MM') = %s")
+            params.append(month)
+        if insurer:
+            filters.append('insurer_name ILIKE %s')
+            params.append(f"%{insurer.strip()}%")
+        if report_id:
+            filters.append('report_id = %s')
+            params.append(report_id)
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(f"SELECT * FROM fee_bills WHERE {' AND '.join(filters)} ORDER BY invoice_date DESC, created_at DESC;", tuple(params))
+                results = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    for key in ('created_at', 'fee_updated_at', 'due_date'):
+                        if isinstance(item.get(key), (datetime, date)):
+                            item[key] = item[key].isoformat()
+                    results.append(item)
+                return results
+        except Exception as e:
+            print(f"Error fetching workspace fee bills: {e}")
+            return []
+
+    def delete_fee_bill(self, bill_id, user_id, workspace_admin_id=None):
         if hasattr(self, '_memory_fee_bills'):
             self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
 
@@ -1111,7 +1715,10 @@ class PostgresDB:
             try:
                 u_id = int(user_id) if str(user_id).isdigit() else 1
                 with self.conn.cursor() as cur:
-                    cur.execute("DELETE FROM fee_bills WHERE id = %s AND user_id = %s", (bill_id, u_id))
+                    if workspace_admin_id:
+                        cur.execute("DELETE FROM fee_bills WHERE id = %s AND workspace_admin_id = %s", (bill_id, workspace_admin_id))
+                    else:
+                        cur.execute("DELETE FROM fee_bills WHERE id = %s AND user_id = %s", (bill_id, u_id))
                     return True
             except Exception as e:
                 print(f"Error deleting fee bill: {e}")
@@ -1119,4 +1726,4 @@ class PostgresDB:
         return True
 
 
-db = PostgresDB()
+db = PostgresDB()

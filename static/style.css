@@ -424,3 +424,31 @@ hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
     background-color: #ef4444;
     transform: scale(1.1);
 }
+
+/* Motor Survey Management workspace */
+.workspace-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.workspace-heading h2 { margin-bottom: 0.25rem; }
+.workspace-subtitle { color: var(--text-muted); font-size: 0.85rem; margin: 0; }
+.workspace-toolbar, .register-filters, .compact-form { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.workspace-toolbar select, .workspace-toolbar input, .register-filters select, .register-filters input, .compact-form input, .compact-form select { width: auto; min-width: 130px; padding: 0.55rem 0.7rem; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 0.75rem; }
+.metric-card { background: rgba(17, 24, 39, 0.58); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.85rem; min-height: 88px; }
+.metric-card .metric-label { display: block; color: var(--text-muted); font-size: 0.75rem; margin-bottom: 0.35rem; }
+.metric-card .metric-value { display: block; color: var(--text-primary); font-size: 1.45rem; font-weight: 700; }
+.metric-card.financial { border-color: rgba(16, 185, 129, 0.5); }
+.register-filters { margin-bottom: 0.9rem; }
+.register-table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.register-table th, .register-table td { border: 1px solid var(--border); padding: 0.55rem; vertical-align: middle; text-align: left; }
+.register-table th { background: rgba(55, 65, 81, 0.8); color: var(--text-secondary); }
+.register-table tbody tr:nth-child(even) { background: rgba(31, 41, 55, 0.45); }
+.register-table select { min-width: 130px; padding: 0.35rem 0.45rem; }
+.register-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 0.7rem; margin-top: 0.85rem; }
+.compact-form { margin: 0.75rem 0 1rem; padding: 0.9rem; border: 1px solid var(--border); border-radius: 0.5rem; background: rgba(17, 24, 39, 0.34); }
+.compact-form input, .compact-form select { flex: 1 1 145px; }
+.fee-form input, .fee-form select { flex-basis: 115px; }
+.checkbox-label { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; white-space: nowrap; }
+.checkbox-label input { width: auto; min-width: auto; }
+.chip-list { display: flex; gap: 0.45rem; flex-wrap: wrap; margin-top: 0.65rem; }
+.chip { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.6rem; border-radius: 999px; background: rgba(59, 130, 246, 0.18); border: 1px solid rgba(96, 165, 250, 0.45); font-size: 0.78rem; }
+.chip button { padding: 0; min-width: auto; border: 0; color: var(--text-secondary); background: transparent; cursor: pointer; }
+@media (max-width: 640px) { .workspace-toolbar, .register-filters, .compact-form { align-items: stretch; } .workspace-toolbar > *, .register-filters > *, .compact-form > * { width: 100% !important; } .register-pagination { justify-content: stretch; } }

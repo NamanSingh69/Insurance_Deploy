@@ -8,7 +8,7 @@ import uuid
 import threading
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
 from werkzeug.utils import secure_filename
@@ -23,8 +23,12 @@ from fpdf.errors import FPDFException
 import re
 import click
 import base64
+from functools import wraps
+from email.utils import parseaddr, parsedate_to_datetime
+from html import unescape
 from db import db as default_db
 from flask import current_app
+from cryptography.fernet import Fernet, InvalidToken
 
 class DatabaseAdapterProxy:
     def __getattr__(self, name):
@@ -141,6 +145,17 @@ class User(UserMixin):
         self.email = user_data.get('email')
         self.gemini_api_key = user_data.get('gemini_api_key')
         self.gemini_model = user_data.get('gemini_model')
+        self.role = user_data.get('role') or 'employee'
+        self.admin_id = user_data.get('admin_id')
+        self.is_locked = bool(user_data.get('is_locked', False))
+        self.must_change_password = bool(user_data.get('must_change_password', False))
+        permissions = user_data.get('permissions') or {}
+        if isinstance(permissions, str):
+            try:
+                permissions = json.loads(permissions)
+            except (ValueError, TypeError):
+                permissions = {}
+        self.permissions = permissions if isinstance(permissions, dict) else {}
 
     def get_id(self):
         return self.id
@@ -159,6 +174,116 @@ def load_user(user_id):
     if user_data:
         return User(user_data)
     return None
+
+
+# --- Workspace / RBAC Helpers ---
+VALID_CLAIM_STATUSES = {
+    'new_appointment', 'inspection_pending', 'documents_awaited',
+    'report_under_preparation', 'report_submitted', 'closed'
+}
+
+def is_admin_user(user=None):
+    user = user or current_user
+    return bool(getattr(user, 'is_authenticated', False) and getattr(user, 'role', 'employee') == 'admin')
+
+def workspace_admin_id_for(user=None):
+    user = user or current_user
+    if not getattr(user, 'is_authenticated', False):
+        return None
+    if is_admin_user(user):
+        return int(user.id)
+    admin_id = getattr(user, 'admin_id', None)
+    try:
+        return int(admin_id) if admin_id is not None else None
+    except (TypeError, ValueError):
+        return None
+
+def has_user_permission(permission, user=None):
+    user = user or current_user
+    if is_admin_user(user):
+        return True
+    return bool((getattr(user, 'permissions', {}) or {}).get(permission, False))
+
+def _api_or_json_request():
+    return request.path.startswith('/api/') or request.is_json
+
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not getattr(current_user, 'is_authenticated', False):
+            return login_manager.unauthorized()
+        if not is_admin_user(current_user):
+            return jsonify({'error': 'Administrator access is required.'}), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+def gmail_sync_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not getattr(current_user, 'is_authenticated', False):
+            return login_manager.unauthorized()
+        if not has_user_permission('gmail_sync', current_user):
+            return jsonify({'error': 'Gmail sync permission is required.'}), 403
+        if not workspace_admin_id_for(current_user):
+            return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+@app.before_request
+def reject_locked_accounts():
+    if getattr(current_user, 'is_authenticated', False) and getattr(current_user, 'is_locked', False):
+        logout_user()
+        if _api_or_json_request():
+            return jsonify({'error': 'This account is locked.'}), 403
+        flash('This account is locked. Please contact your administrator.', 'danger')
+        return redirect(url_for('login'))
+
+@app.before_request
+def require_password_change_when_flagged():
+    """A reset employee may sign in only to change their temporary password."""
+    if not getattr(current_user, 'is_authenticated', False) or not getattr(current_user, 'must_change_password', False):
+        return None
+    allowed_endpoints = {'index', 'logout', 'get_user_profile', 'change_password', 'static'}
+    if request.endpoint in allowed_endpoints:
+        return None
+    if _api_or_json_request():
+        return jsonify({'error': 'You must change your password before continuing.'}), 403
+    flash('Please change your temporary password before continuing.', 'warning')
+    return redirect(url_for('index'))
+
+def _copy_json(value):
+    return json.loads(json.dumps(value or {}))
+
+def redact_financial_report_data(report_data):
+    """Employees may edit operations but cannot read or replace survey-fee values."""
+    clean = _copy_json(report_data)
+    clean.pop('fee_breakdown', None)
+    page3 = clean.get('assessment', {}).get('page3_details', {})
+    protected_page3_fields = {
+        'photo_charges', 'fees_subtotal', 'total_before_gst', 'cgst', 'sgst', 'igst',
+        'grand_total', 'apply_gst', 'fee_items', 'include_in_consolidated',
+    }
+    for key in list(page3.keys()):
+        if 'fee' in key.lower() or key in protected_page3_fields:
+            page3.pop(key, None)
+    return clean
+
+def preserve_financial_report_data(incoming, stored):
+    """Keep protected fee values server-side when an employee saves an edited report."""
+    merged = _copy_json(incoming)
+    stored = stored or {}
+    if 'fee_breakdown' in stored:
+        merged['fee_breakdown'] = _copy_json(stored['fee_breakdown'])
+    stored_page3 = stored.get('assessment', {}).get('page3_details', {})
+    merged_page3 = merged.setdefault('assessment', {}).setdefault('page3_details', {})
+    protected_page3_fields = {
+        'photo_charges', 'fees_subtotal', 'total_before_gst', 'cgst', 'sgst', 'igst',
+        'grand_total', 'apply_gst', 'fee_items', 'include_in_consolidated',
+    }
+    for key, value in stored_page3.items():
+        if 'fee' in key.lower() or key in protected_page3_fields:
+            merged_page3[key] = _copy_json(value)
+    return merged
 
 # --- Gemini API Configuration ---
 def _score_model_for_intelligence(name):
@@ -218,6 +343,10 @@ def load_valid_api_key():
     Loads GEMINI_API_KEY from the environment, prioritizing .env.local,
     but falling back to .env if the prioritized key is expired or invalid.
     """
+    # Tests must never make a network call merely by importing the application.
+    if os.getenv('TESTING') or os.getenv('FLASK_TESTING'):
+        return os.getenv('GEMINI_API_KEY')
+
     # 1. Try loading .env.local first
     if os.path.exists('.env.local'):
         load_dotenv('.env.local', override=True)
@@ -943,7 +1072,9 @@ def login():
         
         user_data = sheets_db.get_user_by_username(username)
         
-        if user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
+        if user_data and user_data.get('is_locked', False):
+            flash('This account is locked. Please contact your administrator.', 'danger')
+        elif user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
             user = User(user_data)
             login_user(user, remember=True)
             # SECURITY: Validate 'next' parameter to prevent open redirect (VULN-04)
@@ -952,7 +1083,7 @@ def login():
                 redirect_target = next_page
             else:
                 redirect_target = url_for('index')
-            flash('Login Successful!', 'success')
+            flash('Login Successful! Please change your password if your administrator reset it.', 'success')
             return redirect(redirect_target)
         else:
             flash('Login Unsuccessful. Please check username and password', 'danger')
@@ -969,6 +1100,10 @@ def logout():
 GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
 GOOGLE_OAUTH_SCOPES = ['https://www.googleapis.com/auth/drive.file']
+GMAIL_OAUTH_CLIENT_ID = os.getenv('GMAIL_OAUTH_CLIENT_ID') or GOOGLE_OAUTH_CLIENT_ID
+GMAIL_OAUTH_CLIENT_SECRET = os.getenv('GMAIL_OAUTH_CLIENT_SECRET') or GOOGLE_OAUTH_CLIENT_SECRET
+GMAIL_OAUTH_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+GMAIL_SYNC_LOOKBACK_DAYS = max(1, int(os.getenv('GMAIL_SYNC_LOOKBACK_DAYS', '30')))
 
 @app.route('/auth/google')
 @login_required
@@ -1073,6 +1208,334 @@ def google_auth_disconnect():
     session.pop('google_refresh_token', None)
     session.pop('google_token_expiry', None)
     return jsonify({'success': True, 'message': 'Disconnected from Google Drive'})
+
+
+# --- Gmail OAuth and On-Demand Intimation Sync ---
+def _gmail_redirect_uri():
+    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
+        return url_for('gmail_auth_callback', _external=True)
+    return f"https://{request.host}/auth/gmail/callback"
+
+
+def _gmail_token_cipher():
+    key = os.getenv('GMAIL_TOKEN_ENCRYPTION_KEY')
+    if not key:
+        raise ValueError('GMAIL_TOKEN_ENCRYPTION_KEY is not configured.')
+    try:
+        return Fernet(key.encode('utf-8'))
+    except Exception as exc:
+        raise ValueError('GMAIL_TOKEN_ENCRYPTION_KEY is invalid.') from exc
+
+
+def _encrypt_gmail_token(token_data):
+    return _gmail_token_cipher().encrypt(json.dumps(token_data).encode('utf-8')).decode('utf-8')
+
+
+def _decrypt_gmail_token(encrypted_token):
+    try:
+        return json.loads(_gmail_token_cipher().decrypt(encrypted_token.encode('utf-8')).decode('utf-8'))
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('Stored Gmail authorization is invalid. Reconnect the mailbox.') from exc
+
+
+@app.route('/auth/gmail')
+@login_required
+@admin_required
+def gmail_auth():
+    from flask import session
+    if not GMAIL_OAUTH_CLIENT_ID or not GMAIL_OAUTH_CLIENT_SECRET:
+        return jsonify({'error': 'Gmail OAuth is not configured.'}), 500
+    oauth_state = secrets.token_urlsafe(32)
+    session['gmail_oauth_state'] = oauth_state
+    session['gmail_workspace_admin_id'] = workspace_admin_id_for(current_user)
+    params = {
+        'client_id': GMAIL_OAUTH_CLIENT_ID,
+        'redirect_uri': _gmail_redirect_uri(),
+        'response_type': 'code',
+        'scope': ' '.join(GMAIL_OAUTH_SCOPES),
+        'access_type': 'offline',
+        'prompt': 'consent',
+        'state': oauth_state,
+    }
+    return redirect('https://accounts.google.com/o/oauth2/v2/auth?' + urlencode(params))
+
+
+@app.route('/auth/gmail/callback')
+@login_required
+@admin_required
+def gmail_auth_callback():
+    from flask import session
+    returned_state = request.args.get('state')
+    expected_state = session.pop('gmail_oauth_state', None)
+    workspace_admin_id = session.pop('gmail_workspace_admin_id', None)
+    if not returned_state or returned_state != expected_state or str(workspace_admin_id) != str(workspace_admin_id_for(current_user)):
+        flash('Gmail authorization security verification failed.', 'danger')
+        return redirect(url_for('index'))
+    if request.args.get('error') or not request.args.get('code'):
+        flash('Gmail authorization was cancelled or denied.', 'danger')
+        return redirect(url_for('index'))
+    token_response = requests.post('https://oauth2.googleapis.com/token', data={
+        'client_id': GMAIL_OAUTH_CLIENT_ID,
+        'client_secret': GMAIL_OAUTH_CLIENT_SECRET,
+        'code': request.args['code'],
+        'grant_type': 'authorization_code',
+        'redirect_uri': _gmail_redirect_uri(),
+    }, timeout=20)
+    if token_response.status_code != 200:
+        flash('Gmail authorization token exchange failed.', 'danger')
+        return redirect(url_for('index'))
+    token_data = token_response.json()
+    if not token_data.get('refresh_token'):
+        flash('Gmail authorization did not return a refresh token. Reconnect with consent.', 'danger')
+        return redirect(url_for('index'))
+    mailbox_email = None
+    try:
+        profile = requests.get('https://gmail.googleapis.com/gmail/v1/users/me/profile', headers={
+            'Authorization': f"Bearer {token_data.get('access_token', '')}"
+        }, timeout=20)
+        if profile.ok:
+            mailbox_email = profile.json().get('emailAddress')
+    except requests.RequestException:
+        pass
+    persistent_token = {
+        'refresh_token': token_data['refresh_token'],
+        'token_uri': 'https://oauth2.googleapis.com/token',
+        'client_id': GMAIL_OAUTH_CLIENT_ID,
+        'client_secret': GMAIL_OAUTH_CLIENT_SECRET,
+        'scopes': GMAIL_OAUTH_SCOPES,
+    }
+    try:
+        encrypted_token = _encrypt_gmail_token(persistent_token)
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+        return redirect(url_for('index'))
+    if not sheets_db.save_gmail_integration(workspace_admin_id, encrypted_token, mailbox_email):
+        flash('Could not save the Gmail mailbox connection.', 'danger')
+        return redirect(url_for('index'))
+    flash('Gmail mailbox connected successfully.', 'success')
+    return redirect(url_for('index'))
+
+
+@app.route('/auth/gmail/status')
+@login_required
+def gmail_auth_status():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    integration = sheets_db.get_gmail_integration(workspace_admin_id) if workspace_admin_id else None
+    return jsonify({
+        'connected': bool(integration),
+        'mailbox_email': integration.get('mailbox_email') if integration else None,
+        'can_manage': is_admin_user(current_user),
+        'can_sync': has_user_permission('gmail_sync', current_user),
+    })
+
+
+@app.route('/auth/gmail/disconnect', methods=['POST'])
+@login_required
+@admin_required
+def gmail_auth_disconnect():
+    sheets_db.delete_gmail_integration(workspace_admin_id_for(current_user))
+    return jsonify({'success': True})
+
+
+def _extract_gmail_text(payload):
+    plain_parts, html_parts = [], []
+
+    def collect(part):
+        mime_type = part.get('mimeType', '')
+        body = part.get('body') or {}
+        data = body.get('data')
+        if data and mime_type in {'text/plain', 'text/html'}:
+            try:
+                text = base64.urlsafe_b64decode(data + '=' * (-len(data) % 4)).decode('utf-8', errors='replace')
+                (plain_parts if mime_type == 'text/plain' else html_parts).append(text)
+            except (ValueError, TypeError):
+                pass
+        for child in part.get('parts') or []:
+            collect(child)
+
+    collect(payload or {})
+    if plain_parts:
+        return '\n'.join(plain_parts).strip()
+    html_text = '\n'.join(html_parts)
+    return unescape(re.sub(r'<[^>]+>', ' ', html_text)).strip()
+
+
+def _gmail_headers(payload):
+    headers = {str(item.get('name', '')).lower(): item.get('value', '') for item in (payload or {}).get('headers', [])}
+    sender = parseaddr(headers.get('from', ''))[1].lower()
+    received_at = None
+    try:
+        received_at = parsedate_to_datetime(headers.get('date', ''))
+        if received_at and received_at.tzinfo:
+            received_at = received_at.astimezone().replace(tzinfo=None)
+    except (TypeError, ValueError, IndexError):
+        pass
+    return sender, headers.get('subject', ''), received_at
+
+
+def _parse_claim_intimation_with_gemini(email_text, subject, user):
+    prompt = f"""Extract only the following motor-insurance intimation fields from this email.
+Return strict JSON with exactly these keys: claim_no, vehicle_no, insured_name, policy_no, insurer, date_of_loss.
+Use empty strings for unavailable fields. Do not invent values.
+
+Subject: {subject}
+Email body:
+{email_text[:30000]}
+"""
+    primary, secondary = get_generative_models(user)
+    errors = []
+    for selected_model in (primary, secondary):
+        try:
+            response = selected_model.generate_content(prompt)
+            content = getattr(response, 'text', '') or ''
+            cleaned = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', content.strip(), flags=re.IGNORECASE)
+            parsed = json.loads(cleaned)
+            if not isinstance(parsed, dict):
+                raise ValueError('Model returned a non-object response.')
+            return {key: str(parsed.get(key, '') or '').strip() for key in (
+                'claim_no', 'vehicle_no', 'insured_name', 'policy_no', 'insurer', 'date_of_loss'
+            )}
+        except Exception as exc:
+            errors.append(str(exc))
+    raise ValueError(errors[-1] if errors else 'No model response was available.')
+
+
+def _gmail_service_for_workspace(workspace_admin_id):
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request as GoogleRequest
+    from googleapiclient.discovery import build
+    integration = sheets_db.get_gmail_integration(workspace_admin_id)
+    if not integration:
+        raise ValueError('No Gmail mailbox is connected for this workspace.')
+    token_data = _decrypt_gmail_token(integration.get('encrypted_token', ''))
+    credentials = Credentials(
+        token=None,
+        refresh_token=token_data.get('refresh_token'),
+        token_uri=token_data.get('token_uri'),
+        client_id=token_data.get('client_id'),
+        client_secret=token_data.get('client_secret'),
+        scopes=token_data.get('scopes') or GMAIL_OAUTH_SCOPES,
+    )
+    credentials.refresh(GoogleRequest())
+    return build('gmail', 'v1', credentials=credentials, cache_discovery=False)
+
+
+def _list_unread_gmail_messages(gmail):
+    """Fetch every unread message in the configured lookback window without changing Gmail state."""
+    messages = []
+    page_token = None
+    while True:
+        request_args = {
+            'userId': 'me',
+            'q': f'is:unread newer_than:{GMAIL_SYNC_LOOKBACK_DAYS}d',
+            'maxResults': 500,
+        }
+        if page_token:
+            request_args['pageToken'] = page_token
+        page = gmail.users().messages().list(**request_args).execute()
+        messages.extend(page.get('messages', []))
+        page_token = page.get('nextPageToken')
+        if not page_token:
+            return messages
+
+
+@app.route('/api/gmail/sync', methods=['POST'])
+@login_required
+@gmail_sync_required
+def sync_gmail_intimations():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    data = request.get_json(silent=True) or {}
+    sender_domain = str(data.get('sender_domain', '')).lower().strip().lstrip('@')
+    available_domains = [str(row.get('domain', '')).lower() for row in sheets_db.get_gmail_sender_domains(workspace_admin_id)]
+    if not available_domains:
+        return jsonify({'error': 'Add at least one approved sender domain before syncing Gmail.'}), 400
+    if sender_domain and sender_domain not in available_domains:
+        return jsonify({'error': 'Sender domain is not approved for this workspace.'}), 400
+    try:
+        gmail = _gmail_service_for_workspace(workspace_admin_id)
+        message_summaries = _list_unread_gmail_messages(gmail)
+    except Exception as exc:
+        return jsonify({'error': f'Gmail sync could not start: {exc}'}), 502
+
+    summary = {'created': 0, 'merged': 0, 'skipped': 0, 'failed': 0}
+    for summary_item in message_summaries:
+        message_id = summary_item.get('id')
+        if not message_id:
+            continue
+        if sheets_db.get_gmail_sync_message(message_id):
+            summary['skipped'] += 1
+            continue
+        try:
+            message = gmail.users().messages().get(userId='me', id=message_id, format='full').execute()
+            payload = message.get('payload') or {}
+            sender, subject, received_at = _gmail_headers(payload)
+            actual_sender_domain = sender.rsplit('@', 1)[-1] if '@' in sender else ''
+            if actual_sender_domain not in available_domains or (sender_domain and actual_sender_domain != sender_domain):
+                summary['skipped'] += 1
+                continue
+            email_text = _extract_gmail_text(payload)
+            parsed = _parse_claim_intimation_with_gemini(email_text, subject, current_user)
+            claim_no = parsed.get('claim_no', '')
+            if not claim_no:
+                sheets_db.record_gmail_sync_message(message_id, workspace_admin_id, sender_email=sender,
+                    subject=subject, received_at=received_at, parse_data=parsed,
+                    sync_status='failed', error_message='Claim number was not extracted.')
+                summary['failed'] += 1
+                continue
+            existing = sheets_db.find_workspace_report_by_claim_no(workspace_admin_id, claim_no)
+            if existing:
+                report_data = existing.get('report_data_json') or {}
+                if isinstance(report_data, str):
+                    report_data = json.loads(report_data or '{}')
+                survey = report_data.setdefault('survey_report', {})
+                fields = {
+                    'claim_no': parsed['claim_no'], 'vehicle_regn_no': parsed['vehicle_no'],
+                    'insured': parsed['insured_name'], 'policy_no': parsed['policy_no'],
+                    'insurer': parsed['insurer'], 'date_of_loss': parsed['date_of_loss'],
+                }
+                for key, value in fields.items():
+                    if value and not survey.get(key):
+                        survey[key] = value
+                history = report_data.setdefault('gmail_intimations', [])
+                history.append({'message_id': message_id, 'sender': sender, 'subject': subject,
+                                'received_at': received_at.isoformat() if received_at else None})
+                report_id = sheets_db.save_workspace_report(
+                    current_user.id, workspace_admin_id, report_data, existing_report_id=existing.get('id'),
+                    status=existing.get('status', 'documents_awaited'),
+                    survey_type=existing.get('survey_type', 'final'))
+                summary['merged'] += 1
+            else:
+                survey_type = 'spot' if re.search(r'\b(spot|preliminary)\b', f'{subject}\n{email_text}', re.I) else 'final'
+                prefix = _report_prefix_for_insurer(parsed.get('insurer'))
+                sequence = sheets_db.reserve_report_number(workspace_admin_id, prefix, str(datetime.now().year))
+                if sequence is None:
+                    raise ValueError('Could not reserve a report number.')
+                report_data = {
+                    'survey_report': {
+                        'report_no': f'{prefix}/{datetime.now().year}/{sequence:02d}',
+                        'claim_no': parsed['claim_no'], 'vehicle_regn_no': parsed['vehicle_no'],
+                        'insured': parsed['insured_name'], 'policy_no': parsed['policy_no'],
+                        'insurer': parsed['insurer'], 'date_of_loss': parsed['date_of_loss'],
+                    },
+                    'assessment': {'report_type': 'Spot Report' if survey_type == 'spot' else 'Final Survey Report'},
+                    'photos': {},
+                    'claim_meta': {'status': 'documents_awaited', 'survey_type': survey_type},
+                    'gmail_intimations': [{'message_id': message_id, 'sender': sender, 'subject': subject,
+                                           'received_at': received_at.isoformat() if received_at else None}],
+                }
+                report_id = sheets_db.save_workspace_report(
+                    current_user.id, workspace_admin_id, report_data, status='documents_awaited',
+                    survey_type=survey_type, gmail_message_id=message_id, email_received_date=received_at)
+                if not report_id:
+                    raise ValueError('Could not save the generated report draft.')
+                summary['created'] += 1
+            sheets_db.record_gmail_sync_message(message_id, workspace_admin_id, report_id=report_id,
+                sender_email=sender, subject=subject, received_at=received_at, parse_data=parsed)
+        except Exception as exc:
+            sheets_db.record_gmail_sync_message(message_id, workspace_admin_id,
+                sync_status='failed', error_message=str(exc))
+            summary['failed'] += 1
+    return jsonify(summary)
 
 @app.route('/get_user_upload_url', methods=['POST'])
 @login_required
@@ -1939,8 +2402,138 @@ def get_user_profile():
         "contact_no": user.contact_no,
         "email": user.email,
         "gemini_api_key": user.gemini_api_key,
-        "gemini_model": user.gemini_model
+        "gemini_model": user.gemini_model,
+        "role": user.role,
+        "permissions": user.permissions,
+        "must_change_password": user.must_change_password,
+        "workspace_admin_id": workspace_admin_id_for(user)
     })
+
+
+@app.route('/api/change-password', methods=['POST'])
+@login_required
+def change_password():
+    data = request.get_json() or {}
+    current_password = data.get('current_password', '')
+    new_password = data.get('new_password', '')
+    if len(new_password) < 8:
+        return jsonify({'error': 'New password must be at least 8 characters.'}), 400
+    if not bcrypt.check_password_hash(current_user.password_hash, current_password):
+        return jsonify({'error': 'Current password is incorrect.'}), 403
+    password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
+    if not sheets_db.change_user_password(current_user.id, password_hash):
+        return jsonify({'error': 'Failed to change password.'}), 500
+    current_user.password_hash = password_hash
+    current_user.must_change_password = False
+    return jsonify({'success': True})
+
+
+@app.route('/api/admin/users', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def admin_users():
+    admin_id = workspace_admin_id_for(current_user)
+    if request.method == 'GET':
+        users = sheets_db.list_admin_users(admin_id)
+        safe_users = []
+        for user in users:
+            safe_users.append({
+                'id': user.get('id'), 'username': user.get('username'),
+                'full_name': user.get('full_name'), 'email': user.get('email'),
+                'is_locked': bool(user.get('is_locked')), 'permissions': user.get('permissions') or {},
+                'must_change_password': bool(user.get('must_change_password')),
+            })
+        return jsonify(safe_users)
+
+    data = request.get_json() or {}
+    username = str(data.get('username', '')).strip()
+    password = data.get('temporary_password', '')
+    if not username or len(password) < 8:
+        return jsonify({'error': 'Username and an 8-character temporary password are required.'}), 400
+    if sheets_db.get_user_by_username(username):
+        return jsonify({'error': 'That username already exists.'}), 409
+    requested_permissions = data.get('permissions') or {}
+    permissions = {'gmail_sync': bool(requested_permissions.get('gmail_sync', False))}
+    user_id = sheets_db.create_user({
+        'username': username,
+        'password_hash': bcrypt.generate_password_hash(password).decode('utf-8'),
+        'full_name': str(data.get('full_name', '')).strip(),
+        'email': str(data.get('email', '')).strip(),
+        'qualifications': '', 'designation': 'Surveyor & Loss Assessor', 'license_no': '',
+        'expiry_date': '', 'membership_no': '', 'address_line_1': '', 'address_line_2': '',
+        'address_line_3': '', 'contact_no': '', 'role': 'employee', 'admin_id': admin_id,
+        'permissions': permissions, 'must_change_password': True,
+    })
+    if not user_id:
+        return jsonify({'error': 'Failed to create employee.'}), 500
+    return jsonify({'success': True, 'id': user_id}), 201
+
+
+@app.route('/api/admin/users/<int:user_id>/lock', methods=['POST'])
+@login_required
+@admin_required
+def admin_lock_user(user_id):
+    data = request.get_json(silent=True) or {}
+    managed = sheets_db.get_admin_user(workspace_admin_id_for(current_user), user_id)
+    if not managed:
+        return jsonify({'error': 'Employee not found.'}), 404
+    locked = bool(data['is_locked']) if 'is_locked' in data else not bool(managed.get('is_locked'))
+    if not sheets_db.set_user_locked(workspace_admin_id_for(current_user), user_id, locked):
+        return jsonify({'error': 'Failed to update employee lock state.'}), 500
+    return jsonify({'success': True, 'is_locked': locked})
+
+
+@app.route('/api/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+@admin_required
+def admin_reset_password(user_id):
+    data = request.get_json() or {}
+    temporary_password = data.get('temporary_password', '')
+    if len(temporary_password) < 8:
+        return jsonify({'error': 'Temporary password must be at least 8 characters.'}), 400
+    if not sheets_db.reset_user_password(
+        workspace_admin_id_for(current_user), user_id,
+        bcrypt.generate_password_hash(temporary_password).decode('utf-8')):
+        return jsonify({'error': 'Employee not found or reset failed.'}), 404
+    return jsonify({'success': True})
+
+
+@app.route('/api/admin/users/<int:user_id>/permissions', methods=['POST'])
+@login_required
+@admin_required
+def admin_update_permissions(user_id):
+    data = request.get_json() or {}
+    supplied = data.get('permissions') or {}
+    permissions = {'gmail_sync': bool(supplied.get('gmail_sync', False))}
+    if not sheets_db.update_user_permissions(workspace_admin_id_for(current_user), user_id, permissions):
+        return jsonify({'error': 'Employee not found or permission update failed.'}), 404
+    return jsonify({'success': True, 'permissions': permissions})
+
+
+@app.route('/api/admin/gmail-domains', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def admin_gmail_domains():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if request.method == 'GET':
+        return jsonify(sheets_db.get_gmail_sender_domains(workspace_admin_id))
+    data = request.get_json() or {}
+    domain = str(data.get('domain', '')).lower().strip().lstrip('@')
+    if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*\.[a-z]{2,}', domain):
+        return jsonify({'error': 'Enter a valid sender domain.'}), 400
+    created = sheets_db.add_gmail_sender_domain(workspace_admin_id, domain)
+    if not created:
+        return jsonify({'error': 'Failed to save sender domain.'}), 500
+    return jsonify(created), 201
+
+
+@app.route('/api/admin/gmail-domains/<int:domain_id>', methods=['DELETE'])
+@login_required
+@admin_required
+def admin_delete_gmail_domain(domain_id):
+    if not sheets_db.delete_gmail_sender_domain(workspace_admin_id_for(current_user), domain_id):
+        return jsonify({'error': 'Sender domain not found.'}), 404
+    return jsonify({'success': True})
 
 @app.route('/update_user_profile', methods=['POST'])
 @login_required
@@ -3452,7 +4045,7 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
         print(f"Error generating files: {e}")
         import traceback; traceback.print_exc()
         _fail_task(task_id, f"An unexpected error occurred during file generation: {e}")
-    
+
 
 # --- Download Route ---
 @app.route('/download/<file_type>/<request_id>')
@@ -3464,6 +4057,10 @@ def download_file(file_type, request_id):
         if str(job.get('user_id')) != str(current_user.id):
             abort(403, description="Access denied. You do not own this report.")
     
+    pdf_bytes = None
+    vehicle_no = ''
+    report_no = 'SurveyReport'
+
     # Priority 1: Check in-memory store
     if request_id in generated_data_store:
         data = generated_data_store[request_id]
@@ -3481,8 +4078,6 @@ def download_file(file_type, request_id):
             with open(file_path, 'rb') as f:
                 pdf_bytes = f.read()
             
-            vehicle_no = ''
-            report_no = 'SurveyReport'
             if job and job.get('result_json'):
                 res_data = job['result_json']
                 if isinstance(res_data, str):
@@ -3493,16 +4088,23 @@ def download_file(file_type, request_id):
                     report_no = res_data.get('report_no', 'SurveyReport')
         else:
             # Priority 3: Check if request_id is a saved report_id in database
-            saved_report = sheets_db.get_report_by_id(request_id, current_user.id)
+            workspace_admin_id = workspace_admin_id_for(current_user)
+            if workspace_admin_id:
+                saved_report = sheets_db.get_accessible_report_by_id(
+                    request_id, workspace_admin_id, current_user.id)
+            else:
+                saved_report = sheets_db.get_report_by_id(request_id, current_user.id)
+
             if saved_report:
-                if str(saved_report.get('user_id')) != str(current_user.id):
-                    abort(403, description="Access denied. You do not own this report.")
                 report_data_json = saved_report.get('report_data_json', '{}')
                 if isinstance(report_data_json, str):
                     try: report_data_dict = json.loads(report_data_json)
                     except Exception: report_data_dict = {}
                 else:
                     report_data_dict = report_data_json or {}
+
+                if not is_admin_user(current_user):
+                    report_data_dict = redact_financial_report_data(report_data_dict)
 
                 from modules.pdf import render_report
                 user_snapshot = {
@@ -3525,6 +4127,9 @@ def download_file(file_type, request_id):
                 report_no = survey_info.get('report_no', 'SurveyReport')
             else:
                 abort(404, description="Report PDF file expired or not found.")
+
+    if not pdf_bytes:
+        abort(404, description="Report PDF file expired or not found.")
 
     if vehicle_no:
         filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip()
@@ -3564,9 +4169,41 @@ def save_report():
         # Extract the UUID of the currently-loaded report (if editing an existing one).
         # This ensures we UPDATE the correct row instead of matching by report_no string.
         existing_report_id = data.get('_current_report_id') or None
+        workspace_admin_id = workspace_admin_id_for(current_user)
 
         try:
-            saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
+            existing = None
+            if existing_report_id:
+                existing = (sheets_db.get_accessible_report_by_id(
+                    existing_report_id, workspace_admin_id, current_user.id)
+                    if workspace_admin_id else sheets_db.get_report_by_id(existing_report_id, current_user.id))
+                if not existing:
+                    return jsonify({'error': 'Report not found or access denied.'}), 404
+                previous_data = existing.get('report_data_json', {})
+                if isinstance(previous_data, str):
+                    previous_data = json.loads(previous_data or '{}')
+                if not is_admin_user(current_user):
+                    data = preserve_financial_report_data(data, previous_data)
+
+                # Historical rows stay private to their original owner even after workspace rollout.
+                if existing.get('workspace_admin_id') is None:
+                    saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
+                    if saved_id:
+                        return jsonify({"success": True, "message": f'Report "{report_no}" saved successfully.', "report_id": saved_id})
+                    return jsonify({"error": "Failed to save legacy report."}), 500
+
+            if workspace_admin_id:
+                claim_meta = data.get('claim_meta') or {}
+                status = claim_meta.get('status') or data.get('status') or 'new_appointment'
+                if status not in VALID_CLAIM_STATUSES:
+                    return jsonify({'error': 'Invalid claim status.'}), 400
+                requested_type = (claim_meta.get('survey_type') or data.get('survey_type') or '').lower()
+                survey_type = 'spot' if requested_type == 'spot' or 'spot' in str(data.get('assessment', {}).get('report_type', '')).lower() else 'final'
+                saved_id = sheets_db.save_workspace_report(
+                    current_user.id, workspace_admin_id, data, existing_report_id=existing_report_id,
+                    status=status, survey_type=survey_type)
+            else:
+                saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
             if saved_id:
                 return jsonify({"success": True, "message": f'Report "{report_no}" saved successfully.', "report_id": saved_id})
             else:
@@ -3590,7 +4227,12 @@ def get_saved_reports():
         page = request.args.get('page', 1, type=int)
         page_size = request.args.get('page_size', 50, type=int)
         
-        page_data = sheets_db.get_user_reports_page(current_user.id, search_query, page, page_size)
+        workspace_admin_id = workspace_admin_id_for(current_user)
+        if workspace_admin_id:
+            page_data = sheets_db.get_accessible_reports_page(
+                workspace_admin_id, current_user.id, search_query, page, page_size)
+        else:
+            page_data = sheets_db.get_user_reports_page(current_user.id, search_query, page, page_size)
         reports = page_data.get('items', []) if isinstance(page_data, dict) else []
         
         reports_list = [
@@ -3599,6 +4241,9 @@ def get_saved_reports():
                 'report_no': r.get('report_no'),
                 'insured_name': r.get('insured_name'),
                 'vehicle_no': r.get('vehicle_no'),
+                'claim_no': r.get('claim_no'),
+                'status': r.get('status', 'new_appointment'),
+                'survey_type': r.get('survey_type', 'final'),
                 'saved_at': datetime.fromisoformat(r.get('saved_at')).strftime('%Y-%m-%d %H:%M:%S') if r.get('saved_at') else 'N/A'
             } for r in reports
         ]
@@ -3623,7 +4268,12 @@ def load_report(report_id):
         # OR implement get_report_by_id in sheets_db. 
         # For MVP, filtering user reports is safe enough for small data.
         
-        target_report = sheets_db.get_report_by_id(report_id, current_user.id)
+        workspace_admin_id = workspace_admin_id_for(current_user)
+        if workspace_admin_id:
+            target_report = sheets_db.get_accessible_report_by_id(
+                report_id, workspace_admin_id, current_user.id)
+        else:
+            target_report = sheets_db.get_report_by_id(report_id, current_user.id)
         
         if target_report:
             try:
@@ -3631,12 +4281,127 @@ def load_report(report_id):
             except (json.JSONDecodeError, TypeError, ValueError):
                 # Fallback if json string is malformed or empty
                 report_data = {} 
+            if workspace_admin_id:
+                report_data['claim_meta'] = {
+                    'status': target_report.get('status', 'new_appointment'),
+                    'survey_type': target_report.get('survey_type', 'final'),
+                    'email_received_date': target_report.get('email_received_date'),
+                }
+            if not is_admin_user(current_user):
+                report_data = redact_financial_report_data(report_data)
             return jsonify(report_data)
         else:
             return jsonify({"error": "Report not found or access denied"}), 404
     except Exception as e:
         print(f"Error loading report {report_id}: {e}")
         return jsonify({"error": f"Failed to load report: {e}"}), 500
+
+
+def _report_prefix_for_insurer(insurer_name):
+    insurer = (insurer_name or '').upper()
+    if 'NATIONAL INSURANCE' in insurer:
+        return 'NIC'
+    if 'NEW INDIA' in insurer:
+        return 'NIA'
+    if 'ORIENTAL' in insurer:
+        return 'OIC'
+    if 'UNITED INDIA' in insurer:
+        return 'UIIC'
+    return 'REP'
+
+
+@app.route('/api/dashboard', methods=['GET'])
+@login_required
+def get_dashboard():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id)
+    if not is_admin_user(current_user):
+        for key in ('total_invoiced', 'amount_received', 'outstanding_fees', 'overdue_count'):
+            dashboard.pop(key, None)
+    return jsonify(dashboard)
+
+
+@app.route('/api/claims', methods=['GET', 'POST'])
+@login_required
+def claims_register():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    if request.method == 'GET':
+        status = request.args.get('status') or None
+        month = request.args.get('month') or None
+        insurer = request.args.get('insurer') or None
+        page = request.args.get('page', 1, type=int)
+        page_size = request.args.get('page_size', 50, type=int)
+        query = request.args.get('q', request.args.get('query', ''))
+        return jsonify(sheets_db.get_workspace_reports_page(
+            workspace_admin_id, query, page, page_size, status=status, month=month, insurer=insurer))
+
+    data = request.get_json() or {}
+    claim_no = str(data.get('claim_no', '')).strip()
+    if not claim_no:
+        return jsonify({'error': 'Claim number is required.'}), 400
+    insurer = str(data.get('insurer', '')).strip()
+    prefix = _report_prefix_for_insurer(insurer)
+    sequence = sheets_db.reserve_report_number(workspace_admin_id, prefix, str(datetime.now().year))
+    if sequence is None:
+        return jsonify({'error': 'Failed to reserve a report number.'}), 500
+    survey_type = 'spot' if str(data.get('survey_type', '')).lower() == 'spot' else 'final'
+    report_type = 'Spot Report' if survey_type == 'spot' else 'Final Survey Report'
+    report_data = {
+        'survey_report': {
+            'report_no': f'{prefix}/{datetime.now().year}/{sequence:02d}',
+            'claim_no': claim_no,
+            'vehicle_regn_no': str(data.get('vehicle_no', '')).strip(),
+            'insured': str(data.get('insured_name', '')).strip(),
+            'policy_no': str(data.get('policy_no', '')).strip(),
+            'insurer': insurer,
+            'date_of_loss': str(data.get('date_of_loss', '')).strip(),
+        },
+        'assessment': {'report_type': report_type},
+        'photos': {},
+        'claim_meta': {'status': data.get('status', 'new_appointment'), 'survey_type': survey_type},
+    }
+    status = report_data['claim_meta']['status']
+    if status not in VALID_CLAIM_STATUSES:
+        return jsonify({'error': 'Invalid claim status.'}), 400
+    report_id = sheets_db.save_workspace_report(
+        current_user.id, workspace_admin_id, report_data, status=status, survey_type=survey_type)
+    if not report_id:
+        return jsonify({'error': 'Failed to create claim workspace.'}), 500
+    return jsonify({'success': True, 'report_id': str(report_id), 'report_no': report_data['survey_report']['report_no']}), 201
+
+
+@app.route('/api/claims/<report_id>', methods=['PATCH'])
+@login_required
+def update_claim(report_id):
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    data = request.get_json() or {}
+    status = data.get('status')
+    if status not in VALID_CLAIM_STATUSES:
+        return jsonify({'error': 'Invalid claim status.'}), 400
+    if not sheets_db.update_workspace_report_status(report_id, workspace_admin_id, current_user.id, status):
+        return jsonify({'error': 'Claim not found or access denied.'}), 404
+    return jsonify({'success': True, 'status': status})
+
+
+@app.route('/api/reports/monthly', methods=['GET'])
+@login_required
+def monthly_reports():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    month = request.args.get('month') or datetime.now().strftime('%Y-%m')
+    insurer = request.args.get('insurer') or None
+    claims = sheets_db.get_workspace_reports_page(workspace_admin_id, '', 1, 100, month=month, insurer=insurer)
+    response = {'month': month, 'claims': claims}
+    if is_admin_user(current_user):
+        response['fees'] = sheets_db.get_workspace_fee_bills(workspace_admin_id, month=month, insurer=insurer)
+    return jsonify(response)
 
 @app.route('/api/generate_report_no', methods=['POST'])
 @login_required
@@ -3658,7 +4423,14 @@ def generate_report_no():
         
         current_year = str(datetime.now().year)
         
-        # Fetch user's existing reports to find the highest sequence number for this prefix and year
+        workspace_admin_id = workspace_admin_id_for(current_user)
+        if workspace_admin_id:
+            sequence = sheets_db.reserve_report_number(workspace_admin_id, prefix, current_year)
+            if sequence is None:
+                return jsonify({'error': 'Failed to reserve report number'}), 500
+            return jsonify({"report_no": f"{prefix}/{current_year}/{sequence:02d}"}), 200
+
+        # Legacy user-scoped numbering remains available for preserved records.
         reports_metadata = sheets_db.get_user_reports_metadata_only(current_user.id)
         
         max_seq = 0
@@ -3703,7 +4475,10 @@ def delete_report(report_id):
         # Deletion in Sheets is risky (shifting rows). 
         # For MVP, we will NOT delete to prevent data corruption.
         # Alternatively, we could clear the row content or mark as "deleted" column.
-        if sheets_db.delete_report(report_id, current_user.id):
+        workspace_admin_id = workspace_admin_id_for(current_user)
+        success = (sheets_db.delete_accessible_report(report_id, workspace_admin_id, current_user.id)
+                   if workspace_admin_id else sheets_db.delete_report(report_id, current_user.id))
+        if success:
              return jsonify({"message": "Report deleted successfully"}), 200
         else:
              return jsonify({"error": "Failed to delete report or not found"}), 404
@@ -3715,6 +4490,7 @@ def delete_report(report_id):
 @app.route('/download_consolidated_csv', methods=['GET'])
 @app.route('/download_gst_excel', methods=['GET'])
 @login_required
+@admin_required
 def download_consolidated_csv():
     try:
         from_date_str = request.args.get('from_date')
@@ -3731,8 +4507,22 @@ def download_consolidated_csv():
         except ValueError:
             return jsonify({"error": "Invalid date format. Please use YYYY-MM-DD."}), 400
 
-        all_reports = sheets_db.get_user_reports(current_user.id)
-        all_fee_bills = sheets_db.get_user_fee_bills(current_user.id)
+        workspace_admin_id = workspace_admin_id_for(current_user)
+        if workspace_admin_id:
+            all_reports = sheets_db.get_workspace_reports_page(workspace_admin_id, '', 1, 100).get('items', [])
+            # Export needs full report JSON, so resolve each workspace row before processing it.
+            all_reports = [sheets_db.get_workspace_report_by_id(row.get('id'), workspace_admin_id) for row in all_reports]
+            all_reports = [row for row in all_reports if row]
+            legacy_reports = sheets_db.get_user_reports(current_user.id)
+            report_ids = {str(row.get('id')) for row in all_reports}
+            all_reports.extend(row for row in legacy_reports if str(row.get('id')) not in report_ids)
+            all_fee_bills = sheets_db.get_workspace_fee_bills(workspace_admin_id)
+            legacy_fees = sheets_db.get_user_fee_bills(current_user.id)
+            fee_ids = {str(row.get('id')) for row in all_fee_bills}
+            all_fee_bills.extend(row for row in legacy_fees if str(row.get('id')) not in fee_ids)
+        else:
+            all_reports = sheets_db.get_user_reports(current_user.id)
+            all_fee_bills = sheets_db.get_user_fee_bills(current_user.id)
 
         export_rows = []
 
@@ -3859,31 +4649,114 @@ def download_consolidated_csv():
         return jsonify({"error": f"Failed to generate consolidated report: {e}"}), 500
 
 
+@app.route('/download_fees_excel', methods=['GET'])
+@login_required
+@admin_required
+def download_fees_excel():
+    """Monthly CA-friendly Survey Fee Register as a real XLSX workbook."""
+    month = request.args.get('month') or datetime.now().strftime('%Y-%m')
+    insurer = request.args.get('insurer') or None
+    if not re.fullmatch(r'\d{4}-\d{2}', month):
+        return jsonify({'error': 'month must use YYYY-MM format.'}), 400
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        bills = sheets_db.get_workspace_fee_bills(workspace_admin_id, month=month, insurer=insurer)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = 'Survey Fee Register'
+        headers = [
+            'Invoice Date', 'Invoice No', 'Insurer', 'Insured Name', 'Claim No', 'Policy No',
+            'Vehicle No', 'Professional Fee', 'GST %', 'GST Amount', 'Gross Invoice Value',
+            'TDS Amount', 'Cash Received', 'Outstanding Amount', 'Due Date', 'Payment Status', 'Invoice Status'
+        ]
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='1F4E78')
+        for bill in bills:
+            sheet.append([
+                bill.get('invoice_date', ''), bill.get('invoice_no', ''), bill.get('insurer_name', ''),
+                bill.get('insured_name', ''), bill.get('claim_no', ''), bill.get('policy_no', ''),
+                bill.get('vehicle_no', ''), float(bill.get('professional_fee', bill.get('taxable_amount', 0)) or 0),
+                float(bill.get('gst_pc', 0) or 0), float(bill.get('gst_amount', 0) or 0),
+                float(bill.get('gross_invoice_value', bill.get('total_amount', 0)) or 0),
+                float(bill.get('tds_amount', 0) or 0), float(bill.get('amount_received', 0) or 0),
+                float(bill.get('outstanding_amount', 0) or 0), bill.get('due_date', ''),
+                bill.get('payment_status', ''), bill.get('invoice_status', ''),
+            ])
+        for column in range(1, len(headers) + 1):
+            sheet.column_dimensions[get_column_letter(column)].width = min(28, max(13, len(headers[column - 1]) + 2))
+        for row in sheet.iter_rows(min_row=2, min_col=8, max_col=14):
+            for cell in row:
+                cell.number_format = '#,##0.00'
+        output = io.BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        suffix = f'_{insurer}' if insurer else ''
+        safe_suffix = re.sub(r'[^A-Za-z0-9_-]+', '_', suffix)
+        return send_file(output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True, download_name=f'Survey_Fee_Register_{month}{safe_suffix}.xlsx')
+    except Exception as exc:
+        print(f'Error generating fee XLSX: {exc}')
+        return jsonify({'error': 'Failed to generate Survey Fee Register.'}), 500
+
+
 @app.route('/api/next_invoice_no', methods=['GET'])
 @login_required
+@admin_required
 def get_next_invoice_no():
     insurer = request.args.get('insurer', 'Company')
     date_val = request.args.get('date')
-    inv_no = sheets_db.get_next_invoice_number(current_user.id, insurer, date_val)
+    inv_no = sheets_db.get_next_invoice_number(
+        current_user.id, insurer, date_val, workspace_admin_id=workspace_admin_id_for(current_user))
     return jsonify({"invoice_no": inv_no})
+
+
+@app.route('/api/fees_summary', methods=['GET'])
+@login_required
+@admin_required
+def fees_summary():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id)
+    return jsonify({key: dashboard[key] for key in ('total_invoiced', 'amount_received', 'outstanding_fees', 'overdue_count')})
 
 
 @app.route('/api/fee_bills', methods=['GET', 'POST'])
 @login_required
+@admin_required
 def handle_fee_bills():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
     if request.method == 'POST':
         data = request.get_json() or {}
-        bill_id = sheets_db.save_fee_bill(current_user.id, data)
+        report_id = data.get('report_id')
+        if report_id and not sheets_db.get_workspace_report_by_id(report_id, workspace_admin_id):
+            return jsonify({'error': 'The selected report does not belong to this workspace.'}), 404
+        bill_id = sheets_db.save_fee_bill(current_user.id, data, workspace_admin_id=workspace_admin_id)
+        if not bill_id:
+            return jsonify({'error': 'Could not save the fee bill.'}), 500
         return jsonify({"success": True, "id": bill_id}), 201
 
-    bills = sheets_db.get_user_fee_bills(current_user.id)
+    bills = sheets_db.get_workspace_fee_bills(
+        workspace_admin_id, month=request.args.get('month') or None,
+        insurer=request.args.get('insurer') or None, report_id=request.args.get('report_id') or None)
     return jsonify(bills), 200
 
 
 @app.route('/api/fee_bills/<bill_id>', methods=['DELETE'])
 @login_required
+@admin_required
 def delete_fee_bill_route(bill_id):
-    success = sheets_db.delete_fee_bill(bill_id, current_user.id)
+    success = sheets_db.delete_fee_bill(bill_id, current_user.id, workspace_admin_id=workspace_admin_id_for(current_user))
     if success:
         return jsonify({"success": True}), 200
     return jsonify({"error": "Failed to delete fee bill"}), 400
@@ -3891,6 +4764,7 @@ def delete_fee_bill_route(bill_id):
 
 @app.route('/generate_fee_pdf', methods=['POST'])
 @login_required
+@admin_required
 def generate_fee_pdf_route():
     try:
         data = request.get_json() or {}
@@ -3957,7 +4831,10 @@ def create_default_user():
             'address_line_2': os.getenv('USER_ADDRESS_2', ''),
             'address_line_3': os.getenv('USER_ADDRESS_3', ''),
             'contact_no': os.getenv('USER_CONTACT_NO', ''),
-            'email': os.getenv('USER_EMAIL', '')
+            'email': os.getenv('USER_EMAIL', ''),
+            'role': 'admin',
+            'admin_id': None,
+            'permissions': {},
         }
         sheets_db.create_user(user_data)
         print(f"Default user '{username}' created in Sheets.")
@@ -3992,6 +4869,51 @@ def create_user_cli(username, password, name):
         print(f"User '{username}' created successfully.")
     else:
         print(f"Error: User '{username}' already exists.")
+
+
+@app.cli.command('promote-admin')
+@click.argument('username')
+def promote_admin_cli(username):
+    """Promote an existing account to an admin workspace owner."""
+    if sheets_db.promote_user_to_admin(username):
+        print(f"User '{username}' is now an admin workspace owner.")
+    else:
+        print(f"Error: Could not promote '{username}'. Confirm that the user exists.")
+
+
+@app.cli.command('create-employee')
+@click.argument('username')
+@click.argument('temporary_password')
+@click.option('--admin', 'admin_username', required=True, help='Username of the owning admin workspace.')
+@click.option('--name', default='Employee')
+@click.option('--email', default='')
+@click.option('--gmail-sync', is_flag=True, default=False, help='Allow this employee to sync the shared Gmail mailbox.')
+def create_employee_cli(username, temporary_password, admin_username, name, email, gmail_sync):
+    """Create an employee in an existing admin-owned workspace."""
+    if len(temporary_password) < 8:
+        print('Error: temporary_password must contain at least 8 characters.')
+        return
+    if sheets_db.get_user_by_username(username):
+        print(f"Error: User '{username}' already exists.")
+        return
+    admin = sheets_db.get_user_by_username(admin_username)
+    if not admin or admin.get('role') != 'admin':
+        print(f"Error: '{admin_username}' is not an admin workspace owner.")
+        return
+    user_id = sheets_db.create_user({
+        'username': username,
+        'password_hash': bcrypt.generate_password_hash(temporary_password).decode('utf-8'),
+        'full_name': name,
+        'qualifications': '', 'designation': 'Surveyor & Loss Assessor', 'license_no': '',
+        'expiry_date': '', 'membership_no': '', 'address_line_1': '', 'address_line_2': '',
+        'address_line_3': '', 'contact_no': '', 'email': email,
+        'role': 'employee', 'admin_id': admin.get('id'),
+        'permissions': {'gmail_sync': bool(gmail_sync)}, 'must_change_password': True,
+    })
+    if user_id:
+        print(f"Employee '{username}' created in {admin_username}'s workspace.")
+    else:
+        print(f"Error: Could not create employee '{username}'.")
 
 # --- App Factory Pattern ---
 def create_app(db_adapter=None, task_executor=None):

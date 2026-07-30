@@ -80,6 +80,91 @@
             </div>
         </div>
 
+        <!-- Shared Motor Survey Management Workspace -->
+        <section id="operations-workspace" class="card hidden">
+            <div class="workspace-heading">
+                <div>
+                    <h2><i class="fas fa-chart-line"></i> Motor Survey Dashboard</h2>
+                    <p id="workspace-role-label" class="workspace-subtitle"></p>
+                </div>
+                <div id="gmail-sync-toolbar" class="workspace-toolbar hidden">
+                    <select id="gmail-domain-filter" aria-label="Sender domain filter">
+                        <option value="">All approved senders</option>
+                    </select>
+                    <button type="button" id="sync-gmail-button" class="btn btn-info btn-sm">
+                        <i class="fas fa-sync-alt"></i> Sync Gmail Intimations
+                    </button>
+                </div>
+            </div>
+            <div id="dashboard-cards" class="dashboard-grid"></div>
+            <div id="financial-dashboard" class="dashboard-grid hidden" style="margin-top: 0.75rem;"></div>
+        </section>
+
+        <section id="claim-register-section" class="card hidden">
+            <div class="workspace-heading">
+                <div>
+                    <h2><i class="fas fa-clipboard-list"></i> Claim Register</h2>
+                    <p class="workspace-subtitle">Shared operational register for your survey team.</p>
+                </div>
+                <button type="button" id="toggle-new-claim" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Claim</button>
+            </div>
+            <form id="new-claim-form" class="compact-form hidden">
+                <input id="claim-input-no" type="text" placeholder="Claim No. *" required>
+                <input id="claim-input-insured" type="text" placeholder="Insured name">
+                <input id="claim-input-vehicle" type="text" placeholder="Vehicle no.">
+                <input id="claim-input-policy" type="text" placeholder="Policy no.">
+                <input id="claim-input-insurer" type="text" placeholder="Insurer">
+                <input id="claim-input-loss-date" type="date" title="Date of loss">
+                <select id="claim-input-type"><option value="final">Final report</option><option value="spot">Spot report</option></select>
+                <select id="claim-input-status">
+                    <option value="new_appointment">New appointment</option>
+                    <option value="inspection_pending">Inspection pending</option>
+                    <option value="documents_awaited">Documents awaited</option>
+                    <option value="report_under_preparation">Report under preparation</option>
+                    <option value="report_submitted">Report submitted</option>
+                    <option value="closed">Closed</option>
+                </select>
+                <button type="submit" class="btn btn-primary btn-sm">Create</button>
+            </form>
+            <div class="register-filters">
+                <input id="claim-search-input" type="text" placeholder="Search claim, policy, vehicle, insured…">
+                <select id="claim-status-filter"><option value="">All statuses</option><option value="new_appointment">New appointment</option><option value="inspection_pending">Inspection pending</option><option value="documents_awaited">Documents awaited</option><option value="report_under_preparation">Report under preparation</option><option value="report_submitted">Report submitted</option><option value="closed">Closed</option></select>
+                <input id="claim-month-filter" type="month">
+                <input id="claim-insurer-filter" type="text" placeholder="Insurer">
+                <button type="button" id="claim-filter-button" class="btn btn-secondary btn-sm">Filter</button>
+            </div>
+            <div class="table-container"><table class="register-table"><thead><tr><th>Claim No.</th><th>Vehicle</th><th>Insured</th><th>Insurer</th><th>Status</th><th>Type</th><th>Actions</th></tr></thead><tbody id="claim-register-tbody"><tr><td colspan="7">Loading claim register…</td></tr></tbody></table></div>
+            <div class="register-pagination" aria-label="Claim register pagination">
+                <button type="button" id="claim-page-prev" class="btn btn-secondary btn-sm">Previous</button>
+                <span id="claim-page-label" class="workspace-subtitle" aria-live="polite">Page 1</span>
+                <button type="button" id="claim-page-next" class="btn btn-secondary btn-sm">Next</button>
+            </div>
+        </section>
+
+        <section id="fee-register-section" class="card hidden">
+            <div class="workspace-heading">
+                <div><h2><i class="fas fa-receipt"></i> Survey Fee Register</h2><p class="workspace-subtitle">Financial information is visible to administrators only.</p></div>
+                <div class="workspace-toolbar"><input id="fee-month-filter" type="month"><button type="button" id="download-fees-excel" class="btn btn-info btn-sm"><i class="fas fa-file-excel"></i> CA Excel</button></div>
+            </div>
+            <form id="fee-register-form" class="compact-form fee-form">
+                <select id="fee-report-id"><option value="">Linked report (optional)</option></select>
+                <input id="fee-insurer" type="text" placeholder="Insurer *" required>
+                <input id="fee-insured" type="text" placeholder="Insured name *" required>
+                <input id="fee-invoice-no" type="text" placeholder="Invoice no.">
+                <input id="fee-invoice-date" type="date" title="Invoice date">
+                <input id="fee-professional" type="number" min="0" step="0.01" placeholder="Professional fee">
+                <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" placeholder="GST %">
+                <input id="fee-tds" type="number" min="0" step="0.01" placeholder="TDS amount">
+                <input id="fee-received" type="number" min="0" step="0.01" placeholder="Cash received">
+                <input id="fee-outstanding" type="number" min="0" step="0.01" placeholder="Outstanding (manual)">
+                <input id="fee-due-date" type="date" title="Due date">
+                <select id="fee-payment-status"><option value="unpaid">Unpaid</option><option value="partially_paid">Partially paid</option><option value="paid">Paid</option></select>
+                <select id="fee-invoice-status"><option value="draft">Draft</option><option value="issued">Issued</option><option value="cancelled">Cancelled</option></select>
+                <button type="submit" class="btn btn-primary btn-sm">Save fee</button>
+            </form>
+            <div class="table-container"><table class="register-table"><thead><tr><th>Invoice</th><th>Claim</th><th>Insurer</th><th>Professional</th><th>GST</th><th>Gross</th><th>Received</th><th>Outstanding</th><th>Status</th></tr></thead><tbody id="fee-register-tbody"><tr><td colspan="9">Loading fee register…</td></tr></tbody></table></div>
+        </section>
+
 
         <!-- Upload/Load Section -->
         <div id="upload-section" class="card">
@@ -144,7 +229,7 @@
                     <div id="loading-spinner" class="hidden" style="text-align: center; margin-top: 1rem;">
                         <i class="fas fa-spinner fa-spin fa-2x"></i>
                     </div>
-                    <div class="consolidated-csv-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                    <div id="financial-export-section" class="consolidated-csv-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
                         <h4><i class="fas fa-file-csv"></i> Download Consolidated Report (GST CSV)</h4>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">Select a date range to download consolidated 10-column GST fee report (includes survey reports and fee bills).</p>
                         <div class="date-range-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; align-items: end; margin-bottom: 1rem;">
@@ -1418,6 +1503,38 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                     <small style="display: block; margin-top: 0.25rem; font-size: 0.8rem; color: var(--text-secondary);">
                         Models are dynamically fetched and ranked based on intelligence capabilities.
                     </small>
+                </div>
+                <div class="field-group" id="change-password-section" style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <label style="font-weight: 600;"><i class="fas fa-key"></i> Change Password</label>
+                    <div class="two-col-grid">
+                        <input id="current-password-input" type="password" placeholder="Current password">
+                        <input id="new-password-input" type="password" placeholder="New password (8+ characters)">
+                    </div>
+                    <button type="button" id="change-password-button" class="btn btn-secondary btn-sm" style="margin-top: 0.75rem;">Update password</button>
+                </div>
+                <div id="admin-settings-section" class="hidden" style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <h3><i class="fas fa-user-shield"></i> Admin Workspace Controls</h3>
+                    <div class="field-group">
+                        <label>Shared Gmail Intimation Mailbox</label>
+                        <div class="workspace-toolbar"><span id="gmail-connection-status" class="workspace-subtitle">Checking connection…</span><button type="button" id="gmail-connect-button" class="btn btn-secondary btn-sm">Connect Gmail</button></div>
+                    </div>
+                    <div class="field-group">
+                        <label>Approved Gmail Sender Domains</label>
+                        <div class="workspace-toolbar"><input id="new-gmail-domain" type="text" placeholder="insurer.example"><button type="button" id="add-gmail-domain" class="btn btn-secondary btn-sm">Add domain</button></div>
+                        <div id="gmail-domain-list" class="chip-list"></div>
+                    </div>
+                    <div class="field-group">
+                        <label>Employee Accounts</label>
+                        <div class="compact-form employee-form">
+                            <input id="employee-username" type="text" placeholder="Username">
+                            <input id="employee-name" type="text" placeholder="Full name">
+                            <input id="employee-email" type="text" placeholder="Email">
+                            <input id="employee-password" type="password" placeholder="Temporary password (8+)">
+                            <label class="checkbox-label"><input id="employee-gmail-permission" type="checkbox"> Allow Gmail sync</label>
+                            <button type="button" id="create-employee-button" class="btn btn-primary btn-sm">Create employee</button>
+                        </div>
+                        <div class="table-container"><table class="register-table"><thead><tr><th>User</th><th>Status</th><th>Gmail sync</th><th>Actions</th></tr></thead><tbody id="employee-list-tbody"><tr><td colspan="4">Loading employees…</td></tr></tbody></table></div>
+                    </div>
                 </div>
                 <div class="field-group" style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
                     <label style="font-weight: 600;"><i class="fas fa-signature"></i> Digital Seal & Signature Image</label>

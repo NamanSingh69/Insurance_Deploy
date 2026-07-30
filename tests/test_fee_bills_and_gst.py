@@ -49,7 +49,7 @@ def test_standalone_fee_bill_crud(authenticated_client, mock_sheets_db):
     }
     
     mock_sheets_db.save_fee_bill.return_value = "fb-12345"
-    mock_sheets_db.get_user_fee_bills.return_value = [fee_bill_payload]
+    mock_sheets_db.get_workspace_fee_bills.return_value = [fee_bill_payload]
 
     # Save
     res_save = authenticated_client.post('/api/fee_bills', json=fee_bill_payload)

@@ -50,7 +50,7 @@ class TestGetSavedReportsEndpoint:
     
     def test_get_reports_empty(self, authenticated_client, mock_sheets_db):
         """Test getting reports when none exist."""
-        mock_sheets_db.get_user_reports_page.return_value = {
+        mock_sheets_db.get_accessible_reports_page.return_value = {
             'items': [],
             'page': 1,
             'page_size': 50,
@@ -76,7 +76,7 @@ class TestGetSavedReportsEndpoint:
                 'saved_at': '2026-01-29T12:00:00'
             }
         ]
-        mock_sheets_db.get_user_reports_page.return_value = {
+        mock_sheets_db.get_accessible_reports_page.return_value = {
             'items': mock_reports,
             'page': 1,
             'page_size': 50,
@@ -94,7 +94,7 @@ class TestGetSavedReportsEndpoint:
     
     def test_get_reports_with_search(self, authenticated_client, mock_sheets_db):
         """Test searching reports."""
-        mock_sheets_db.get_user_reports_page.return_value = {
+        mock_sheets_db.get_accessible_reports_page.return_value = {
             'items': [{'id': '1', 'report_no': 'SR-001', 'insured_name': 'john'}],
             'page': 1,
             'page_size': 50,
@@ -148,7 +148,7 @@ class TestDeleteReportEndpoint:
     
     def test_delete_report_not_found(self, authenticated_client, mock_sheets_db):
         # Mock deletion failing (False)
-        mock_sheets_db.delete_report.return_value = False
+        mock_sheets_db.delete_accessible_report.return_value = False
         
         with patch('app.bcrypt.check_password_hash', return_value=True):
             response = authenticated_client.delete('/delete_report/nonexistent-id', json={'password': 'any_password'})

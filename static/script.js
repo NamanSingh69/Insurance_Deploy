@@ -78,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentAssessmentData = null;
     let currentReportId = null; // To track if we loaded a report (display row ID)
     let currentDbReportId = null; // The Postgres UUID of the currently-loaded report (for safe updates)
+    let currentClaimMeta = { status: 'new_appointment', survey_type: 'final' };
 
     // Step indicators
     const stepUpload = document.getElementById('step-upload');
@@ -267,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (page3FeeItemsTbody) page3FeeItemsTbody.innerHTML = '';
         currentReportId = loadedReportId;
         currentDbReportId = loadedDbReportId; // Store the Postgres UUID for safe updates
+        currentClaimMeta = combinedData?.claim_meta || { status: 'new_appointment', survey_type: 'final' };
 
         // --- FIX: Reset Global Photo State ---
         uploadedPhotos.first_inspection = [];
@@ -1897,6 +1899,7 @@ document.addEventListener('DOMContentLoaded', () => {
             survey_report: surveyData,
             assessment: assessmentDataForGeneration,
             photos: photosData,
+            claim_meta: currentClaimMeta,
             include_signature: document.getElementById('include-signature-checkbox') ? document.getElementById('include-signature-checkbox').checked : true
         };
     }
@@ -2485,9 +2488,360 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // --- Motor Survey Management Workspace ---
+    const workspaceState = { profile: null, claims: [], claimsPage: 1, claimsPageSize: 25, claimsTotal: 0 };
+    const claimStatusLabels = {
+        new_appointment: 'New appointment', inspection_pending: 'Inspection pending',
+        documents_awaited: 'Documents awaited', report_under_preparation: 'Report under preparation',
+        report_submitted: 'Report submitted', closed: 'Closed'
+    };
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    }
+
+    function formatMoney(value) {
+        return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value || 0));
+    }
+
+    async function initMotorSurveyWorkspace() {
+        try {
+            const res = await fetch('/get_user_profile');
+            if (!res.ok) return;
+            workspaceState.profile = await res.json();
+            const workspaceId = workspaceState.profile.workspace_admin_id;
+            if (!workspaceId) return;
+            document.getElementById('operations-workspace')?.classList.remove('hidden');
+            document.getElementById('claim-register-section')?.classList.remove('hidden');
+            const label = document.getElementById('workspace-role-label');
+            if (label) label.textContent = workspaceState.profile.role === 'admin' ? 'Administrator workspace' : 'Shared operational workspace';
+            const isAdmin = workspaceState.profile.role === 'admin';
+            if (isAdmin) {
+                document.getElementById('fee-register-section')?.classList.remove('hidden');
+                document.getElementById('financial-export-section')?.classList.remove('hidden');
+                document.getElementById('page3-details-wrapper')?.classList.remove('hidden');
+            } else {
+                document.getElementById('financial-export-section')?.classList.add('hidden');
+                document.getElementById('page3-details-wrapper')?.classList.add('hidden');
+            }
+            await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), workspaceState.profile.role === 'admin' ? fetchFees() : Promise.resolve()]);
+        } catch (error) {
+            console.error('Could not initialize motor survey workspace:', error);
+        }
+    }
+
+    async function fetchDashboard() {
+        const res = await fetch('/api/dashboard');
+        if (!res.ok) return;
+        const data = await res.json();
+        const operational = [
+            ['Total claims', data.total_claims], ['Pending claims', data.pending_claims], ['Completed claims', data.completed_claims],
+            ['New appointment', data.new_appointment], ['Inspection pending', data.inspection_pending],
+            ['Documents awaited', data.documents_awaited], ['Report under preparation', data.report_under_preparation],
+            ['Submitted', data.report_submitted], ['Closed', data.closed]
+        ];
+        const cards = document.getElementById('dashboard-cards');
+        if (cards) cards.innerHTML = operational.map(([label, value]) => `<div class="metric-card"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${Number(value || 0)}</span></div>`).join('');
+        const financial = document.getElementById('financial-dashboard');
+        if (financial && workspaceState.profile?.role === 'admin') {
+            financial.classList.remove('hidden');
+            financial.innerHTML = [
+                ['Total invoiced', formatMoney(data.total_invoiced)], ['Cash received', formatMoney(data.amount_received)],
+                ['Outstanding fees', formatMoney(data.outstanding_fees)], ['Overdue invoices', Number(data.overdue_count || 0)]
+            ].map(([label, value]) => `<div class="metric-card financial"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(value)}</span></div>`).join('');
+        }
+    }
+
+    function claimFilterQuery() {
+        const pairs = new URLSearchParams();
+        const mappings = [['q', 'claim-search-input'], ['status', 'claim-status-filter'], ['month', 'claim-month-filter'], ['insurer', 'claim-insurer-filter']];
+        mappings.forEach(([key, id]) => {
+            const value = document.getElementById(id)?.value.trim();
+            if (value) pairs.set(key, value);
+        });
+        return pairs.toString();
+    }
+
+    async function fetchClaims() {
+        const tbody = document.getElementById('claim-register-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="7"><i class="fas fa-spinner fa-spin"></i> Loading claim register…</td></tr>';
+        try {
+            const query = new URLSearchParams(claimFilterQuery());
+            query.set('page', String(workspaceState.claimsPage));
+            query.set('page_size', String(workspaceState.claimsPageSize));
+            const res = await fetch(`/api/claims?${query.toString()}`);
+            if (!res.ok) throw new Error('Could not load claims');
+            const data = await res.json();
+            workspaceState.claims = data.items || [];
+            workspaceState.claimsPage = Number(data.page || workspaceState.claimsPage);
+            workspaceState.claimsPageSize = Number(data.page_size || workspaceState.claimsPageSize);
+            workspaceState.claimsTotal = Number(data.total || 0);
+            renderClaimRows(workspaceState.claims);
+            populateFeeReportOptions();
+            updateClaimPagination();
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="7">Could not load claim register.</td></tr>';
+            console.error(error);
+        }
+    }
+
+    function updateClaimPagination() {
+        const totalPages = Math.max(1, Math.ceil(workspaceState.claimsTotal / workspaceState.claimsPageSize));
+        const label = document.getElementById('claim-page-label');
+        if (label) label.textContent = `Page ${workspaceState.claimsPage} of ${totalPages} (${workspaceState.claimsTotal} claims)`;
+        const prev = document.getElementById('claim-page-prev');
+        const next = document.getElementById('claim-page-next');
+        if (prev) prev.disabled = workspaceState.claimsPage <= 1;
+        if (next) next.disabled = workspaceState.claimsPage >= totalPages;
+    }
+
+    function renderClaimRows(claims) {
+        const tbody = document.getElementById('claim-register-tbody');
+        if (!tbody) return;
+        if (!claims.length) {
+            tbody.innerHTML = '<tr><td colspan="7">No claims found.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = claims.map(claim => {
+            const current = claim.status || 'new_appointment';
+            const options = Object.entries(claimStatusLabels).map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+            return `<tr><td>${escapeHtml(claim.claim_no || '—')}</td><td>${escapeHtml(claim.vehicle_no || '—')}</td><td>${escapeHtml(claim.insured_name || '—')}</td><td>${escapeHtml(claim.insurer || '')}</td><td><select class="claim-status-select" data-report-id="${escapeHtml(claim.id)}">${options}</select></td><td>${escapeHtml(claim.survey_type || 'final')}</td><td><button type="button" class="btn btn-primary btn-sm open-workspace-report" data-report-id="${escapeHtml(claim.id)}">Open</button></td></tr>`;
+        }).join('');
+        tbody.querySelectorAll('.claim-status-select').forEach(select => select.addEventListener('change', async event => {
+            const res = await fetch(`/api/claims/${encodeURIComponent(event.target.dataset.reportId)}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: event.target.value })
+            });
+            if (!res.ok) {
+                showStatus('Could not update claim status.', 'error', true);
+                fetchClaims();
+            } else {
+                fetchDashboard();
+            }
+        }));
+        tbody.querySelectorAll('.open-workspace-report').forEach(button => button.addEventListener('click', () => loadWorkspaceReport(button.dataset.reportId)));
+    }
+
+    async function loadWorkspaceReport(reportId) {
+        showStatus('Loading report workspace…', 'processing');
+        try {
+            const res = await fetch(`/load_report/${encodeURIComponent(reportId)}`);
+            if (!res.ok) throw new Error('Report could not be loaded');
+            displayPreview(await res.json(), reportId, reportId);
+            document.getElementById('preview-section')?.scrollIntoView({ behavior: 'smooth' });
+        } catch (error) {
+            showStatus(error.message, 'error', true);
+        }
+    }
+
+    function populateFeeReportOptions() {
+        const select = document.getElementById('fee-report-id');
+        if (!select) return;
+        const selected = select.value;
+        select.innerHTML = '<option value="">Linked report (optional)</option>' + workspaceState.claims.map(claim => `<option value="${escapeHtml(claim.id)}">${escapeHtml(claim.report_no || claim.claim_no || claim.id)} — ${escapeHtml(claim.claim_no || '')}</option>`).join('');
+        select.value = selected;
+    }
+
+    async function createClaim(event) {
+        event.preventDefault();
+        const payload = {
+            claim_no: document.getElementById('claim-input-no')?.value.trim(),
+            insured_name: document.getElementById('claim-input-insured')?.value.trim(),
+            vehicle_no: document.getElementById('claim-input-vehicle')?.value.trim(),
+            policy_no: document.getElementById('claim-input-policy')?.value.trim(),
+            insurer: document.getElementById('claim-input-insurer')?.value.trim(),
+            date_of_loss: document.getElementById('claim-input-loss-date')?.value,
+            survey_type: document.getElementById('claim-input-type')?.value,
+            status: document.getElementById('claim-input-status')?.value
+        };
+        try {
+            const res = await fetch('/api/claims', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Could not create claim');
+            document.getElementById('new-claim-form')?.reset();
+            document.getElementById('new-claim-form')?.classList.add('hidden');
+            workspaceState.claimsPage = 1;
+            showStatus(`Claim workspace ${result.report_no} created.`, 'success', true);
+            await Promise.all([fetchClaims(), fetchDashboard()]);
+        } catch (error) { showStatus(error.message, 'error', true); }
+    }
+
+    async function fetchFees() {
+        const tbody = document.getElementById('fee-register-tbody');
+        if (!tbody || workspaceState.profile?.role !== 'admin') return;
+        try {
+            const month = document.getElementById('fee-month-filter')?.value;
+            const res = await fetch(`/api/fee_bills${month ? `?month=${encodeURIComponent(month)}` : ''}`);
+            if (!res.ok) throw new Error('Could not load fees');
+            const bills = await res.json();
+            if (!bills.length) {
+                tbody.innerHTML = '<tr><td colspan="9">No fee register rows found.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = bills.map(bill => `<tr><td>${escapeHtml(bill.invoice_no || '—')}</td><td>${escapeHtml(bill.claim_no || '—')}</td><td>${escapeHtml(bill.insurer_name || '')}</td><td>${formatMoney(bill.professional_fee ?? bill.taxable_amount)}</td><td>${formatMoney(bill.gst_amount)}</td><td>${formatMoney(bill.gross_invoice_value ?? bill.total_amount)}</td><td>${formatMoney(bill.amount_received)}</td><td>${formatMoney(bill.outstanding_amount)}</td><td>${escapeHtml(bill.payment_status || '')}</td></tr>`).join('');
+        } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
+    }
+
+    async function saveFee(event) {
+        event.preventDefault();
+        const reportId = document.getElementById('fee-report-id')?.value;
+        const report = workspaceState.claims.find(item => item.id === reportId) || {};
+        const professional = Number(document.getElementById('fee-professional')?.value || 0);
+        const gstPc = Number(document.getElementById('fee-gst-pc')?.value || 0);
+        const gstAmount = professional * gstPc / 100;
+        const payload = {
+            report_id: reportId || null, insurer_name: document.getElementById('fee-insurer')?.value.trim(),
+            insured_name: document.getElementById('fee-insured')?.value.trim(), invoice_no: document.getElementById('fee-invoice-no')?.value.trim(),
+            invoice_date: document.getElementById('fee-invoice-date')?.value, professional_fee: professional, taxable_amount: professional,
+            gst_pc: gstPc, gst_amount: gstAmount, gross_invoice_value: professional + gstAmount, total_amount: professional + gstAmount,
+            tds_amount: Number(document.getElementById('fee-tds')?.value || 0), amount_received: Number(document.getElementById('fee-received')?.value || 0),
+            outstanding_amount: Number(document.getElementById('fee-outstanding')?.value || 0), due_date: document.getElementById('fee-due-date')?.value || null,
+            payment_status: document.getElementById('fee-payment-status')?.value, invoice_status: document.getElementById('fee-invoice-status')?.value,
+            claim_no: report.claim_no || '', vehicle_no: report.vehicle_no || '', policy_no: report.policy_no || ''
+        };
+        try {
+            const res = await fetch('/api/fee_bills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Could not save fee');
+            document.getElementById('fee-register-form')?.reset();
+            document.getElementById('fee-gst-pc').value = '18';
+            showStatus('Fee register saved.', 'success', true);
+            await Promise.all([fetchFees(), fetchDashboard()]);
+        } catch (error) { showStatus(error.message, 'error', true); }
+    }
+
+    async function initGmailControls() {
+        const statusRes = await fetch('/auth/gmail/status');
+        if (!statusRes.ok) return;
+        const status = await statusRes.json();
+        const toolbar = document.getElementById('gmail-sync-toolbar');
+        if (toolbar && status.can_sync) toolbar.classList.remove('hidden');
+        if (workspaceState.profile?.role === 'admin') await loadGmailDomains();
+    }
+
+    async function loadGmailDomains() {
+        const res = await fetch('/api/admin/gmail-domains');
+        if (!res.ok) return [];
+        const domains = await res.json();
+        const filter = document.getElementById('gmail-domain-filter');
+        if (filter) filter.innerHTML = '<option value="">All approved senders</option>' + domains.map(item => `<option value="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</option>`).join('');
+        const list = document.getElementById('gmail-domain-list');
+        if (list) {
+            list.innerHTML = domains.map(item => `<span class="chip">${escapeHtml(item.domain)} <button type="button" class="delete-gmail-domain" data-domain-id="${item.id}" aria-label="Delete ${escapeHtml(item.domain)}">×</button></span>`).join('') || '<span class="workspace-subtitle">No approved domains configured.</span>';
+            list.querySelectorAll('.delete-gmail-domain').forEach(button => button.addEventListener('click', async () => {
+                await fetch(`/api/admin/gmail-domains/${button.dataset.domainId}`, { method: 'DELETE' });
+                loadGmailDomains();
+            }));
+        }
+        return domains;
+    }
+
+    async function syncGmail() {
+        const button = document.getElementById('sync-gmail-button');
+        if (button) { button.disabled = true; button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing…'; }
+        try {
+            const res = await fetch('/api/gmail/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender_domain: document.getElementById('gmail-domain-filter')?.value || '' }) });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Gmail sync failed');
+            showStatus(`Gmail sync: ${result.created} created, ${result.merged} merged, ${result.skipped} skipped, ${result.failed} failed.`, result.failed ? 'error' : 'success', true);
+            await Promise.all([fetchDashboard(), fetchClaims(), fetchFees()]);
+        } catch (error) { showStatus(error.message, 'error', true); }
+        finally { if (button) { button.disabled = false; button.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Gmail Intimations'; } }
+    }
+
+    async function loadAdminUsers() {
+        const tbody = document.getElementById('employee-list-tbody');
+        if (!tbody || workspaceState.profile?.role !== 'admin') return;
+        const res = await fetch('/api/admin/users');
+        if (!res.ok) { tbody.innerHTML = '<tr><td colspan="4">Could not load employees.</td></tr>'; return; }
+        const users = await res.json();
+        if (!users.length) { tbody.innerHTML = '<tr><td colspan="4">No employees yet.</td></tr>'; return; }
+        tbody.innerHTML = users.map(user => `<tr><td>${escapeHtml(user.full_name || user.username)}<br><small>${escapeHtml(user.username)}</small></td><td>${user.is_locked ? 'Locked' : 'Active'}</td><td><input type="checkbox" class="employee-gmail-toggle" data-user-id="${user.id}" ${user.permissions?.gmail_sync ? 'checked' : ''}></td><td><button type="button" class="btn btn-secondary btn-sm employee-lock" data-user-id="${user.id}" data-locked="${user.is_locked}">${user.is_locked ? 'Unlock' : 'Lock'}</button> <button type="button" class="btn btn-secondary btn-sm employee-reset" data-user-id="${user.id}">Reset password</button></td></tr>`).join('');
+        tbody.querySelectorAll('.employee-gmail-toggle').forEach(control => control.addEventListener('change', () => updateEmployeePermission(control.dataset.userId, control.checked)));
+        tbody.querySelectorAll('.employee-lock').forEach(button => button.addEventListener('click', () => lockEmployee(button.dataset.userId, button.dataset.locked !== 'true')));
+        tbody.querySelectorAll('.employee-reset').forEach(button => button.addEventListener('click', () => resetEmployeePassword(button.dataset.userId)));
+    }
+
+    async function updateEmployeePermission(userId, gmailSync) {
+        await fetch(`/api/admin/users/${userId}/permissions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: { gmail_sync: gmailSync } }) });
+    }
+    async function lockEmployee(userId, isLocked) {
+        await fetch(`/api/admin/users/${userId}/lock`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_locked: isLocked }) });
+        loadAdminUsers();
+    }
+    async function resetEmployeePassword(userId) {
+        const password = prompt('Enter a new temporary password (8+ characters):');
+        if (!password) return;
+        const res = await fetch(`/api/admin/users/${userId}/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ temporary_password: password }) });
+        showStatus(res.ok ? 'Temporary password reset.' : 'Could not reset password.', res.ok ? 'success' : 'error', true);
+    }
+
+    async function refreshAdminSettings(profile) {
+        const section = document.getElementById('admin-settings-section');
+        if (!section) return;
+        if (profile?.role !== 'admin') { section.classList.add('hidden'); return; }
+        section.classList.remove('hidden');
+        const gmail = await fetch('/auth/gmail/status').then(res => res.ok ? res.json() : null);
+        const status = document.getElementById('gmail-connection-status');
+        const connect = document.getElementById('gmail-connect-button');
+        if (status && connect) {
+            status.textContent = gmail?.connected ? `Connected: ${gmail.mailbox_email || 'shared mailbox'}` : 'No Gmail mailbox connected';
+            connect.textContent = gmail?.connected ? 'Disconnect Gmail' : 'Connect Gmail';
+            connect.onclick = async () => {
+                if (gmail?.connected) { await fetch('/auth/gmail/disconnect', { method: 'POST' }); refreshAdminSettings(profile); }
+                else window.location.href = '/auth/gmail';
+            };
+        }
+        await Promise.all([loadGmailDomains(), loadAdminUsers()]);
+    }
+
+    function bindMotorWorkspaceEvents() {
+        document.getElementById('toggle-new-claim')?.addEventListener('click', () => document.getElementById('new-claim-form')?.classList.toggle('hidden'));
+        document.getElementById('new-claim-form')?.addEventListener('submit', createClaim);
+        document.getElementById('claim-filter-button')?.addEventListener('click', () => { workspaceState.claimsPage = 1; fetchClaims(); });
+        document.getElementById('claim-page-prev')?.addEventListener('click', () => {
+            if (workspaceState.claimsPage > 1) { workspaceState.claimsPage -= 1; fetchClaims(); }
+        });
+        document.getElementById('claim-page-next')?.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(workspaceState.claimsTotal / workspaceState.claimsPageSize));
+            if (workspaceState.claimsPage < totalPages) { workspaceState.claimsPage += 1; fetchClaims(); }
+        });
+        document.getElementById('sync-gmail-button')?.addEventListener('click', syncGmail);
+        document.getElementById('fee-register-form')?.addEventListener('submit', saveFee);
+        document.getElementById('fee-month-filter')?.addEventListener('change', fetchFees);
+        document.getElementById('download-fees-excel')?.addEventListener('click', () => {
+            const month = document.getElementById('fee-month-filter')?.value || new Date().toISOString().slice(0, 7);
+            window.location.href = `/download_fees_excel?month=${encodeURIComponent(month)}`;
+        });
+        document.getElementById('add-gmail-domain')?.addEventListener('click', async () => {
+            const input = document.getElementById('new-gmail-domain');
+            const domain = input?.value.trim();
+            if (!domain) return;
+            const res = await fetch('/api/admin/gmail-domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) });
+            if (res.ok) { input.value = ''; loadGmailDomains(); } else showStatus('Could not add sender domain.', 'error', true);
+        });
+        document.getElementById('create-employee-button')?.addEventListener('click', async () => {
+            const payload = { username: document.getElementById('employee-username')?.value.trim(), full_name: document.getElementById('employee-name')?.value.trim(), email: document.getElementById('employee-email')?.value.trim(), temporary_password: document.getElementById('employee-password')?.value, permissions: { gmail_sync: document.getElementById('employee-gmail-permission')?.checked } };
+            const res = await fetch('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await res.json();
+            if (res.ok) { showStatus('Employee created.', 'success', true); ['employee-username','employee-name','employee-email','employee-password'].forEach(id => { const input = document.getElementById(id); if (input) input.value = ''; }); loadAdminUsers(); }
+            else showStatus(result.error || 'Could not create employee.', 'error', true);
+        });
+        document.getElementById('change-password-button')?.addEventListener('click', async () => {
+            const current_password = document.getElementById('current-password-input')?.value || '';
+            const new_password = document.getElementById('new-password-input')?.value || '';
+            const res = await fetch('/api/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current_password, new_password }) });
+            const result = await res.json();
+            if (res.ok) { showStatus('Password updated.', 'success', true); document.getElementById('current-password-input').value = ''; document.getElementById('new-password-input').value = ''; }
+            else showStatus(result.error || 'Could not update password.', 'error', true);
+        });
+    }
+
     // --- Initial Load ---
     updateSteps('upload');
     fetchSavedReports();
+    bindMotorWorkspaceEvents();
+    initMotorSurveyWorkspace();
 
     if (downloadConsolidatedCsvButton) {
         downloadConsolidatedCsvButton.addEventListener('click', handleConsolidatedCsvDownload);
@@ -2579,6 +2933,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     profileModal.classList.remove('hidden');
                     // Populate models dropdown
                     await loadAvailableModels(data.gemini_api_key, data.gemini_model);
+                    await refreshAdminSettings(data);
                 } else {
                     alert("Failed to load profile settings.");
                 }

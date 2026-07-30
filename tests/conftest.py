@@ -46,6 +46,40 @@ def mock_sheets_db():
         'page_size': 50,
         'total': 0
     })
+    mock_db.get_workspace_reports_page = MagicMock(return_value={
+        'items': [], 'page': 1, 'page_size': 50, 'total': 0
+    })
+    mock_db.get_accessible_reports_page = MagicMock(return_value={
+        'items': [], 'page': 1, 'page_size': 50, 'total': 0
+    })
+    mock_db.get_workspace_report_by_id = MagicMock(return_value=None)
+    mock_db.get_accessible_report_by_id = MagicMock(return_value=None)
+    mock_db.find_workspace_report_by_claim_no = MagicMock(return_value=None)
+    mock_db.reserve_report_number = MagicMock(return_value=1)
+    mock_db.save_workspace_report = MagicMock(return_value='workspace-report-id')
+    mock_db.update_workspace_report_status = MagicMock(return_value=True)
+    mock_db.delete_workspace_report = MagicMock(return_value=True)
+    mock_db.get_workspace_dashboard = MagicMock(return_value={
+        'total_claims': 0, 'pending_claims': 0, 'completed_claims': 0,
+        'new_appointment': 0, 'inspection_pending': 0, 'documents_awaited': 0,
+        'report_under_preparation': 0, 'report_submitted': 0, 'closed': 0,
+        'total_invoiced': 0, 'amount_received': 0, 'outstanding_fees': 0, 'overdue_count': 0,
+    })
+    mock_db.get_workspace_fee_bills = MagicMock(return_value=[])
+    mock_db.get_gmail_sender_domains = MagicMock(return_value=[])
+    mock_db.get_gmail_integration = MagicMock(return_value=None)
+    mock_db.get_gmail_sync_message = MagicMock(return_value=None)
+    mock_db.record_gmail_sync_message = MagicMock(return_value=True)
+    mock_db.save_gmail_integration = MagicMock(return_value=True)
+    mock_db.delete_gmail_integration = MagicMock(return_value=True)
+    mock_db.get_admin_user = MagicMock(return_value=None)
+    mock_db.list_admin_users = MagicMock(return_value=[])
+    mock_db.set_user_locked = MagicMock(return_value=True)
+    mock_db.reset_user_password = MagicMock(return_value=True)
+    mock_db.update_user_permissions = MagicMock(return_value=True)
+    mock_db.change_user_password = MagicMock(return_value=True)
+    mock_db.create_user = MagicMock(return_value=2)
+    mock_db.save_fee_bill = MagicMock(return_value='fee-bill-id')
     mock_db.get_job_by_request_id = MagicMock(return_value=None)
     mock_db.delete_report = MagicMock(return_value=True)
     mock_db.upload_image_to_drive = MagicMock(return_value={
@@ -90,7 +124,12 @@ def mock_user():
         'address_line_2': 'Address 2',
         'address_line_3': 'City, State',
         'contact_no': '9876543210',
-        'email': 'test@example.com'
+        'email': 'test@example.com',
+        'role': 'admin',
+        'admin_id': None,
+        'is_locked': False,
+        'permissions': {},
+        'must_change_password': False,
     }
 
 

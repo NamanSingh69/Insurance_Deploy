@@ -1,76 +1,75 @@
-#!/bin/bash
-# verify_deployment.sh - VPS Deployment Verification Script
-# To be executed directly on the Hostinger VPS.
+#!/usr/bin/env bash
+# Run directly on the VPS after deployment. Credentials are read from the shell,
+# never embedded in this repository.
 
-set -e
+set -euo pipefail
 
-# ANSI Color Codes
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${YELLOW}=== Starting Hostinger VPS Deployment Verification ===${NC}"
-
-# Helper function to check service status
 check_service() {
     local service_name=$1
-    echo -n "Checking $service_name service... "
+    printf 'Checking %s service... ' "$service_name"
     if systemctl is-active --quiet "$service_name"; then
-        echo -e "${GREEN}ACTIVE${NC}"
+        printf '%b\n' "${GREEN}ACTIVE${NC}"
     else
-        echo -e "${RED}INACTIVE/FAILED${NC}"
-        echo -e "${YELLOW}Last 10 logs for $service_name:${NC}"
+        printf '%b\n' "${RED}INACTIVE/FAILED${NC}"
         sudo journalctl -u "$service_name" -n 10 --no-pager
         exit 1
     fi
 }
 
-# 1. Check Essential Services
-check_service "postgresql"
-check_service "nginx"
-check_service "insurance"
-check_service "insurance-worker"
+printf '%b\n' "${YELLOW}=== Motor Survey deployment verification ===${NC}"
+check_service postgresql
+check_service nginx
+check_service insurance
 
-# 2. Verify Nginx Configuration
-echo -n "Verifying Nginx configuration syntax... "
-if sudo nginx -t &>/dev/null; then
-    echo -e "${GREEN}OK${NC}"
+printf 'Verifying Nginx configuration syntax... '
+if sudo nginx -t >/dev/null 2>&1; then
+    printf '%b\n' "${GREEN}OK${NC}"
 else
-    echo -e "${RED}SYNTAX ERROR${NC}"
+    printf '%b\n' "${RED}SYNTAX ERROR${NC}"
     sudo nginx -t
     exit 1
 fi
 
-# 3. Verify PostgreSQL Connection and Schema Migrations
-echo -n "Checking PostgreSQL local connection and schema migrations... "
-if sudo PGPASSWORD='surveyorportal@2026' psql -U insurance_user -d insurance_db -h 127.0.0.1 -c "SELECT version_id, dirty FROM schema_migrations ORDER BY version_id DESC LIMIT 1;" &>/dev/null; then
-    echo -e "${GREEN}CONNECTED${NC}"
-    # Print migration status
-    sudo PGPASSWORD='surveyorportal@2026' psql -U insurance_user -d insurance_db -h 127.0.0.1 -c "SELECT version_id, dirty FROM schema_migrations;"
+if [[ -z "${PGPASSWORD:-}" ]]; then
+    printf '%b\n' "${RED}PGPASSWORD is required for the database check. Export it from the protected production environment and retry.${NC}"
+    exit 2
+fi
+
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_NAME="${DB_NAME:-insurance_db}"
+DB_USER="${DB_USER:-insurance_user}"
+printf 'Checking PostgreSQL connection and schema migrations... '
+if PGPASSWORD="$PGPASSWORD" psql -X -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
+    -c 'SELECT version, applied_at FROM schema_migrations ORDER BY version;' >/dev/null; then
+    printf '%b\n' "${GREEN}CONNECTED${NC}"
+    PGPASSWORD="$PGPASSWORD" psql -X -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" \
+        -c 'SELECT version, applied_at FROM schema_migrations ORDER BY version;'
 else
-    echo -e "${RED}CONNECTION FAILED${NC}"
+    printf '%b\n' "${RED}CONNECTION OR MIGRATION CHECK FAILED${NC}"
     exit 1
 fi
 
-# 4. Verify Local App HTTP Bindings (Gunicorn)
-echo -n "Testing Gunicorn local HTTP port 8000... "
-GUNICORN_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/login || echo "000")
-if [ "$GUNICORN_CODE" -eq 200 ] || [ "$GUNICORN_CODE" -eq 302 ]; then
-    echo -e "${GREEN}OK (HTTP $GUNICORN_CODE)${NC}"
+printf 'Testing Gunicorn local HTTP port 8000... '
+GUNICORN_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/login || true)"
+if [[ "$GUNICORN_CODE" == '200' || "$GUNICORN_CODE" == '302' ]]; then
+    printf '%b\n' "${GREEN}OK (HTTP ${GUNICORN_CODE})${NC}"
 else
-    echo -e "${RED}FAILED (HTTP $GUNICORN_CODE)${NC}"
+    printf '%b\n' "${RED}FAILED (HTTP ${GUNICORN_CODE})${NC}"
     exit 1
 fi
 
-# 5. Verify Nginx HTTP Reverse Proxy Binding
-echo -n "Testing Nginx local reverse proxy port 80... "
-NGINX_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: skinsurance.tech" http://127.0.0.1/login || echo "000")
-if [ "$NGINX_CODE" -eq 200 ] || [ "$NGINX_CODE" -eq 302 ]; then
-    echo -e "${GREEN}OK (HTTP $NGINX_CODE)${NC}"
+printf 'Testing Nginx local reverse proxy port 80... '
+NGINX_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/login || true)"
+if [[ "$NGINX_CODE" == '200' || "$NGINX_CODE" == '302' ]]; then
+    printf '%b\n' "${GREEN}OK (HTTP ${NGINX_CODE})${NC}"
 else
-    echo -e "${RED}FAILED (HTTP $NGINX_CODE)${NC}"
+    printf '%b\n' "${RED}FAILED (HTTP ${NGINX_CODE})${NC}"
     exit 1
 fi
 
-echo -e "\n${GREEN}=== Verification Complete! All systems operational. ===${NC}"
+printf '%b\n' "${GREEN}=== Verification complete: all checks passed. ===${NC}"
