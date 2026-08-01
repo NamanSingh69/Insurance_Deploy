@@ -50,3 +50,29 @@ class TestDownloadFileEndpoint:
         assert status_res2.status_code == 200
         json_data2 = status_res2.get_json()
         assert json_data2['has_signature'] is True
+
+    def test_download_consolidated_csv_new_columns(self, authenticated_client, mock_sheets_db, monkeypatch):
+        """Test download consolidated CSV contains Insurer Company Name and Assigned Date columns."""
+        monkeypatch.setattr('app.is_admin_user', lambda u: True)
+        mock_sheets_db.get_workspace_reports_page.return_value = {
+            'items': [{
+                'id': 1,
+                'saved_at': '2026-08-01T10:00:00',
+                'report_data_json': '{"survey_report": {"insured": "John Doe", "insurer": "National Insurance", "policy_no": "POL123", "claim_no": "CLM456", "vehicle_regn_no": "WB01A1234", "report_no": "REP001", "report_date": "2026-08-01"}}'
+            }]
+        }
+        mock_sheets_db.get_workspace_report_by_id.return_value = {
+            'id': 1,
+            'saved_at': '2026-08-01T10:00:00',
+            'report_data_json': '{"survey_report": {"insured": "John Doe", "insurer": "National Insurance", "policy_no": "POL123", "claim_no": "CLM456", "vehicle_regn_no": "WB01A1234", "report_no": "REP001", "report_date": "2026-08-01"}}'
+        }
+        mock_sheets_db.get_user_reports.return_value = []
+        mock_sheets_db.get_workspace_fee_bills.return_value = []
+        mock_sheets_db.get_user_fee_bills.return_value = []
+
+        response = authenticated_client.get('/download_consolidated_csv?from_date=2026-08-01&to_date=2026-08-02')
+        assert response.status_code == 200
+        csv_text = response.data.decode('utf-8')
+        headers = csv_text.splitlines()[0].split(',')
+        assert "Insurer Company Name" in headers
+        assert "Assigned Date" in headers

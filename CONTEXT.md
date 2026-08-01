@@ -87,3 +87,16 @@ Create backups outside the web root and protect them with filesystem permissions
 - Systemd unit: `/etc/systemd/system/insurance.service`
 - Nginx site: `/etc/nginx/sites-available/skinsurance`
 - Production environment file: `/var/www/insurance-app/.env` (mode `600`, outside source control)
+
+## Architecture & Feature Decisions
+
+- **Survey Fee PDF Extraction**: Uploaded policy or RC PDFs extract key fields (Insurer, Insured, Vehicle No, Policy No) directly into the live Survey Fee Register form fields for visual review, allowing the user to enter professional fees manually before saving.
+- **Dashboard Drill-down**: Clicking any dashboard metric card switches to the Claim Register tab with status filters pre-applied. Clicking "Documents Awaited" opens a dedicated missing-documents checklist modal for granular document tracking.
+- **Dashboard Date Range Filter**: A quick-select dropdown ('1 Month' default, '3 Months', '1 Year', 'All Time') dynamically updates all operational and financial metrics.
+- **Consolidated CSV Export**: Includes 'Insurer Company Name' (positioned next to Insured Name) and 'Assigned Date' (positioned next to Invoice Date).
+- **Automated Daily Backup**: Background daily backup to Google Drive with an Admin Settings button to download backup snapshots on demand.
+
+
+
+
+

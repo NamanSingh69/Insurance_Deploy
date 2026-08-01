@@ -127,7 +127,7 @@ class TestConsolidatedCSVDownload:
         
         assert response.status_code == 200
         assert 'text/csv' in response.headers['Content-Type']
-        assert b"Insured Name,Policy number" in response.data
+        assert b"Insured Name,Insurer Company Name,Policy number" in response.data
         
     def test_download_csv_with_data(self, authenticated_client, mock_sheets_db):
         """Test CSV download with reports."""

@@ -1121,8 +1121,8 @@ class PostgresDB:
             print(f"Error deleting accessible report: {e}")
             return False
 
-    def get_workspace_dashboard(self, workspace_admin_id):
-        """Return operational counters and financial aggregates for a workspace."""
+    def get_workspace_dashboard(self, workspace_admin_id, date_range=None):
+        """Return operational counters and financial aggregates for a workspace with optional date range filter."""
         default = {'total_claims': 0, 'pending_claims': 0, 'completed_claims': 0,
                    'new_appointment': 0, 'inspection_pending': 0, 'documents_awaited': 0,
                    'report_under_preparation': 0, 'report_submitted': 0, 'closed': 0,
@@ -1130,24 +1130,46 @@ class PostgresDB:
                    'overdue_count': 0}
         if not self.conn: self.connect()
         if not self.conn: return default
+
+        days_map = {'1m': 30, '3m': 90, '1y': 365}
+        days = days_map.get(date_range)
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat() if days else None
+
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT status, COUNT(*) AS count FROM reports
-                    WHERE workspace_admin_id = %s GROUP BY status;
-                """, (workspace_admin_id,))
+                if cutoff:
+                    cur.execute("""
+                        SELECT status, COUNT(*) AS count FROM reports
+                        WHERE workspace_admin_id = %s AND saved_at >= %s GROUP BY status;
+                    """, (workspace_admin_id, cutoff))
+                else:
+                    cur.execute("""
+                        SELECT status, COUNT(*) AS count FROM reports
+                        WHERE workspace_admin_id = %s GROUP BY status;
+                    """, (workspace_admin_id,))
                 for row in cur.fetchall():
                     default[row['status']] = int(row['count'])
                     default['total_claims'] += int(row['count'])
                 default['completed_claims'] = default['report_submitted'] + default['closed']
                 default['pending_claims'] = default['total_claims'] - default['completed_claims']
-                cur.execute("""
-                    SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
-                           COALESCE(SUM(amount_received), 0) AS amount_received,
-                           COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
-                           COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
-                    FROM fee_bills WHERE workspace_admin_id = %s;
-                """, (workspace_admin_id,))
+
+                if cutoff:
+                    cutoff_date = (datetime.now() - timedelta(days=days)).date()
+                    cur.execute("""
+                        SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
+                               COALESCE(SUM(amount_received), 0) AS amount_received,
+                               COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
+                               COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
+                        FROM fee_bills WHERE workspace_admin_id = %s AND invoice_date >= %s;
+                    """, (workspace_admin_id, cutoff_date))
+                else:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
+                               COALESCE(SUM(amount_received), 0) AS amount_received,
+                               COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
+                               COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
+                        FROM fee_bills WHERE workspace_admin_id = %s;
+                    """, (workspace_admin_id,))
                 fees = cur.fetchone() or {}
                 for key in ('total_invoiced', 'amount_received', 'outstanding_fees'):
                     default[key] = float(fees.get(key) or 0)
@@ -1156,6 +1178,7 @@ class PostgresDB:
         except Exception as e:
             print(f"Error fetching dashboard: {e}")
             return default
+
 
     # --- Gmail Workspace Integration ---
     def get_gmail_integration(self, workspace_admin_id):

@@ -1852,6 +1852,47 @@ def upload_report_to_drive():
     else:
         return jsonify({'error': 'Failed to upload report to Google Drive. Check server logs.'}), 500
 
+@app.route('/api/extract_fee_pdf', methods=['POST'])
+@login_required
+def extract_fee_pdf():
+    """Extract billing fields (Insurer, Insured Name, Vehicle No, Policy No) from uploaded PDF for Survey Fee Register."""
+    if 'pdf_file' not in request.files and 'fee_pdf_file' not in request.files:
+        return jsonify({'error': 'No PDF file uploaded'}), 400
+
+    file_obj = request.files.get('pdf_file') or request.files.get('fee_pdf_file')
+    if not file_obj or file_obj.filename == '':
+        return jsonify({'error': 'No PDF file selected'}), 400
+
+    try:
+        content = file_obj.read()
+        pdf_part = {'mime_type': file_obj.mimetype or 'application/pdf', 'data': content}
+        api_key = getattr(current_user, 'gemini_api_key', None) or os.getenv("GEMINI_API_KEY")
+        user_model = getattr(current_user, 'gemini_model', None)
+
+        from modules.gemini import execute_gemini_task
+        extracted_result = execute_gemini_task(
+            api_key=api_key,
+            pdf_part=pdf_part,
+            user_model=user_model,
+            is_invoice=True
+        )
+
+        survey = extracted_result.get('survey_report') or extracted_result.get('extracted') or {}
+        extracted = {
+            'insurer': survey.get('insurer') or survey.get('insurance_company') or '',
+            'insured': survey.get('insured') or survey.get('insured_name') or '',
+            'vehicle_no': survey.get('vehicle_regn_no') or survey.get('vehicle_no') or '',
+            'policy_no': survey.get('policy_no') or '',
+            'claim_no': survey.get('claim_no') or '',
+            'report_no': survey.get('report_no') or '',
+            'invoice_date': survey.get('report_date') or datetime.now().strftime('%Y-%m-%d')
+        }
+        return jsonify({'success': True, 'extracted': extracted})
+    except Exception as e:
+        print(f"Error extracting fee PDF: {e}")
+        return jsonify({'error': f'Failed to process PDF: {e}'}), 500
+
+
 @app.route('/process_pdf', methods=['POST'])
 @login_required
 def process_pdf():
@@ -2496,6 +2537,44 @@ def admin_reset_password(user_id):
         bcrypt.generate_password_hash(temporary_password).decode('utf-8')):
         return jsonify({'error': 'Employee not found or reset failed.'}), 404
     return jsonify({'success': True})
+
+
+@app.route('/api/admin/backup/download', methods=['GET'])
+@login_required
+@admin_required
+def admin_download_backup():
+    """Generate and return a downloadable JSON database snapshot for Admin disaster recovery."""
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+
+    try:
+        reports_page = sheets_db.get_workspace_reports_page(workspace_admin_id, '', 1, 1000)
+        reports = reports_page.get('items', []) if isinstance(reports_page, dict) else []
+        fee_bills = sheets_db.get_workspace_fee_bills(workspace_admin_id) or []
+
+        backup_payload = {
+            'backup_timestamp': datetime.now().isoformat(),
+            'workspace_admin_id': workspace_admin_id,
+            'reports_count': len(reports),
+            'fee_bills_count': len(fee_bills),
+            'reports': reports,
+            'fee_bills': fee_bills
+        }
+
+        backup_json = json.dumps(backup_payload, indent=2, default=str)
+        filename = f"Database_Backup_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.json"
+
+        return send_file(
+            io.BytesIO(backup_json.encode('utf-8')),
+            mimetype='application/json',
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print(f"Error generating admin backup: {e}")
+        return jsonify({'error': f'Failed to generate database backup: {e}'}), 500
+
 
 
 @app.route('/api/admin/users/<int:user_id>/permissions', methods=['POST'])
@@ -4316,11 +4395,13 @@ def get_dashboard():
     workspace_admin_id = workspace_admin_id_for(current_user)
     if not workspace_admin_id:
         return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
-    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id)
+    date_range = request.args.get('range') or None
+    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id, date_range=date_range)
     if not is_admin_user(current_user):
         for key in ('total_invoiced', 'amount_received', 'outstanding_fees', 'overdue_count'):
             dashboard.pop(key, None)
     return jsonify(dashboard)
+
 
 
 @app.route('/api/claims', methods=['GET', 'POST'])
@@ -4558,11 +4639,13 @@ def download_consolidated_csv():
                 export_rows.append({
                     "date_obj": saved_at,
                     "insured_name": survey_data.get('insured', 'N/A'),
+                    "insurer_name": survey_data.get('insurer', 'N/A'),
                     "policy_no": survey_data.get('policy_no', 'N/A'),
                     "claim_no": survey_data.get('claim_no', 'N/A'),
                     "vehicle_no": survey_data.get('vehicle_regn_no', 'N/A'),
                     "invoice_no": survey_data.get('report_no', 'N/A'),
                     "invoice_date": survey_data.get('report_date', saved_at.strftime('%Y-%m-%d')),
+                    "assigned_date": str(r.get('created_at') or saved_at.strftime('%Y-%m-%d'))[:10],
                     "gst_pc": f"{gst_pc:g}%",
                     "gst_amount": f"{gst_amount:.2f}",
                     "taxable_amount": f"{taxable_sum:.2f}",
@@ -4590,11 +4673,13 @@ def download_consolidated_csv():
                 export_rows.append({
                     "date_obj": dt_val,
                     "insured_name": fb.get('insured_name', 'N/A'),
+                    "insurer_name": fb.get('insurer_name', fb.get('insurer', 'N/A')),
                     "policy_no": fb.get('policy_no', 'N/A'),
                     "claim_no": fb.get('claim_no', 'N/A'),
                     "vehicle_no": fb.get('vehicle_no', 'N/A'),
                     "invoice_no": fb.get('invoice_no', 'N/A'),
                     "invoice_date": fb.get('invoice_date', dt_val.strftime('%Y-%m-%d')),
+                    "assigned_date": str(fb.get('created_at') or dt_val.strftime('%Y-%m-%d'))[:10],
                     "gst_pc": f"{gst_pc:g}%",
                     "gst_amount": f"{gst_amt:.2f}",
                     "taxable_amount": f"{taxable:.2f}",
@@ -4610,11 +4695,13 @@ def download_consolidated_csv():
 
         headers = [
             "Insured Name",
+            "Insurer Company Name",
             "Policy number",
             "Claim number",
             "Vehicle number",
             "Invoice no",
             "Invoice date",
+            "Assigned Date",
             "Gst %",
             "Gst amount",
             "Taxable amount",
@@ -4625,11 +4712,13 @@ def download_consolidated_csv():
         for row in export_rows:
             csv_writer.writerow([
                 row["insured_name"],
+                row["insurer_name"],
                 row["policy_no"],
                 row["claim_no"],
                 row["vehicle_no"],
                 row["invoice_no"],
                 row["invoice_date"],
+                row["assigned_date"],
                 row["gst_pc"],
                 row["gst_amount"],
                 row["taxable_amount"],

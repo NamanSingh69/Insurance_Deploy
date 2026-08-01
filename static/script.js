@@ -2603,17 +2603,43 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchDashboard() {
-        const res = await fetch('/api/dashboard');
+        const range = document.getElementById('dashboard-range-select')?.value || '1m';
+        const res = await fetch(`/api/dashboard?range=${encodeURIComponent(range)}`);
         if (!res.ok) return;
         const data = await res.json();
         const operational = [
-            ['Total claims', data.total_claims], ['Pending claims', data.pending_claims], ['Completed claims', data.completed_claims],
-            ['New appointment', data.new_appointment], ['Inspection pending', data.inspection_pending],
-            ['Documents awaited', data.documents_awaited], ['Report under preparation', data.report_under_preparation],
-            ['Submitted', data.report_submitted], ['Closed', data.closed]
+            ['Total claims', data.total_claims, ''],
+            ['Pending claims', data.pending_claims, ''],
+            ['Completed claims', data.completed_claims, 'report_submitted'],
+            ['New appointment', data.new_appointment, 'new_appointment'],
+            ['Inspection pending', data.inspection_pending, 'inspection_pending'],
+            ['Documents awaited', data.documents_awaited, 'documents_awaited'],
+            ['Report under preparation', data.report_under_preparation, 'report_under_preparation'],
+            ['Submitted', data.report_submitted, 'report_submitted'],
+            ['Closed', data.closed, 'closed']
         ];
         const cards = document.getElementById('dashboard-cards');
-        if (cards) cards.innerHTML = operational.map(([label, value]) => `<div class="metric-card"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${Number(value || 0)}</span></div>`).join('');
+        if (cards) {
+            cards.innerHTML = operational.map(([label, value, statusKey]) => 
+                `<div class="metric-card clickable-metric" data-status-key="${escapeHtml(statusKey)}" style="cursor: pointer;" title="Click to view ${escapeHtml(label)} in Claim Register">
+                    <span class="metric-label">${escapeHtml(label)}</span>
+                    <span class="metric-value">${Number(value || 0)}</span>
+                </div>`
+            ).join('');
+
+            cards.querySelectorAll('.clickable-metric').forEach(card => {
+                card.addEventListener('click', () => {
+                    const statusKey = card.getAttribute('data-status-key');
+                    const tabBtn = document.getElementById('tab-btn-claims');
+                    if (tabBtn) tabBtn.click();
+                    const statusFilter = document.getElementById('claim-status-filter');
+                    if (statusFilter) {
+                        statusFilter.value = statusKey || '';
+                        fetchClaims();
+                    }
+                });
+            });
+        }
         const financial = document.getElementById('financial-dashboard');
         if (financial && workspaceState.profile?.role === 'admin') {
             financial.classList.remove('hidden');
@@ -2623,6 +2649,11 @@ document.addEventListener('DOMContentLoaded', () => {
             ].map(([label, value]) => `<div class="metric-card financial"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(value)}</span></div>`).join('');
         }
     }
+
+    document.getElementById('dashboard-range-select')?.addEventListener('change', () => {
+        fetchDashboard();
+    });
+
 
     function claimFilterQuery() {
         const pairs = new URLSearchParams();
@@ -2754,6 +2785,30 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
     }
 
+    async function handleFeePdfUpload(file) {
+        if (!file) return;
+        const nameSpan = document.getElementById('fee-pdf-file-name');
+        if (nameSpan) nameSpan.textContent = file.name;
+        showStatus('Extracting billing details from PDF...', 'info', true);
+        try {
+            const formData = new FormData();
+            formData.append('fee_pdf_file', file);
+            const res = await fetch('/api/extract_fee_pdf', { method: 'POST', body: formData });
+            const result = await res.json();
+            if (!res.ok || !result.success) throw new Error(result.error || 'Failed to extract PDF');
+            
+            const ext = result.extracted || {};
+            if (ext.insurer) document.getElementById('fee-insurer').value = ext.insurer;
+            if (ext.insured) document.getElementById('fee-insured').value = ext.insured;
+            if (ext.invoice_no || ext.report_no) document.getElementById('fee-invoice-no').value = ext.invoice_no || ext.report_no;
+            if (ext.invoice_date) document.getElementById('fee-invoice-date').value = ext.invoice_date;
+            
+            showStatus('Extracted billing details successfully into form!', 'success', true);
+        } catch (error) {
+            showStatus(error.message || 'Error extracting PDF', 'error', true);
+        }
+    }
+
     async function saveFee(event) {
         event.preventDefault();
         const reportId = document.getElementById('fee-report-id')?.value;
@@ -2762,25 +2817,43 @@ document.addEventListener('DOMContentLoaded', () => {
         const gstPc = Number(document.getElementById('fee-gst-pc')?.value || 0);
         const gstAmount = professional * gstPc / 100;
         const payload = {
-            report_id: reportId || null, insurer_name: document.getElementById('fee-insurer')?.value.trim(),
-            insured_name: document.getElementById('fee-insured')?.value.trim(), invoice_no: document.getElementById('fee-invoice-no')?.value.trim(),
-            invoice_date: document.getElementById('fee-invoice-date')?.value, professional_fee: professional, taxable_amount: professional,
-            gst_pc: gstPc, gst_amount: gstAmount, gross_invoice_value: professional + gstAmount, total_amount: professional + gstAmount,
-            tds_amount: Number(document.getElementById('fee-tds')?.value || 0), amount_received: Number(document.getElementById('fee-received')?.value || 0),
-            outstanding_amount: Number(document.getElementById('fee-outstanding')?.value || 0), due_date: document.getElementById('fee-due-date')?.value || null,
-            payment_status: document.getElementById('fee-payment-status')?.value, invoice_status: document.getElementById('fee-invoice-status')?.value,
-            claim_no: report.claim_no || '', vehicle_no: report.vehicle_no || '', policy_no: report.policy_no || ''
+            report_id: reportId || null,
+            insurer_name: document.getElementById('fee-insurer')?.value.trim(),
+            insurer_gst: document.getElementById('fee-insurer-gst')?.value.trim() || '',
+            insurer_state: document.getElementById('fee-insurer-state')?.value.trim() || '',
+            insurer_address: document.getElementById('fee-insurer-address')?.value.trim() || '',
+            insured_name: document.getElementById('fee-insured')?.value.trim(),
+            invoice_no: document.getElementById('fee-invoice-no')?.value.trim(),
+            invoice_date: document.getElementById('fee-invoice-date')?.value,
+            professional_fee: professional,
+            taxable_amount: professional,
+            gst_pc: gstPc,
+            gst_amount: gstAmount,
+            gross_invoice_value: professional + gstAmount,
+            total_amount: professional + gstAmount,
+            amount_received: Number(document.getElementById('fee-received')?.value || 0),
+            outstanding_amount: Number(document.getElementById('fee-outstanding')?.value || 0),
+            due_date: document.getElementById('fee-due-date')?.value || null,
+            payment_status: document.getElementById('fee-payment-status')?.value,
+            invoice_status: document.getElementById('fee-invoice-status')?.value,
+            claim_no: report.claim_no || '',
+            vehicle_no: report.vehicle_no || '',
+            policy_no: report.policy_no || ''
         };
         try {
             const res = await fetch('/api/fee_bills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const result = await res.json();
             if (!res.ok) throw new Error(result.error || 'Could not save fee');
             document.getElementById('fee-register-form')?.reset();
-            document.getElementById('fee-gst-pc').value = '18';
+            const gstElem = document.getElementById('fee-gst-pc');
+            if (gstElem) gstElem.value = '18';
+            const fileNameSpan = document.getElementById('fee-pdf-file-name');
+            if (fileNameSpan) fileNameSpan.textContent = '';
             showStatus('Fee register saved.', 'success', true);
             await Promise.all([fetchFees(), fetchDashboard()]);
         } catch (error) { showStatus(error.message, 'error', true); }
     }
+
 
     async function initGmailControls() {
         const statusRes = await fetch('/auth/gmail/status');
@@ -2881,9 +2954,19 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('sync-gmail-button')?.addEventListener('click', syncGmail);
         document.getElementById('fee-register-form')?.addEventListener('submit', saveFee);
         document.getElementById('fee-month-filter')?.addEventListener('change', fetchFees);
+        document.getElementById('fee-pdf-browse-btn')?.addEventListener('click', () => {
+            document.getElementById('fee-pdf-file')?.click();
+        });
+        document.getElementById('fee-pdf-file')?.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (file) handleFeePdfUpload(file);
+        });
         document.getElementById('download-fees-excel')?.addEventListener('click', () => {
             const month = document.getElementById('fee-month-filter')?.value || new Date().toISOString().slice(0, 7);
             window.location.href = `/download_fees_excel?month=${encodeURIComponent(month)}`;
+        });
+        document.getElementById('download-admin-backup-btn')?.addEventListener('click', () => {
+            window.location.href = '/api/admin/backup/download';
         });
         document.getElementById('add-gmail-domain')?.addEventListener('click', async () => {
             const input = document.getElementById('new-gmail-domain');

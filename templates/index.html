@@ -100,6 +100,12 @@
                     <p id="workspace-role-label" class="workspace-subtitle"></p>
                 </div>
                 <div id="gmail-sync-toolbar" class="workspace-toolbar hidden">
+                    <select id="dashboard-range-select" class="workspace-select" aria-label="Dashboard Date Range">
+                        <option value="1m" selected>1 Month</option>
+                        <option value="3m">3 Months</option>
+                        <option value="1y">1 Year</option>
+                        <option value="all">All Time</option>
+                    </select>
                     <select id="gmail-domain-filter" aria-label="Sender domain filter">
                         <option value="">All approved senders</option>
                     </select>
@@ -158,15 +164,33 @@
                 <div><h2><i class="fas fa-receipt"></i> Survey Fee Register</h2><p class="workspace-subtitle">Financial information is visible to administrators only.</p></div>
                 <div class="workspace-toolbar"><input id="fee-month-filter" type="month"><button type="button" id="download-fees-excel" class="btn btn-info btn-sm"><i class="fas fa-file-excel"></i> CA Excel</button></div>
             </div>
+
+            <!-- PDF Upload & Auto-Extraction Box for Fee Register -->
+            <div class="fee-upload-box" style="margin-bottom: 1rem; padding: 0.75rem; border: 1px dashed var(--border-color, #444); border-radius: 6px; background: rgba(255,255,255,0.02);">
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                        <strong style="font-size: 0.9rem;"><i class="fas fa-file-pdf"></i> Upload Policy / RC Copy (PDF)</strong>
+                        <p style="font-size: 0.8rem; color: #888; margin: 0;">Auto-extract Insurer, Insured Name, Vehicle & Policy details directly into this fee bill.</p>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input type="file" id="fee-pdf-file" accept=".pdf" style="display: none;">
+                        <button type="button" id="fee-pdf-browse-btn" class="btn btn-secondary btn-sm"><i class="fas fa-folder-open"></i> Upload PDF</button>
+                        <span id="fee-pdf-file-name" style="font-size: 0.8rem; color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+            </div>
+
             <form id="fee-register-form" class="compact-form fee-form">
                 <select id="fee-report-id"><option value="">Linked report (optional)</option></select>
                 <input id="fee-insurer" type="text" placeholder="Insurer *" required>
+                <input id="fee-insurer-gst" type="text" placeholder="Insurer GSTIN">
+                <input id="fee-insurer-state" type="text" placeholder="Insurer State">
+                <input id="fee-insurer-address" type="text" placeholder="Insurer Address">
                 <input id="fee-insured" type="text" placeholder="Insured name *" required>
                 <input id="fee-invoice-no" type="text" placeholder="Invoice no.">
                 <input id="fee-invoice-date" type="date" title="Invoice date">
                 <input id="fee-professional" type="number" min="0" step="0.01" placeholder="Professional fee">
                 <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" placeholder="GST %">
-                <input id="fee-tds" type="number" min="0" step="0.01" placeholder="TDS amount">
                 <input id="fee-received" type="number" min="0" step="0.01" placeholder="Cash received">
                 <input id="fee-outstanding" type="number" min="0" step="0.01" placeholder="Outstanding (manual)">
                 <input id="fee-due-date" type="date" title="Due date">
@@ -1584,8 +1608,15 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                             <label class="checkbox-label"><input id="employee-gmail-permission" type="checkbox"> Allow Gmail sync</label>
                             <button type="button" id="create-employee-button" class="btn btn-primary btn-sm">Create employee</button>
                         </div>
-                        <div class="table-container"><table class="register-table"><thead><tr><th>User</th><th>Status</th><th>Gmail sync</th><th>Actions</th></tr></thead><tbody id="employee-list-tbody"><tr><td colspan="4">Loading employees…</td></tr></tbody></table></div>
                     </div>
+                    <div class="field-group" style="margin-top: 1rem;">
+                        <label><i class="fas fa-database"></i> Database Disaster Recovery & Backup</label>
+                        <p style="font-size: 0.8rem; color: #888; margin-bottom: 0.5rem;">Download full database snapshot archive (.json format) for offline recovery.</p>
+                        <button type="button" id="download-admin-backup-btn" class="btn btn-info btn-sm">
+                            <i class="fas fa-download"></i> Download Database Backup Snapshot
+                        </button>
+                    </div>
+                    <div class="table-container"><table class="register-table"><thead><tr><th>User</th><th>Status</th><th>Gmail sync</th><th>Actions</th></tr></thead><tbody id="employee-list-tbody"><tr><td colspan="4">Loading employees…</td></tr></tbody></table></div>
                 </div>
                 <div class="field-group" style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
                     <label style="font-weight: 600;"><i class="fas fa-signature"></i> Digital Seal & Signature Image</label>

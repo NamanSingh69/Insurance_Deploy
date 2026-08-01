@@ -286,6 +286,142 @@ class TestProcessInvoiceEndpoint:
             'invoice_pdf_file': (io.BytesIO(pdf_content), 'MR ASRAFUL ISLAM P I.pdf', 'application/pdf')
         }
         
+        with patch('app.bcrypt.check_password_hash', return_value=True):
+            response = authenticated_client.delete('/delete_report/nonexistent-id', json={'password': 'any_password'})
+            
+            # Expect 404 (Not Found) or 200 with error message depending on implementation
+            # Implementation returns 404 if delete_report returns False
+            assert response.status_code in [404]
+
+
+class TestUploadPhotoEndpoint:
+    """Tests for /upload_photo endpoint."""
+    
+    def test_upload_photo_success(self, authenticated_client, mock_sheets_db):
+        """Test successful photo upload."""
+        # Mock the upload function
+        mock_sheets_db.upload_image_to_drive.return_value = {
+            'id': 'drive-file-id',
+            'view_link': 'https://drive.google.com/view',
+            'download_link': 'https://drive.google.com/download'
+        }
+        
+        # Create fake image file
+        data = {
+            'photo': (io.BytesIO(b'fake image data'), 'test.jpg')
+        }
+        
+        response = authenticated_client.post('/upload_photo',
+                                             data=data,
+                                             content_type='multipart/form-data')
+        
+        assert response.status_code == 200
+        result = response.get_json()
+        assert 'url' in result or result.get('success') == True
+    
+    def test_upload_photo_no_file(self, authenticated_client):
+        """Test upload without file."""
+        response = authenticated_client.post('/upload_photo',
+                                             data={},
+                                             content_type='multipart/form-data')
+        
+        assert response.status_code == 400
+        result = response.get_json()
+        assert 'error' in result
+    
+    def test_upload_photo_empty_filename(self, authenticated_client):
+        """Test upload with empty filename."""
+        data = {
+            'photo': (io.BytesIO(b''), '')
+        }
+        
+        response = authenticated_client.post('/upload_photo',
+                                             data=data,
+                                             content_type='multipart/form-data')
+        
+        assert response.status_code == 400
+
+
+class TestGenerateFilesEndpoint:
+    """Tests for /generate_files endpoint."""
+    
+    def test_generate_files_success(self, authenticated_client, sample_report_data):
+        """Test successful file generation returns task_id (async pattern)."""
+        response = authenticated_client.post('/generate_files',
+                                             json=sample_report_data,
+                                             content_type='application/json')
+        
+        # Now returns 202 with task_id for async processing
+        assert response.status_code in [200, 202, 400, 500]
+        if response.status_code == 202:
+            data = response.get_json()
+            assert 'task_id' in data
+    
+    def test_generate_files_no_data(self, authenticated_client):
+        """Test generate files without data."""
+        response = authenticated_client.post('/generate_files',
+                                             json={},
+                                             content_type='application/json')
+        
+        # Empty data is caught synchronously before async dispatch
+        assert response.status_code in [400, 500]
+
+
+class TestProcessPDFEndpoint:
+    """Tests for /process_pdf endpoint."""
+    
+    def test_process_pdf_no_file(self, authenticated_client):
+        """Test process PDF without file."""
+        response = authenticated_client.post('/process_pdf',
+                                             data={},
+                                             content_type='multipart/form-data')
+        
+        # Should return error synchronously (before async dispatch)
+        assert response.status_code in [200, 400]
+    
+    def test_process_pdf_with_mock_file(self, authenticated_client):
+        """Test process PDF with mock file returns task_id (async pattern)."""
+        # Create a simple PDF-like bytes
+        pdf_content = b'%PDF-1.4 fake pdf content'
+        data = {
+            'pdf_file': (io.BytesIO(pdf_content), 'test.pdf', 'application/pdf')
+        }
+        
+        response = authenticated_client.post('/process_pdf',
+                                             data=data,
+                                             content_type='multipart/form-data')
+        
+        # Now returns 202 with task_id for async processing
+        assert response.status_code in [200, 202, 400, 500]
+        if response.status_code == 202:
+            result = response.get_json()
+            assert 'task_id' in result
+
+    def test_process_pdf_status_not_found(self, authenticated_client):
+        """Test polling for a non-existent task."""
+        response = authenticated_client.get('/process_pdf/status/nonexistent-task-id')
+        assert response.status_code == 404
+
+
+class TestProcessInvoiceEndpoint:
+    """Tests for /process_invoice endpoint."""
+    
+    def test_process_invoice_no_file(self, authenticated_client):
+        """Test process invoice without file returns 400."""
+        response = authenticated_client.post('/process_invoice',
+                                             data={},
+                                             content_type='multipart/form-data')
+        assert response.status_code == 400
+        result = response.get_json()
+        assert 'error' in result
+
+    def test_process_invoice_with_mock_file(self, authenticated_client):
+        """Test process invoice with mock PDF file returns 202 and task_id."""
+        pdf_content = b'%PDF-1.4 fake invoice pdf content'
+        data = {
+            'invoice_pdf_file': (io.BytesIO(pdf_content), 'MR ASRAFUL ISLAM P I.pdf', 'application/pdf')
+        }
+        
         response = authenticated_client.post('/process_invoice',
                                              data=data,
                                              content_type='multipart/form-data')
@@ -293,4 +429,50 @@ class TestProcessInvoiceEndpoint:
         assert response.status_code == 202
         result = response.get_json()
         assert 'task_id' in result
+
+
+class TestDashboardEndpoint:
+    """Tests for /api/dashboard date range filtering."""
+
+    def test_dashboard_with_date_range(self, authenticated_client, mock_sheets_db, monkeypatch):
+        """Test getting dashboard with date range query parameter."""
+        monkeypatch.setattr('app.workspace_admin_id_for', lambda u: 1)
+        mock_sheets_db.get_workspace_dashboard.return_value = {
+            'total_claims': 5,
+            'pending_claims': 2,
+            'completed_claims': 3,
+            'new_appointment': 2,
+            'inspection_pending': 0,
+            'documents_awaited': 0,
+            'report_under_preparation': 0,
+            'report_submitted': 1,
+            'closed': 2,
+            'total_invoiced': 1500.0,
+            'amount_received': 1000.0,
+            'outstanding_fees': 500.0,
+            'overdue_count': 0
+        }
+
+        response = authenticated_client.get('/api/dashboard?range=1m')
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['total_claims'] == 5
+        mock_sheets_db.get_workspace_dashboard.assert_called_with(1, date_range='1m')
+
+    def test_extract_fee_pdf_no_file(self, authenticated_client):
+        """Test extract fee PDF with no file uploaded returns 400."""
+        response = authenticated_client.post('/api/extract_fee_pdf', data={})
+        assert response.status_code == 400
+
+    def test_admin_backup_download(self, authenticated_client, mock_sheets_db, monkeypatch):
+        """Test admin backup snapshot download endpoint."""
+        monkeypatch.setattr('app.is_admin_user', lambda u: True)
+        mock_sheets_db.get_workspace_reports_page.return_value = {'items': []}
+        mock_sheets_db.get_workspace_fee_bills.return_value = []
+        
+        response = authenticated_client.get('/api/admin/backup/download')
+        assert response.status_code == 200
+        assert response.mimetype == 'application/json'
+        assert b'backup_timestamp' in response.data
+
 
