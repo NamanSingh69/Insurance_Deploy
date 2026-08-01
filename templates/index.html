@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.2.0">
     <!-- Font Awesome for icons (non-blocking) -->
     <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
@@ -77,6 +77,18 @@
             <div id="status" class="status status-processing hidden">
                 <i class="fas fa-info-circle status-icon"></i>
                 <span id="status-message">Processing...</span>
+            </div>
+        </div>
+
+        <!-- Workspace Active Navigation Header (shown when viewing a workspace section) -->
+        <div id="workspace-active-nav" class="workspace-nav-header hidden">
+            <button type="button" id="btn-back-to-upload" class="btn btn-secondary btn-sm">
+                <i class="fas fa-arrow-left"></i> Back to Upload & Documents
+            </button>
+            <div class="workspace-tab-group">
+                <button type="button" id="tab-btn-dashboard" class="workspace-tab-btn active"><i class="fas fa-chart-line"></i> Dashboard</button>
+                <button type="button" id="tab-btn-claims" class="workspace-tab-btn"><i class="fas fa-clipboard-list"></i> Claim Register</button>
+                <button type="button" id="tab-btn-fees" class="workspace-tab-btn admin-only-nav hidden"><i class="fas fa-receipt"></i> Survey Fee Register</button>
             </div>
         </div>
 
@@ -250,6 +262,45 @@
             </div>
         </div>
 
+        <!-- Motor Survey Management Workspaces Navigation Buttons -->
+        <div id="workspace-nav-section" class="card hidden" style="margin-top: 1.5rem;">
+            <div style="margin-bottom: 0.75rem;">
+                <h2 style="font-size: 1.2rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem;">
+                    <i class="fas fa-th-large"></i> Motor Survey Workspaces
+                </h2>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin: 0;">
+                    Select a button below to open its dedicated workspace interface:
+                </p>
+            </div>
+            <div class="workspace-nav-grid">
+                <button type="button" id="open-dashboard-btn" class="workspace-nav-card">
+                    <div class="nav-card-icon"><i class="fas fa-chart-line"></i></div>
+                    <div class="nav-card-info">
+                        <h3>Motor Survey Dashboard</h3>
+                        <p>View claim pipeline stats & operational metrics</p>
+                    </div>
+                    <div class="nav-card-arrow"><i class="fas fa-arrow-right"></i></div>
+                </button>
+
+                <button type="button" id="open-claims-btn" class="workspace-nav-card">
+                    <div class="nav-card-icon"><i class="fas fa-clipboard-list"></i></div>
+                    <div class="nav-card-info">
+                        <h3>Claim Register</h3>
+                        <p>Search, filter & manage claim intimations</p>
+                    </div>
+                    <div class="nav-card-arrow"><i class="fas fa-arrow-right"></i></div>
+                </button>
+
+                <button type="button" id="open-fees-btn" class="workspace-nav-card admin-only-nav hidden">
+                    <div class="nav-card-icon"><i class="fas fa-receipt"></i></div>
+                    <div class="nav-card-info">
+                        <h3>Survey Fee Register</h3>
+                        <p>Invoice tracking, GST tallies & CA exports</p>
+                    </div>
+                    <div class="nav-card-arrow"><i class="fas fa-arrow-right"></i></div>
+                </button>
+            </div>
+        </div>
 
         <!-- Preview Section -->
         <div id="preview-section" class="hidden">
@@ -1565,7 +1616,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=1.1.0"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=1.2.0"></script>
 
 </body>
 </html>

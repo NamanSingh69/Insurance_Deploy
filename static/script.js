@@ -2504,6 +2504,50 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value || 0));
     }
 
+    function switchWorkspaceView(viewName) {
+        const dashboardSec = document.getElementById('operations-workspace');
+        const claimsSec = document.getElementById('claim-register-section');
+        const feesSec = document.getElementById('fee-register-section');
+        const activeNav = document.getElementById('workspace-active-nav');
+        if (!dashboardSec || !claimsSec || !feesSec) return;
+
+        // Hide all workspace detail cards first
+        dashboardSec.classList.add('hidden');
+        claimsSec.classList.add('hidden');
+        feesSec.classList.add('hidden');
+
+        // Unhide the top workspace active navigation bar
+        activeNav?.classList.remove('hidden');
+
+        // Update tab buttons state
+        const tabDash = document.getElementById('tab-btn-dashboard');
+        const tabClaims = document.getElementById('tab-btn-claims');
+        const tabFees = document.getElementById('tab-btn-fees');
+
+        tabDash?.classList.remove('active');
+        tabClaims?.classList.remove('active');
+        tabFees?.classList.remove('active');
+
+        if (viewName === 'dashboard') {
+            dashboardSec.classList.remove('hidden');
+            tabDash?.classList.add('active');
+        } else if (viewName === 'claims') {
+            claimsSec.classList.remove('hidden');
+            tabClaims?.classList.add('active');
+        } else if (viewName === 'fees') {
+            if (workspaceState.profile?.role === 'admin') {
+                feesSec.classList.remove('hidden');
+                tabFees?.classList.add('active');
+            } else {
+                claimsSec.classList.remove('hidden');
+                tabClaims?.classList.add('active');
+            }
+        }
+
+        // Scroll smoothly to top of workspace active navigation bar
+        activeNav?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     async function initMotorSurveyWorkspace() {
         try {
             const res = await fetch('/get_user_profile');
@@ -2511,19 +2555,47 @@ document.addEventListener('DOMContentLoaded', () => {
             workspaceState.profile = await res.json();
             const workspaceId = workspaceState.profile.workspace_admin_id;
             if (!workspaceId) return;
-            document.getElementById('operations-workspace')?.classList.remove('hidden');
-            document.getElementById('claim-register-section')?.classList.remove('hidden');
+
+            // Unhide the workspace navigation buttons card directly below upload section
+            const navSection = document.getElementById('workspace-nav-section');
+            if (navSection) navSection.classList.remove('hidden');
+
             const label = document.getElementById('workspace-role-label');
             if (label) label.textContent = workspaceState.profile.role === 'admin' ? 'Administrator workspace' : 'Shared operational workspace';
             const isAdmin = workspaceState.profile.role === 'admin';
+
+            // Show admin-only navigation buttons if admin
+            document.querySelectorAll('.admin-only-nav').forEach(el => {
+                if (isAdmin) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            });
+
             if (isAdmin) {
-                document.getElementById('fee-register-section')?.classList.remove('hidden');
                 document.getElementById('financial-export-section')?.classList.remove('hidden');
                 document.getElementById('page3-details-wrapper')?.classList.remove('hidden');
             } else {
                 document.getElementById('financial-export-section')?.classList.add('hidden');
                 document.getElementById('page3-details-wrapper')?.classList.add('hidden');
             }
+
+            // Bind workspace navigation buttons below upload section
+            document.getElementById('open-dashboard-btn')?.addEventListener('click', () => switchWorkspaceView('dashboard'));
+            document.getElementById('open-claims-btn')?.addEventListener('click', () => switchWorkspaceView('claims'));
+            document.getElementById('open-fees-btn')?.addEventListener('click', () => switchWorkspaceView('fees'));
+
+            // Bind active workspace header tabs & back button
+            document.getElementById('tab-btn-dashboard')?.addEventListener('click', () => switchWorkspaceView('dashboard'));
+            document.getElementById('tab-btn-claims')?.addEventListener('click', () => switchWorkspaceView('claims'));
+            document.getElementById('tab-btn-fees')?.addEventListener('click', () => switchWorkspaceView('fees'));
+
+            document.getElementById('btn-back-to-upload')?.addEventListener('click', () => {
+                document.getElementById('workspace-active-nav')?.classList.add('hidden');
+                document.getElementById('operations-workspace')?.classList.add('hidden');
+                document.getElementById('claim-register-section')?.classList.add('hidden');
+                document.getElementById('fee-register-section')?.classList.add('hidden');
+                document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+
             await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), workspaceState.profile.role === 'admin' ? fetchFees() : Promise.resolve()]);
         } catch (error) {
             console.error('Could not initialize motor survey workspace:', error);
