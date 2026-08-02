@@ -1298,6 +1298,88 @@ class PostgresDB:
             print(f"Error recording Gmail sync message: {e}")
             return False
 
+    def cancel_gmail_sync_message(self, gmail_message_id):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("UPDATE gmail_sync_messages SET sync_status = 'cancelled' WHERE gmail_message_id = %s;", (gmail_message_id,))
+                return True
+        except Exception as e:
+            print(f"Error cancelling Gmail sync message: {e}")
+            return False
+
+    def get_pending_gmail_messages(self, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM gmail_sync_messages
+                    WHERE workspace_admin_id = %s AND sync_status NOT IN ('processed', 'cancelled')
+                    ORDER BY processed_at DESC;
+                """, (workspace_admin_id,))
+                return [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            print(f"Error fetching pending Gmail messages: {e}")
+            return []
+
+    def get_claim_reminder(self, report_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM claim_reminders WHERE report_id = %s;", (report_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching claim reminder: {e}")
+            return None
+
+    def update_claim_reminder(self, report_id, workspace_admin_id, claim_no, reminder_count, claim_manager_email=None, claim_manager_phone=None):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            now = datetime.now()
+            next_due = now + timedelta(days=7) if reminder_count < 3 else None
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO claim_reminders (
+                        report_id, workspace_admin_id, claim_no, reminder_count, last_sent_at, next_due_at,
+                        claim_manager_email, claim_manager_phone, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (report_id) DO UPDATE SET
+                        reminder_count = EXCLUDED.reminder_count,
+                        last_sent_at = EXCLUDED.last_sent_at,
+                        next_due_at = EXCLUDED.next_due_at,
+                        claim_manager_email = COALESCE(EXCLUDED.claim_manager_email, claim_reminders.claim_manager_email),
+                        claim_manager_phone = COALESCE(EXCLUDED.claim_manager_phone, claim_reminders.claim_manager_phone),
+                        updated_at = EXCLUDED.updated_at;
+                """, (report_id, workspace_admin_id, claim_no, reminder_count, now, next_due,
+                      claim_manager_email, claim_manager_phone, now))
+                return True
+        except Exception as e:
+            print(f"Error updating claim reminder: {e}")
+            return False
+
+    def get_due_reminders(self):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT r.*, cr.reminder_count, cr.claim_manager_email, cr.claim_manager_phone
+                    FROM reports r
+                    JOIN claim_reminders cr ON r.id = cr.report_id
+                    WHERE r.status = 'documents_awaited'
+                      AND cr.reminder_count < 3
+                      AND (cr.next_due_at IS NULL OR cr.next_due_at <= CURRENT_TIMESTAMP);
+                """)
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error fetching due reminders: {e}")
+            return []
+
     # --- Drive Methods (Unchanged, relies on Google Auth) ---
     def get_resumable_upload_url(self, filename, mime_type='application/pdf', origin=None):
         result = self.get_resumable_upload_url_with_token(filename, mime_type, origin)
@@ -1556,9 +1638,15 @@ class PostgresDB:
         claim_no = bill_data.get('claim_no', '')
         vehicle_no = bill_data.get('vehicle_no', '')
         professional_fee = float(bill_data.get('professional_fee', bill_data.get('taxable_amount', 0.0)) or 0)
+        convenience_route = bill_data.get('convenience_route', '')
+        convenience_km = float(bill_data.get('convenience_km', 0.0) or 0)
+        convenience_rate = float(bill_data.get('convenience_rate', 0.0) or 0)
+        conveyance_fee = float(bill_data.get('conveyance_fee', convenience_km * convenience_rate) or 0)
+        photocopy_amount = float(bill_data.get('photocopy_amount', 0.0) or 0)
+        taxable_amount = float(bill_data.get('taxable_amount', professional_fee + conveyance_fee + photocopy_amount) or 0)
         gst_pc = float(bill_data.get('gst_pc', 18.0) or 0)
-        gst_amount = float(bill_data.get('gst_amount', professional_fee * (gst_pc / 100.0)) or 0)
-        gross_invoice_value = float(bill_data.get('gross_invoice_value', bill_data.get('total_amount', professional_fee + gst_amount)) or 0)
+        gst_amount = float(bill_data.get('gst_amount', taxable_amount * (gst_pc / 100.0)) or 0)
+        gross_invoice_value = float(bill_data.get('gross_invoice_value', bill_data.get('total_amount', taxable_amount + gst_amount)) or 0)
         tds_amount = float(bill_data.get('tds_amount', 0.0) or 0)
         amount_received = float(bill_data.get('amount_received', 0.0) or 0)
         outstanding_amount = float(bill_data.get('outstanding_amount', 0.0) or 0)
@@ -1569,6 +1657,12 @@ class PostgresDB:
         created_at = datetime.now().isoformat()
         fee_breakdown = {
             'professional_fee': professional_fee,
+            'convenience_route': convenience_route,
+            'convenience_km': convenience_km,
+            'convenience_rate': convenience_rate,
+            'conveyance_fee': conveyance_fee,
+            'photocopy_amount': photocopy_amount,
+            'taxable_amount': taxable_amount,
             'gst_pc': gst_pc,
             'gst_amount': gst_amount,
             'gross_invoice_value': gross_invoice_value,
@@ -1589,8 +1683,11 @@ class PostgresDB:
             'id': bill_id, 'user_id': str(user_id), 'workspace_admin_id': workspace_admin_id,
             'report_id': report_id, 'invoice_no': invoice_no, 'invoice_date': invoice_date,
             'insurer_name': insurer_name, 'insured_name': insured_name, 'policy_no': policy_no,
-            'claim_no': claim_no, 'vehicle_no': vehicle_no, 'taxable_amount': professional_fee,
-            'professional_fee': professional_fee, 'gst_pc': gst_pc, 'gst_amount': gst_amount,
+            'claim_no': claim_no, 'vehicle_no': vehicle_no, 'taxable_amount': taxable_amount,
+            'professional_fee': professional_fee, 'convenience_route': convenience_route,
+            'convenience_km': convenience_km, 'convenience_rate': convenience_rate,
+            'conveyance_fee': conveyance_fee, 'photocopy_amount': photocopy_amount,
+            'gst_pc': gst_pc, 'gst_amount': gst_amount,
             'total_amount': gross_invoice_value, 'gross_invoice_value': gross_invoice_value,
             'tds_amount': tds_amount, 'amount_received': amount_received,
             'outstanding_amount': outstanding_amount, 'due_date': due_date,
@@ -1650,7 +1747,7 @@ class PostgresDB:
                            AND fee_bills.user_id = EXCLUDED.user_id)
                     RETURNING id;
                 """, (bill_id, u_id, workspace_admin_id, report_id, invoice_no, invoice_date,
-                      insurer_name, insured_name, policy_no, claim_no, vehicle_no, professional_fee,
+                      insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
                       professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
                       tds_amount, amount_received, outstanding_amount, due_date, payment_status,
                       invoice_status, json.dumps(merged_data)))

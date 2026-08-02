@@ -2709,7 +2709,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tbody.innerHTML = claims.map(claim => {
             const current = claim.status || 'new_appointment';
             const options = Object.entries(claimStatusLabels).map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
-            return `<tr><td>${escapeHtml(claim.claim_no || '—')}</td><td>${escapeHtml(claim.vehicle_no || '—')}</td><td>${escapeHtml(claim.insured_name || '—')}</td><td>${escapeHtml(claim.insurer || '')}</td><td><select class="claim-status-select" data-report-id="${escapeHtml(claim.id)}">${options}</select></td><td>${escapeHtml(claim.survey_type || 'final')}</td><td><button type="button" class="btn btn-primary btn-sm open-workspace-report" data-report-id="${escapeHtml(claim.id)}">Open</button></td></tr>`;
+            return `<tr><td>${escapeHtml(claim.claim_no || '—')}</td><td>${escapeHtml(claim.vehicle_no || '—')}</td><td>${escapeHtml(claim.insured_name || '—')}</td><td>${escapeHtml(claim.insurer || '')}</td><td><select class="claim-status-select" data-report-id="${escapeHtml(claim.id)}">${options}</select></td><td>${escapeHtml(claim.survey_type || 'final')}</td><td><button type="button" class="btn btn-primary btn-sm open-workspace-report" data-report-id="${escapeHtml(claim.id)}">Open</button> <button type="button" class="btn btn-secondary btn-sm open-pending-docs-modal" data-report-id="${escapeHtml(claim.id)}"><i class="fas fa-tasks"></i> Docs</button></td></tr>`;
         }).join('');
         tbody.querySelectorAll('.claim-status-select').forEach(select => select.addEventListener('change', async event => {
             const res = await fetch(`/api/claims/${encodeURIComponent(event.target.dataset.reportId)}`, {
@@ -2723,6 +2723,155 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }));
         tbody.querySelectorAll('.open-workspace-report').forEach(button => button.addEventListener('click', () => loadWorkspaceReport(button.dataset.reportId)));
+        tbody.querySelectorAll('.open-pending-docs-modal').forEach(button => button.addEventListener('click', () => openPendingDocsModal(button.dataset.reportId)));
+    }
+
+    function generateReminderTextClient(claim, pendingDocs, reminderCount) {
+        const claimNo = claim.claim_no || '[Claim Number]';
+        const policyNo = claim.policy_no || '[Policy Number]';
+        const insured = claim.insured_name || '[Customer Name]';
+        const vehicle = claim.vehicle_no || '[Vehicle Number]';
+        const insurer = claim.insurer || '[Insurance Company Name]';
+
+        const docsListStr = pendingDocs.length ? pendingDocs.map((d, i) => `${i + 1}. ${d}`).join('\n') : "1. Policy copy\n2. Duly completed and signed claim form\n3. Repairer's final tax invoice and payment receipt\n4. Clear bank details/cancelled cheque of the insured";
+
+        let text = `Dear Sir/Madam,\n\nThis is regarding the motor insurance claim mentioned below:\n\n`;
+        text += `Claim Number: ${claimNo}\n`;
+        text += `Policy Number: ${policyNo}\n`;
+        text += `Insured Name: ${insured}\n`;
+        text += `Vehicle Registration Number: ${vehicle}\n`;
+        text += `Insurance Company: ${insurer}\n\n`;
+        text += `During the scrutiny of the claim documents, it has been observed that the following documents are still pending:\n\n`;
+        text += `${docsListStr}\n\n`;
+        text += `You are requested to submit clear and legible copies of the above documents at the earliest so that the survey report and claim assessment process can be completed without further delay.\n\n`;
+        text += `Please mention the claim number and vehicle registration number while sending the documents.\n\n`;
+
+        if (reminderCount === 2) {
+            text += `Kindly note that this is the second time reminder, so please treat this with high priority; otherwise we assume you are not interested in taking the claim, and the insurance company may close the claim without further notice.\n\n`;
+        } else if (reminderCount >= 3) {
+            text += `Kindly note that this is the third time reminder, so please treat this with high priority; otherwise we assume you are not interested in taking the claim, and the insurance company may close the claim without further notice.\n\n`;
+        } else {
+            text += `Kindly note that any delay in submitting the required documents may delay the processing of your claim.\n\n`;
+        }
+
+        text += `Regards,\nSk Anowar Ali\nMotor Surveyor & Loss Assessor\nLicence No.: SLA-121784\nMobile: 8777370714`;
+        return text;
+    }
+
+    let currentPendingDocs = [];
+
+    async function openPendingDocsModal(reportId) {
+        const report = workspaceState.claims.find(c => c.id === reportId) || {};
+        document.getElementById('pending-docs-report-id').value = reportId;
+        document.getElementById('pending-docs-claim-info').textContent = `Claim: ${report.claim_no || '—'} | Vehicle: ${report.vehicle_no || '—'} | Insured: ${report.insured_name || '—'}`;
+
+        try {
+            const res = await fetch(`/api/claims/${encodeURIComponent(reportId)}/pending_documents`);
+            const data = await res.json();
+            currentPendingDocs = data.pending_documents || [];
+            const reminderInfo = data.reminder_info || {};
+            
+            const count = reminder_info.reminder_count || 0;
+            const statusText = count > 0 ? `Reminders sent: ${count}/3. Last sent: ${reminderInfo.last_sent_at ? new Date(reminderInfo.last_sent_at).toLocaleDateString() : 'None'}` : 'No reminders sent yet. (Every 7 days, 3 times limit)';
+            document.getElementById('pending-docs-reminder-status').textContent = statusText;
+
+            if (reminder_info.claim_manager_email) document.getElementById('claim-manager-email-input').value = reminder_info.claim_manager_email;
+            if (reminder_info.claim_manager_phone) document.getElementById('claim-manager-phone-input').value = reminder_info.claim_manager_phone;
+
+            renderPendingDocsList();
+            document.getElementById('pending-documents-modal').classList.remove('hidden');
+        } catch (err) {
+            showStatus('Failed to load pending documents checklist.', 'error', true);
+        }
+    }
+
+    function renderPendingDocsList() {
+        const container = document.getElementById('pending-docs-list-container');
+        if (!container) return;
+        if (!currentPendingDocs.length) {
+            container.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.85rem;">No document items in list. Add custom items below.</p>';
+            return;
+        }
+        container.innerHTML = currentPendingDocs.map((item, index) => {
+            const name = typeof item === 'string' ? item : item.name;
+            const received = typeof item === 'object' ? !!item.received : false;
+            return `
+                <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid var(--border-color);">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem;">
+                        <input type="checkbox" class="doc-item-checkbox" data-index="${index}" ${received ? 'checked' : ''}>
+                        <span style="${received ? 'text-decoration: line-through; opacity: 0.6;' : ''}">${escapeHtml(name)}</span>
+                    </label>
+                    <button type="button" class="remove-doc-item" data-index="${index}" style="color: var(--danger-color, #ef4444); background: none; border: none; font-size: 1.1rem; cursor: pointer;" title="Remove">&times;</button>
+                </div>
+            `;
+        }).join('');
+
+        container.querySelectorAll('.doc-item-checkbox').forEach(cb => cb.addEventListener('change', (e) => {
+            const idx = Number(e.target.dataset.index);
+            if (typeof currentPendingDocs[idx] === 'string') {
+                currentPendingDocs[idx] = { name: currentPendingDocs[idx], received: e.target.checked };
+            } else {
+                currentPendingDocs[idx].received = e.target.checked;
+            }
+            renderPendingDocsList();
+        }));
+
+        container.querySelectorAll('.remove-doc-item').forEach(btn => btn.addEventListener('click', (e) => {
+            const idx = Number(e.target.dataset.index);
+            currentPendingDocs.splice(idx, 1);
+            renderPendingDocsList();
+        }));
+    }
+
+    async function savePendingDocsChecklist() {
+        const reportId = document.getElementById('pending-docs-report-id')?.value;
+        if (!reportId) return;
+        try {
+            const res = await fetch(`/api/claims/${encodeURIComponent(reportId)}/pending_documents`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pending_documents: currentPendingDocs })
+            });
+            if (!res.ok) throw new Error('Could not save checklist.');
+            showStatus('Pending documents checklist saved.', 'success', true);
+            document.getElementById('pending-documents-modal').classList.add('hidden');
+        } catch (err) {
+            showStatus(err.message, 'error', true);
+        }
+    }
+
+    async function sendPendingNotification() {
+        const reportId = document.getElementById('pending-docs-report-id')?.value;
+        if (!reportId) return;
+        const claimManagerEmail = document.getElementById('claim-manager-email-input')?.value.trim();
+        const claimManagerPhone = document.getElementById('claim-manager-phone-input')?.value.trim();
+
+        try {
+            const res = await fetch(`/api/claims/${encodeURIComponent(reportId)}/send_reminder`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ claim_manager_email: claimManagerEmail, claim_manager_phone: claimManagerPhone })
+            });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Could not send notification.');
+            
+            showStatus(`Reminder #${result.reminder_count} sent successfully!`, 'success', true);
+            
+            // Format WhatsApp link if text returned
+            if (result.message_text) {
+                const encodedMsg = encodeURIComponent(result.message_text);
+                const waBtn = document.getElementById('whatsapp-reminder-link');
+                if (waBtn) {
+                    const phone = claimManagerPhone || '';
+                    waBtn.href = `https://api.whatsapp.com/send?text=${encodedMsg}${phone ? `&phone=${phone}` : ''}`;
+                    waBtn.classList.remove('hidden');
+                }
+            }
+
+            openPendingDocsModal(reportId);
+        } catch (err) {
+            showStatus(err.message, 'error', true);
+        }
     }
 
     async function loadWorkspaceReport(reportId) {
@@ -2952,18 +3101,38 @@ document.addEventListener('DOMContentLoaded', () => {
             if (workspaceState.claimsPage < totalPages) { workspaceState.claimsPage += 1; fetchClaims(); }
         });
         document.getElementById('sync-gmail-button')?.addEventListener('click', syncGmail);
-        document.getElementById('fee-register-form')?.addEventListener('submit', saveFee);
-        document.getElementById('fee-month-filter')?.addEventListener('change', fetchFees);
-        document.getElementById('fee-pdf-browse-btn')?.addEventListener('click', () => {
-            document.getElementById('fee-pdf-file')?.click();
+        document.getElementById('fee-convenience-km')?.addEventListener('input', updateFeeCalculations);
+        document.getElementById('fee-convenience-rate')?.addEventListener('input', updateFeeCalculations);
+        document.getElementById('fee-conveyance')?.addEventListener('input', (e) => {
+            e.target.dataset.userEdited = "true";
         });
-        document.getElementById('fee-pdf-file')?.addEventListener('change', (e) => {
-            const file = e.target.files?.[0];
-            if (file) handleFeePdfUpload(file);
+        document.getElementById('close-pending-docs-modal')?.addEventListener('click', () => {
+            document.getElementById('pending-documents-modal')?.classList.add('hidden');
         });
-        document.getElementById('download-fees-excel')?.addEventListener('click', () => {
-            const month = document.getElementById('fee-month-filter')?.value || new Date().toISOString().slice(0, 7);
-            window.location.href = `/download_fees_excel?month=${encodeURIComponent(month)}`;
+        document.getElementById('add-custom-doc-btn')?.addEventListener('click', () => {
+            const input = document.getElementById('add-custom-doc-input');
+            const val = input?.value.trim();
+            if (val) {
+                currentPendingDocs.push({ name: val, received: false });
+                input.value = '';
+                renderPendingDocsList();
+            }
+        });
+        document.getElementById('save-pending-docs-btn')?.addEventListener('click', savePendingDocsChecklist);
+        document.getElementById('send-reminder-btn')?.addEventListener('click', sendPendingNotification);
+        document.getElementById('copy-reminder-text-btn')?.addEventListener('click', () => {
+            const reportId = document.getElementById('pending-docs-report-id')?.value;
+            if (!reportId) return;
+            const report = workspaceState.claims.find(c => c.id === reportId) || {};
+            const pendingNames = currentPendingDocs.filter(d => typeof d === 'object' ? !d.received : true).map(d => typeof d === 'object' ? d.name : d);
+            fetch(`/api/claims/${encodeURIComponent(reportId)}/pending_documents`)
+                .then(r => r.json())
+                .then(data => {
+                    const count = (data.reminder_info?.reminder_count || 0) + 1;
+                    const text = generateReminderTextClient(report, pendingNames, count);
+                    navigator.clipboard.writeText(text);
+                    showStatus('Reminder text copied to clipboard.', 'success', true);
+                });
         });
         document.getElementById('download-admin-backup-btn')?.addEventListener('click', () => {
             window.location.href = '/api/admin/backup/download';

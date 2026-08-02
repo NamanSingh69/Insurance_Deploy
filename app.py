@@ -1537,12 +1537,141 @@ def sync_gmail_intimations():
             summary['failed'] += 1
     return jsonify(summary)
 
+@app.route('/api/gmail/intimation/<message_id>/cancel', methods=['POST'])
+@login_required
+@gmail_sync_required
+def cancel_gmail_intimation(message_id):
+    """Cancel/dismiss a synced Gmail intimation so it is ignored."""
+    success = sheets_db.cancel_gmail_sync_message(message_id)
+    if not success:
+        return jsonify({'error': 'Could not cancel Gmail intimation.'}), 400
+    return jsonify({'success': True, 'message': 'Gmail intimation cancelled.'})
+
+def generate_pending_documents_reminder_text(claim_data, pending_docs, reminder_count=1):
+    """
+    Generates notification text formatted according to client specification for 1st, 2nd, and 3rd reminders.
+    """
+    survey = claim_data.get('survey_report', {}) if isinstance(claim_data.get('survey_report'), dict) else {}
+    claim_no = claim_data.get('claim_no') or survey.get('claim_no', '[Claim Number]')
+    policy_no = claim_data.get('policy_no') or survey.get('policy_no', '[Policy Number]')
+    insured_name = claim_data.get('insured_name') or survey.get('insured', '[Customer Name]')
+    vehicle_no = claim_data.get('vehicle_no') or survey.get('vehicle_regn_no', '[Vehicle Number]')
+    insurer_name = claim_data.get('insurer') or survey.get('insurer', '[Insurance Company Name]')
+
+    docs_list_str = "\n".join([f"{idx+1}. {doc}" for idx, doc in enumerate(pending_docs)]) if pending_docs else "1. Policy copy\n2. Duly completed and signed claim form"
+
+    body = f"Dear Sir/Madam,\n\nThis is regarding the motor insurance claim mentioned below:\n\n"
+    body += f"Claim Number: {claim_no}\n"
+    body += f"Policy Number: {policy_no}\n"
+    body += f"Insured Name: {insured_name}\n"
+    body += f"Vehicle Registration Number: {vehicle_no}\n"
+    body += f"Insurance Company: {insurer_name}\n\n"
+    body += f"During the scrutiny of the claim documents, it has been observed that the following documents are still pending:\n\n"
+    body += f"{docs_list_str}\n\n"
+    body += "You are requested to submit clear and legible copies of the above documents at the earliest so that the survey report and claim assessment process can be completed without further delay.\n\n"
+    body += "Please mention the claim number and vehicle registration number while sending the documents.\n\n"
+
+    if reminder_count == 2:
+        body += "Kindly note that this is the second time reminder, so please treat this with high priority; otherwise we assume you are not interested in taking the claim, and the insurance company may close the claim without further notice.\n\n"
+    elif reminder_count >= 3:
+        body += "Kindly note that this is the third time reminder, so please treat this with high priority; otherwise we assume you are not interested in taking the claim, and the insurance company may close the claim without further notice.\n\n"
+    else:
+        body += "Kindly note that any delay in submitting the required documents may delay the processing of your claim.\n\n"
+
+    body += "Regards,\nSk Anowar Ali\nMotor Surveyor & Loss Assessor\nLicence No.: SLA-121784\nMobile: 8777370714"
+    return body
+
+@app.route('/api/claims/<report_id>/pending_documents', methods=['GET', 'POST'])
+@login_required
+def manage_pending_documents(report_id):
+    """Get or update pending documents checklist for a claim."""
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    report = sheets_db.get_report_by_id(report_id, current_user.id)
+    if not report:
+        return jsonify({'error': 'Report not found.'}), 404
+        
+    report_data = report.get('report_data_json') or {}
+    if isinstance(report_data, str):
+        report_data = json.loads(report_data or '{}')
+        
+    if request.method == 'GET':
+        pending = report_data.get('pending_documents', [
+            {'name': 'Claim Form', 'received': False},
+            {'name': 'RC Copy', 'received': False},
+            {'name': 'Driving License (DL)', 'received': False},
+            {'name': 'Road Tax Permit', 'received': False},
+            {'name': 'Permit A', 'received': False},
+            {'name': 'Permit B', 'received': False},
+            {'name': 'Repair Estimate Copy', 'received': False},
+            {'name': 'Other Supporting Documents', 'received': False}
+        ])
+        reminder_info = sheets_db.get_claim_reminder(report_id) or {}
+        return jsonify({'pending_documents': pending, 'reminder_info': reminder_info})
+        
+    data = request.get_json() or {}
+    pending_docs = data.get('pending_documents', [])
+    report_data['pending_documents'] = pending_docs
+    
+    sheets_db.save_workspace_report(
+        current_user.id, workspace_admin_id, report_data, existing_report_id=report_id,
+        status=report.get('status', 'documents_awaited'),
+        survey_type=report.get('survey_type', 'final'))
+        
+    return jsonify({'success': True, 'pending_documents': pending_docs})
+
+@app.route('/api/claims/<report_id>/send_reminder', methods=['POST'])
+@login_required
+def send_pending_documents_reminder(report_id):
+    """Send document pending reminder notification (Email, WhatsApp/SMS text formatting, Claim Manager option)."""
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    report = sheets_db.get_report_by_id(report_id, current_user.id)
+    if not report:
+        return jsonify({'error': 'Report not found.'}), 404
+        
+    data = request.get_json() or {}
+    claim_manager_email = data.get('claim_manager_email', '').strip()
+    claim_manager_phone = data.get('claim_manager_phone', '').strip()
+    
+    reminder_info = sheets_db.get_claim_reminder(report_id) or {}
+    current_count = reminder_info.get('reminder_count', 0)
+    new_count = current_count + 1
+    
+    if new_count > 3:
+        return jsonify({'error': 'Maximum 3 reminders already sent for this claim.'}), 400
+        
+    report_data = report.get('report_data_json') or {}
+    if isinstance(report_data, str):
+        report_data = json.loads(report_data or '{}')
+        
+    pending_docs_raw = report_data.get('pending_documents', [])
+    pending_doc_names = [d.get('name') if isinstance(d, dict) else str(d) for d in pending_docs_raw if isinstance(d, dict) and not d.get('received')]
+    if not pending_doc_names:
+        pending_doc_names = [
+            "Policy copy",
+            "Duly completed and signed claim form",
+            "Repairer's final tax invoice and payment receipt",
+            "Clear bank details/cancelled cheque of the insured"
+        ]
+        
+    formatted_message = generate_pending_documents_reminder_text(report, pending_doc_names, new_count)
+    
+    sheets_db.update_claim_reminder(
+        report_id, workspace_admin_id, report.get('claim_no', ''),
+        new_count, claim_manager_email=claim_manager_email, claim_manager_phone=claim_manager_phone
+    )
+    
+    return jsonify({
+        'success': True,
+        'reminder_count': new_count,
+        'message_text': formatted_message,
+        'max_reached': new_count >= 3
+    })
+
 @app.route('/get_user_upload_url', methods=['POST'])
 @login_required
 def get_user_upload_url():
     """Get upload URL using user's OAuth token (for large files)."""
     from flask import session
-    
     access_token = session.get('google_access_token')
     if not access_token:
         return jsonify({'error': 'Not connected to Google Drive. Please connect first.'}), 401
