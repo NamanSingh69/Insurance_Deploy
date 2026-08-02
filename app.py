@@ -1537,6 +1537,89 @@ def sync_gmail_intimations():
             summary['failed'] += 1
     return jsonify(summary)
 
+@app.route('/api/gmail/intimations', methods=['GET'])
+@login_required
+@gmail_sync_required
+def get_pending_gmail_intimations():
+    """Returns list of pending Gmail intimations waiting for user approval to add or cancel."""
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    pending = sheets_db.get_pending_gmail_messages(workspace_admin_id)
+    return jsonify({'intimations': pending})
+
+@app.route('/api/gmail/intimation/<message_id>/add', methods=['POST'])
+@login_required
+@gmail_sync_required
+def add_gmail_intimation_to_register(message_id):
+    """Extracts and adds a specific Gmail intimation to the claim register upon user confirmation."""
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    sync_record = sheets_db.get_gmail_sync_message(message_id)
+    if not sync_record:
+        return jsonify({'error': 'Gmail intimation record not found.'}), 404
+        
+    parse_data = sync_record.get('parse_data_json') or {}
+    if isinstance(parse_data, str):
+        try: parse_data = json.loads(parse_data)
+        except Exception: parse_data = {}
+
+    claim_no = parse_data.get('claim_no', '')
+    sender = sync_record.get('sender_email', '')
+    subject = sync_record.get('subject', '')
+    received_at = sync_record.get('received_at')
+
+    if not claim_no:
+        return jsonify({'error': 'Claim number missing in intimation. Cannot add automatically.'}), 400
+
+    existing = sheets_db.find_workspace_report_by_claim_no(workspace_admin_id, claim_no)
+    if existing:
+        report_data = existing.get('report_data_json') or {}
+        if isinstance(report_data, str):
+            report_data = json.loads(report_data or '{}')
+        survey = report_data.setdefault('survey_report', {})
+        fields = {
+            'claim_no': parse_data.get('claim_no'), 'vehicle_regn_no': parse_data.get('vehicle_no'),
+            'insured': parse_data.get('insured_name'), 'policy_no': parse_data.get('policy_no'),
+            'insurer': parse_data.get('insurer'), 'date_of_loss': parse_data.get('date_of_loss'),
+        }
+        for key, value in fields.items():
+            if value and not survey.get(key):
+                survey[key] = value
+        history = report_data.setdefault('gmail_intimations', [])
+        history.append({'message_id': message_id, 'sender': sender, 'subject': subject,
+                        'received_at': received_at.isoformat() if hasattr(received_at, 'isoformat') else str(received_at)})
+        report_id = sheets_db.save_workspace_report(
+            current_user.id, workspace_admin_id, report_data, existing_report_id=existing.get('id'),
+            status=existing.get('status', 'documents_awaited'),
+            survey_type=existing.get('survey_type', 'final'))
+        action = 'merged'
+    else:
+        survey_type = 'spot' if re.search(r'\b(spot|preliminary)\b', f'{subject}\n{parse_data.get("snippet", "")}', re.I) else 'final'
+        prefix = _report_prefix_for_insurer(parse_data.get('insurer'))
+        sequence = sheets_db.reserve_report_number(workspace_admin_id, prefix, str(datetime.now().year))
+        if sequence is None:
+            return jsonify({'error': 'Could not reserve report number.'}), 500
+        report_data = {
+            'survey_report': {
+                'report_no': f'{prefix}/{datetime.now().year}/{sequence:02d}',
+                'claim_no': parse_data.get('claim_no'), 'vehicle_regn_no': parse_data.get('vehicle_no'),
+                'insured': parse_data.get('insured_name'), 'policy_no': parse_data.get('policy_no'),
+                'insurer': parse_data.get('insurer'), 'date_of_loss': parse_data.get('date_of_loss'),
+            },
+            'assessment': {'report_type': 'Spot Report' if survey_type == 'spot' else 'Final Survey Report'},
+            'photos': {},
+            'claim_meta': {'status': 'documents_awaited', 'survey_type': survey_type},
+            'gmail_intimations': [{'message_id': message_id, 'sender': sender, 'subject': subject,
+                                   'received_at': received_at.isoformat() if hasattr(received_at, 'isoformat') else str(received_at)}],
+        }
+        report_id = sheets_db.save_workspace_report(
+            current_user.id, workspace_admin_id, report_data, status='documents_awaited',
+            survey_type=survey_type, gmail_message_id=message_id, email_received_date=received_at)
+        action = 'created'
+
+    sheets_db.record_gmail_sync_message(message_id, workspace_admin_id, report_id=report_id,
+        sender_email=sender, subject=subject, received_at=received_at, parse_data=parse_data, sync_status='processed')
+
+    return jsonify({'success': True, 'action': action, 'report_id': report_id, 'claim_no': claim_no})
+
 @app.route('/api/gmail/intimation/<message_id>/cancel', methods=['POST'])
 @login_required
 @gmail_sync_required

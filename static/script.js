@@ -3009,8 +3009,95 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!statusRes.ok) return;
         const status = await statusRes.json();
         const toolbar = document.getElementById('gmail-sync-toolbar');
-        if (toolbar && status.can_sync) toolbar.classList.remove('hidden');
+        if (toolbar && status.can_sync) {
+            toolbar.classList.remove('hidden');
+            fetchPendingGmailIntimations();
+        }
         if (workspaceState.profile?.role === 'admin') await loadGmailDomains();
+    }
+
+    async function fetchPendingGmailIntimations() {
+        const section = document.getElementById('gmail-import-section');
+        const container = document.getElementById('gmail-import-cards-container');
+        const countInfo = document.getElementById('gmail-import-count-info');
+        if (!container) return;
+
+        try {
+            const res = await fetch('/api/gmail/intimations');
+            if (!res.ok) return;
+            const result = await res.json();
+            const intimations = result.intimations || [];
+
+            if (!intimations.length) {
+                if (section) section.classList.add('hidden');
+                return;
+            }
+
+            if (section) section.classList.remove('hidden');
+            if (countInfo) countInfo.textContent = `${intimations.length} possible appointment email(s) found.`;
+
+            container.innerHTML = intimations.map(item => {
+                const parse = typeof item.parse_data_json === 'string' ? JSON.parse(item.parse_data_json || '{}') : (item.parse_data_json || {});
+                return `
+                    <div class="gmail-appointment-card" style="background: var(--bg-card, rgba(255,255,255,0.03)); border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 1.25rem;">
+                        <h3 style="font-size: 1rem; margin-bottom: 0.25rem; font-weight: 600;">${escapeHtml(item.subject || 'Intimation Email')}</h3>
+                        <small style="color: var(--text-secondary); font-family: monospace; display: block; margin-bottom: 0.75rem;">${escapeHtml(item.sender_email || '')}</small>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem 1rem; margin-bottom: 1rem; font-size: 0.9rem;">
+                            <div><strong>Claim No.</strong> ${escapeHtml(parse.claim_no || 'Not detected')}</div>
+                            <div><strong>Policy No.</strong> ${escapeHtml(parse.policy_no || 'Not detected')}</div>
+                            <div><strong>Insurer</strong> ${escapeHtml(parse.insurer || 'Not detected')}</div>
+                            <div><strong>Insured</strong> ${escapeHtml(parse.insured_name || 'Not detected')}</div>
+                            <div><strong>Contact</strong> ${escapeHtml(parse.contact || 'Not detected')}</div>
+                            <div><strong>Vehicle</strong> ${escapeHtml(parse.vehicle_no || 'Not detected')}</div>
+                        </div>
+
+                        <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem;">
+                            <button type="button" class="btn btn-primary btn-sm add-gmail-intimation-btn" data-message-id="${escapeHtml(item.gmail_message_id)}">
+                                <i class="fas fa-plus-circle"></i> Add to Claim Register
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-sm cancel-gmail-intimation-btn" data-message-id="${escapeHtml(item.gmail_message_id)}">
+                                Cancel
+                            </button>
+                        </div>
+
+                        <div style="font-size: 0.85rem; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 4px; max-height: 100px; overflow-y: auto; line-height: 1.4;">
+                            ${escapeHtml(parse.snippet || parse.email_text || item.subject || '')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.querySelectorAll('.add-gmail-intimation-btn').forEach(btn => btn.addEventListener('click', () => addGmailIntimationToRegister(btn.dataset.messageId)));
+            container.querySelectorAll('.cancel-gmail-intimation-btn').forEach(btn => btn.addEventListener('click', () => cancelGmailIntimation(btn.dataset.messageId)));
+        } catch (err) {
+            console.error('Error fetching pending Gmail intimations:', err);
+        }
+    }
+
+    async function addGmailIntimationToRegister(messageId) {
+        showStatus('Adding intimation to Claim Register...', 'processing');
+        try {
+            const res = await fetch(`/api/gmail/intimation/${encodeURIComponent(messageId)}/add`, { method: 'POST' });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Failed to add claim');
+            showStatus(`Claim ${result.claim_no || ''} added to Claim Register!`, 'success', true);
+            await Promise.all([fetchPendingGmailIntimations(), fetchClaims(), fetchDashboard()]);
+        } catch (err) {
+            showStatus(err.message, 'error', true);
+        }
+    }
+
+    async function cancelGmailIntimation(messageId) {
+        try {
+            const res = await fetch(`/api/gmail/intimation/${encodeURIComponent(messageId)}/cancel`, { method: 'POST' });
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Failed to cancel intimation');
+            showStatus('Intimation dismissed.', 'info', true);
+            await fetchPendingGmailIntimations();
+        } catch (err) {
+            showStatus(err.message, 'error', true);
+        }
     }
 
     async function loadGmailDomains() {
@@ -3032,15 +3119,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function syncGmail() {
         const button = document.getElementById('sync-gmail-button');
-        if (button) { button.disabled = true; button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing…'; }
+        const importBtn = document.getElementById('sync-gmail-import-btn');
+        const activeBtn = button || importBtn;
+        if (activeBtn) { activeBtn.disabled = true; activeBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing…'; }
         try {
             const res = await fetch('/api/gmail/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender_domain: document.getElementById('gmail-domain-filter')?.value || '' }) });
             const result = await res.json();
             if (!res.ok) throw new Error(result.error || 'Gmail sync failed');
-            showStatus(`Gmail sync: ${result.created} created, ${result.merged} merged, ${result.skipped} skipped, ${result.failed} failed.`, result.failed ? 'error' : 'success', true);
-            await Promise.all([fetchDashboard(), fetchClaims(), fetchFees()]);
+            showStatus(`Gmail sync complete. Found appointment emails.`, 'success', true);
+            await Promise.all([fetchPendingGmailIntimations(), fetchDashboard(), fetchClaims(), fetchFees()]);
         } catch (error) { showStatus(error.message, 'error', true); }
-        finally { if (button) { button.disabled = false; button.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Gmail Intimations'; } }
+        finally {
+            if (button) { button.disabled = false; button.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Gmail Intimations'; }
+            if (importBtn) { importBtn.disabled = false; importBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Connect & Sync Gmail'; }
+        }
     }
 
     async function loadAdminUsers() {
@@ -3101,6 +3193,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (workspaceState.claimsPage < totalPages) { workspaceState.claimsPage += 1; fetchClaims(); }
         });
         document.getElementById('sync-gmail-button')?.addEventListener('click', syncGmail);
+        document.getElementById('sync-gmail-import-btn')?.addEventListener('click', syncGmail);
         document.getElementById('fee-convenience-km')?.addEventListener('input', updateFeeCalculations);
         document.getElementById('fee-convenience-rate')?.addEventListener('input', updateFeeCalculations);
         document.getElementById('fee-conveyance')?.addEventListener('input', (e) => {

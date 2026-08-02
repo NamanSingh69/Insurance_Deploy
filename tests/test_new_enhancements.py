@@ -62,6 +62,48 @@ def test_gmail_intimation_cancellation(authenticated_client, mock_sheets_db):
     mock_sheets_db.cancel_gmail_sync_message.assert_called_with('msg-12345')
 
 
+def test_get_and_add_pending_gmail_intimation(authenticated_client, mock_sheets_db):
+    """Test fetching pending Gmail intimations list and adding an intimation card to Claim Register."""
+    pending_record = {
+        'gmail_message_id': 'msg-appointment-99',
+        'sender_email': 'claims@sbigeneral.in',
+        'subject': 'SBI General: Survey Appointment Claim No MVO4078533',
+        'received_at': '2026-08-02T12:00:00',
+        'parse_data_json': json.dumps({
+            'claim_no': 'MVO4078533',
+            'policy_no': 'POL-SBI-99',
+            'insurer': 'SBI General Insurance Co. Ltd.',
+            'insured_name': 'Rahul Verma',
+            'contact': '9876543210',
+            'vehicle_no': 'WB-23-C-8999',
+            'snippet': 'Survey report assigned against claim No MVO4078533'
+        }),
+        'sync_status': 'pending'
+    }
+
+    mock_sheets_db.get_pending_gmail_messages.return_value = [pending_record]
+    mock_sheets_db.get_gmail_sync_message.return_value = pending_record
+    mock_sheets_db.find_workspace_report_by_claim_no.return_value = None
+    mock_sheets_db.reserve_report_number.return_value = 1
+    mock_sheets_db.save_workspace_report.return_value = 'rep-added-99'
+
+    # GET pending intimations list
+    res_get = authenticated_client.get('/api/gmail/intimations')
+    assert res_get.status_code == 200
+    intimations = res_get.get_json().get('intimations', [])
+    assert len(intimations) == 1
+    assert intimations[0]['gmail_message_id'] == 'msg-appointment-99'
+
+    # POST add intimation card to register
+    res_add = authenticated_client.post('/api/gmail/intimation/msg-appointment-99/add')
+    assert res_add.status_code == 200
+    add_data = res_add.get_json()
+    assert add_data.get('success') is True
+    assert add_data.get('claim_no') == 'MVO4078533'
+    assert add_data.get('action') == 'created'
+
+
+
 def test_pending_documents_checklist_api(authenticated_client, mock_sheets_db):
     """Test GET and POST pending documents checklist per claim."""
     sample_report = {
