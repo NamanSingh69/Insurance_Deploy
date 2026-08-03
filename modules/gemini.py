@@ -68,7 +68,7 @@ def _score_model_for_intelligence(name):
 
 def get_best_models(client):
     """Query available models from Gemini API, rank them and return a sorted list."""
-    default_models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    default_models = sorted(['gemini-1.5-pro', 'gemini-1.5-flash'], key=lambda x: _score_model_for_intelligence(x), reverse=True)
     try:
         models = []
         for m in client.models.list():
