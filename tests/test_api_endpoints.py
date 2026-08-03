@@ -182,109 +182,6 @@ class TestUploadPhotoEndpoint:
         assert response.status_code == 200
         result = response.get_json()
         assert 'url' in result or result.get('success') == True
-    
-    def test_upload_photo_no_file(self, authenticated_client):
-        """Test upload without file."""
-        response = authenticated_client.post('/upload_photo',
-                                             data={},
-                                             content_type='multipart/form-data')
-        
-        assert response.status_code == 400
-        result = response.get_json()
-        assert 'error' in result
-    
-    def test_upload_photo_empty_filename(self, authenticated_client):
-        """Test upload with empty filename."""
-        data = {
-            'photo': (io.BytesIO(b''), '')
-        }
-        
-        response = authenticated_client.post('/upload_photo',
-                                             data=data,
-                                             content_type='multipart/form-data')
-        
-        assert response.status_code == 400
-
-
-class TestGenerateFilesEndpoint:
-    """Tests for /generate_files endpoint."""
-    
-    def test_generate_files_success(self, authenticated_client, sample_report_data):
-        """Test successful file generation returns task_id (async pattern)."""
-        response = authenticated_client.post('/generate_files',
-                                             json=sample_report_data,
-                                             content_type='application/json')
-        
-        # Now returns 202 with task_id for async processing
-        assert response.status_code in [200, 202, 400, 500]
-        if response.status_code == 202:
-            data = response.get_json()
-            assert 'task_id' in data
-    
-    def test_generate_files_no_data(self, authenticated_client):
-        """Test generate files without data."""
-        response = authenticated_client.post('/generate_files',
-                                             json={},
-                                             content_type='application/json')
-        
-        # Empty data is caught synchronously before async dispatch
-        assert response.status_code in [400, 500]
-
-
-class TestProcessPDFEndpoint:
-    """Tests for /process_pdf endpoint."""
-    
-    def test_process_pdf_no_file(self, authenticated_client):
-        """Test process PDF without file."""
-        response = authenticated_client.post('/process_pdf',
-                                             data={},
-                                             content_type='multipart/form-data')
-        
-        # Should return error synchronously (before async dispatch)
-        assert response.status_code in [200, 400]
-    
-    def test_process_pdf_with_mock_file(self, authenticated_client):
-        """Test process PDF with mock file returns task_id (async pattern)."""
-        # Create a simple PDF-like bytes
-        pdf_content = b'%PDF-1.4 fake pdf content'
-        data = {
-            'pdf_file': (io.BytesIO(pdf_content), 'test.pdf', 'application/pdf')
-        }
-        
-        response = authenticated_client.post('/process_pdf',
-                                             data=data,
-                                             content_type='multipart/form-data')
-        
-        # Now returns 202 with task_id for async processing
-        assert response.status_code in [200, 202, 400, 500]
-        if response.status_code == 202:
-            result = response.get_json()
-            assert 'task_id' in result
-
-    def test_process_pdf_status_not_found(self, authenticated_client):
-        """Test polling for a non-existent task."""
-        response = authenticated_client.get('/process_pdf/status/nonexistent-task-id')
-        assert response.status_code == 404
-
-
-class TestProcessInvoiceEndpoint:
-    """Tests for /process_invoice endpoint."""
-    
-    def test_process_invoice_no_file(self, authenticated_client):
-        """Test process invoice without file returns 400."""
-        response = authenticated_client.post('/process_invoice',
-                                             data={},
-                                             content_type='multipart/form-data')
-        assert response.status_code == 400
-        result = response.get_json()
-        assert 'error' in result
-
-    def test_process_invoice_with_mock_file(self, authenticated_client):
-        """Test process invoice with mock PDF file returns 202 and task_id."""
-        pdf_content = b'%PDF-1.4 fake invoice pdf content'
-        data = {
-            'invoice_pdf_file': (io.BytesIO(pdf_content), 'MR ASRAFUL ISLAM P I.pdf', 'application/pdf')
-        }
         
         with patch('app.bcrypt.check_password_hash', return_value=True):
             response = authenticated_client.delete('/delete_report/nonexistent-id', json={'password': 'any_password'})
@@ -298,17 +195,10 @@ class TestUploadPhotoEndpoint:
     """Tests for /upload_photo endpoint."""
     
     def test_upload_photo_success(self, authenticated_client, mock_sheets_db):
-        """Test successful photo upload."""
-        # Mock the upload function
-        mock_sheets_db.upload_image_to_drive.return_value = {
-            'id': 'drive-file-id',
-            'view_link': 'https://drive.google.com/view',
-            'download_link': 'https://drive.google.com/download'
-        }
-        
-        # Create fake image file
+        """Test successful photo upload returns private asset route."""
+        valid_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82'
         data = {
-            'photo': (io.BytesIO(b'fake image data'), 'test.jpg')
+            'photo': (io.BytesIO(valid_png), 'test.png')
         }
         
         response = authenticated_client.post('/upload_photo',
@@ -317,7 +207,8 @@ class TestUploadPhotoEndpoint:
         
         assert response.status_code == 200
         result = response.get_json()
-        assert 'url' in result or result.get('success') == True
+        assert result.get('success') is True
+        assert '/assets/' in result.get('url', '')
     
     def test_upload_photo_no_file(self, authenticated_client):
         """Test upload without file."""
@@ -351,11 +242,9 @@ class TestGenerateFilesEndpoint:
                                              json=sample_report_data,
                                              content_type='application/json')
         
-        # Now returns 202 with task_id for async processing
-        assert response.status_code in [200, 202, 400, 500]
-        if response.status_code == 202:
-            data = response.get_json()
-            assert 'task_id' in data
+        assert response.status_code == 202
+        data = response.get_json()
+        assert 'task_id' in data
     
     def test_generate_files_no_data(self, authenticated_client):
         """Test generate files without data."""
@@ -363,7 +252,6 @@ class TestGenerateFilesEndpoint:
                                              json={},
                                              content_type='application/json')
         
-        # Empty data is caught synchronously before async dispatch
         assert response.status_code in [400, 500]
 
 
@@ -376,12 +264,10 @@ class TestProcessPDFEndpoint:
                                              data={},
                                              content_type='multipart/form-data')
         
-        # Should return error synchronously (before async dispatch)
-        assert response.status_code in [200, 400]
+        assert response.status_code == 400
     
     def test_process_pdf_with_mock_file(self, authenticated_client):
         """Test process PDF with mock file returns task_id (async pattern)."""
-        # Create a simple PDF-like bytes
         pdf_content = b'%PDF-1.4 fake pdf content'
         data = {
             'pdf_file': (io.BytesIO(pdf_content), 'test.pdf', 'application/pdf')
@@ -391,14 +277,13 @@ class TestProcessPDFEndpoint:
                                              data=data,
                                              content_type='multipart/form-data')
         
-        # Now returns 202 with task_id for async processing
-        assert response.status_code in [200, 202, 400, 500]
-        if response.status_code == 202:
-            result = response.get_json()
-            assert 'task_id' in result
+        assert response.status_code == 202
+        result = response.get_json()
+        assert 'task_id' in result
 
-    def test_process_pdf_status_not_found(self, authenticated_client):
+    def test_process_pdf_status_not_found(self, authenticated_client, mock_sheets_db):
         """Test polling for a non-existent task."""
+        mock_sheets_db.get_job_for_user.return_value = None
         response = authenticated_client.get('/process_pdf/status/nonexistent-task-id')
         assert response.status_code == 404
 

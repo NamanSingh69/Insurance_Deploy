@@ -1,4 +1,20 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Attach the server-issued CSRF token to every same-origin state-changing
+    // request, including JSON and multipart FormData submissions.
+    const nativeFetch = window.fetch.bind(window);
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    window.fetch = (input, init = {}) => {
+        const requestUrl = typeof input === 'string' ? input : input.url;
+        const requestMethod = (init.method || (typeof input === 'string' ? 'GET' : input.method) || 'GET').toUpperCase();
+        const target = new URL(requestUrl, window.location.origin);
+        if (csrfToken && target.origin === window.location.origin && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(requestMethod)) {
+            const headers = new Headers(init.headers || (typeof input === 'string' ? undefined : input.headers));
+            headers.set('X-CSRFToken', csrfToken);
+            init = { ...init, headers };
+        }
+        return nativeFetch(input, init);
+    };
+
     // DOM elements
     const uploadSection = document.getElementById('upload-section');
     const previewSection = document.getElementById('preview-section');
@@ -96,7 +112,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Create a new flash message element
             const flashDiv = document.createElement('div');
             flashDiv.className = `status status-${type}`; // Use status class for styling
-            flashDiv.innerHTML = `<i class="fas ${type === 'error' ? 'fa-exclamation-triangle' : type === 'success' ? 'fa-check-circle' : 'fa-info-circle'} status-icon"></i><span>${message}</span>`;
+            const icon = document.createElement('i');
+            icon.className = `fas ${type === 'error' ? 'fa-exclamation-triangle' : type === 'success' ? 'fa-check-circle' : 'fa-info-circle'} status-icon`;
+            const text = document.createElement('span');
+            text.textContent = message;
+            flashDiv.append(icon, text);
             statusContainer.insertBefore(flashDiv, statusContainer.firstChild); // Add to top
             // Auto-remove after 5 seconds
             setTimeout(() => {
@@ -1353,29 +1373,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
-        const isLargeFile = file.size > FILE_SIZE_LIMIT;
-
-        showInvoiceStatus(isLargeFile ? 'Large file detected. Uploading securely...' : 'Uploading and processing invoice...', 'processing');
+        showInvoiceStatus('Uploading and processing invoice securely...', 'processing');
         uploadInvoiceButton.disabled = true;
         uploadInvoiceButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing Invoice...';
 
         try {
-            let response;
-
-            if (isLargeFile) {
-                // Upload via service account proxy (no user Drive connection needed)
-                const driveFileId = await uploadFileDirectly(file);
-                response = await fetch('/process_invoice', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ drive_file_id: driveFileId })
-                });
-            } else {
-                // Standard Upload
-                const formData = new FormData(); formData.append('invoice_pdf_file', file);
-                response = await fetch('/process_invoice', { method: 'POST', body: formData });
-            }
+            const formData = new FormData();
+            formData.append('invoice_pdf_file', file);
+            const response = await fetch('/process_invoice', { method: 'POST', body: formData });
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status}`;
@@ -1916,150 +1921,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function uploadToDrive(file) {
-        const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB
-        const totalSize = file.size;
-
-        showStatus('Requesting Drive upload link...', 'processing');
-
-        const getUrlResponse = await fetch('/get_user_upload_url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, mime_type: file.type })
-        });
-
-        if (!getUrlResponse.ok) {
-            let err = await getUrlResponse.text();
-            throw new Error(`Failed to get Drive upload URL: ${err}`);
-        }
-
-        const { url: uploadUrl } = await getUrlResponse.json();
-
-        let driveFileId = null;
-
-        for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
-            const end = Math.min(start + CHUNK_SIZE, totalSize);
-            const chunk = file.slice(start, end);
-            
-            showStatus(`Uploading to Drive (${Math.round((end/totalSize)*100)}%)...`, 'processing');
-
-            const uploadResponse = await fetch(uploadUrl, {
-                method: 'PUT',
-                headers: {
-                    'Content-Range': `bytes ${start}-${end - 1}/${totalSize}`
-                },
-                body: chunk
-            });
-
-            if (uploadResponse.status === 308) {
-                // Incomplete, continue
-                continue;
-            } else if (uploadResponse.ok) {
-                // Done
-                const result = await uploadResponse.json();
-                driveFileId = result.id;
-                break;
-            } else {
-                let errorText = await uploadResponse.text();
-                throw new Error(`Drive Upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
-            }
-        }
-
-        return { drive_file_id: driveFileId };
-    }
-
-    async function uploadToGemini(file) {
-        // Gemini requires 8MB chunk granularity for resumable uploads
-        const CHUNK_SIZE = 8 * 1024 * 1024; 
-        const totalSize = file.size;
-        const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
-
-        showStatus('Requesting fallback direct upload link...', 'processing');
-
-        // 1. Get Resumable Upload URL from Backend (which securely uses the API Key)
-        const getUrlResponse = await fetch('/get_gemini_upload_url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, mime_type: file.type, size: totalSize })
-        });
-
-        if (!getUrlResponse.ok) {
-            let err = await getUrlResponse.text();
-            throw new Error(`Failed to get fallback upload URL: ${err}`);
-        }
-
-        const { url: uploadUrl } = await getUrlResponse.json();
-
-        // 2. Upload chunks directly to Google's servers over CORS
-        let fileUri = null;
-
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const start = chunkIndex * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, totalSize);
-            const chunk = file.slice(start, end);
-            
-            const isFinal = (chunkIndex === totalChunks - 1);
-            const command = isFinal ? "upload, finalize" : "upload";
-
-            showStatus(`Uploading fallback chunk ${chunkIndex + 1} of ${totalChunks}...`, 'processing');
-
-            const uploadResponse = await fetch(uploadUrl, {
-                method: 'POST',
-                headers: {
-                    'X-Goog-Upload-Command': command,
-                    'X-Goog-Upload-Offset': start.toString()
-                },
-                body: chunk // Send raw bytes, no Base64 necessary!
-            });
-
-            if (!uploadResponse.ok) {
-                let errorText = await uploadResponse.text();
-                throw new Error(`Fallback Chunk ${chunkIndex + 1} upload failed! Status: ${uploadResponse.status}, Error: ${errorText}`);
-            }
-            
-            if (isFinal) {
-                const result = await uploadResponse.json();
-                if (result.file && result.file.uri) {
-                    fileUri = result.file.uri;
-                } else {
-                    throw new Error('Upload completed but no file URI received: ' + JSON.stringify(result));
-                }
-            }
-        }
-
-        return { gemini_file_uri: fileUri };
-    }
-
-    // --- Direct Upload Helper ---
-    async function uploadFileDirectly(file) {
-        try {
-            const statusRes = await fetch('/auth/google/status');
-            const data = await statusRes.json();
-            if (data.connected) {
-                return await uploadToDrive(file);
-            }
-        } catch (e) {
-            console.error("Failed to check Drive status, trying Gemini fallback.", e);
-        }
-        
-        // Fallback to Gemini if not connected or getting status fails
-        return await uploadToGemini(file);
-    }
-
-
     // --- Process PDF ---
     processButton.addEventListener('click', async () => {
         const file = pdfFileInput.files[0];
         if (!file) { showStatus('Please select a PDF file first.', 'error'); return; }
 
-        const FILE_SIZE_LIMIT = 4 * 1024 * 1024; // 4 MB (Vercel serverless limit with overhead)
-        const isLargeFile = file.size > FILE_SIZE_LIMIT;
-
-        if (isLargeFile) {
-            // We can now upload large files using the service account proxy
-        }
-
-        showStatus(isLargeFile ? 'Large file detected. Uploading securely...' : 'Uploading and processing PDF...', 'processing');
+        showStatus('Uploading and processing PDF securely...', 'processing');
         processButton.disabled = true; processButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
         uploadProgressContainer.classList.remove('hidden'); uploadProgress.style.width = `0%`;
 
@@ -2073,21 +1940,9 @@ document.addEventListener('DOMContentLoaded', () => {
         let responseData = null;
 
         try {
-            let response;
-
-            if (isLargeFile) {
-                // Upload via Drive or Gemini Fallback
-                const uploadResult = await uploadFileDirectly(file);
-                response = await fetch('/process_pdf', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...uploadResult, mime_type: file.type })
-                });
-            } else {
-                // Standard Upload
-                const formData = new FormData(); formData.append('pdf_file', file);
-                response = await fetch('/process_pdf', { method: 'POST', body: formData });
-            }
+            const formData = new FormData();
+            formData.append('pdf_file', file);
+            const response = await fetch('/process_pdf', { method: 'POST', body: formData });
 
             if (!response.ok) {
                 let errorMsg = `Server error: ${response.status} ${response.statusText}`;
@@ -2335,20 +2190,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         reports.forEach(report => {
             const row = savedReportsTbody.insertRow();
-            row.innerHTML = `
-                <td>${report.report_no || 'N/A'}</td>
-                <td>${report.vehicle_no || 'N/A'}</td>
-                <td>${report.insured_name || 'N/A'}</td>
-                <td>${report.saved_at || 'N/A'}</td>
-                <td class="action-cell">
-                    <button type="button" class="btn btn-primary btn-sm load-report-btn" data-report-id="${report.id}">
-                        <i class="fas fa-folder-open"></i> Load
-                    </button>
-                    <button type="button" class="btn btn-danger btn-sm delete-report-btn" data-report-id="${report.id}" data-report-no="${report.report_no}">
-                        <i class="fas fa-trash-alt"></i> Delete
-                    </button>
-                </td>
-            `;
+            [report.report_no, report.vehicle_no, report.insured_name, report.saved_at].forEach(value => {
+                const cell = row.insertCell();
+                cell.textContent = value || 'N/A';
+            });
+            const actionCell = row.insertCell();
+            actionCell.className = 'action-cell';
+            const createActionButton = (className, iconClass, label) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = className;
+                button.dataset.reportId = String(report.id || '');
+                const icon = document.createElement('i');
+                icon.className = `fas ${iconClass}`;
+                button.append(icon, document.createTextNode(` ${label}`));
+                return button;
+            };
+            const loadButton = createActionButton('btn btn-primary btn-sm load-report-btn', 'fa-folder-open', 'Load');
+            const deleteButton = createActionButton('btn btn-danger btn-sm delete-report-btn', 'fa-trash-alt', 'Delete');
+            deleteButton.dataset.reportNo = String(report.report_no || '');
+            actionCell.append(loadButton, deleteButton);
         });
         addSavedReportActionListeners();
     }
@@ -2597,6 +2458,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), workspaceState.profile.role === 'admin' ? fetchFees() : Promise.resolve()]);
+            checkPending7DayAlerts();
         } catch (error) {
             console.error('Could not initialize motor survey workspace:', error);
         }
@@ -2647,6 +2509,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 ['Total invoiced', formatMoney(data.total_invoiced)], ['Cash received', formatMoney(data.amount_received)],
                 ['Outstanding fees', formatMoney(data.outstanding_fees)], ['Overdue invoices', Number(data.overdue_count || 0)]
             ].map(([label, value]) => `<div class="metric-card financial"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(value)}</span></div>`).join('');
+        }
+    }
+
+    async function checkPending7DayAlerts() {
+        try {
+            const res = await fetch('/api/claims/pending_alerts');
+            if (!res.ok) return;
+            const data = await res.json();
+            const count = data.pending_7day_count || 0;
+            if (count > 0) {
+                const countNum = document.getElementById('pending-7day-count-num');
+                if (countNum) countNum.textContent = count;
+                const modal = document.getElementById('pending-7day-alert-modal');
+                if (modal) modal.classList.remove('hidden');
+            }
+        } catch (err) {
+            console.error('Failed to check pending 7-day alerts:', err);
+        }
+    }
+
+    function updateFeeCalculations() {
+        const km = parseFloat(document.getElementById('fee-convenience-km')?.value || 0);
+        const rate = parseFloat(document.getElementById('fee-convenience-rate')?.value || 0);
+        const conveyanceInput = document.getElementById('fee-conveyance');
+        if (conveyanceInput && !conveyanceInput.dataset.userEdited) {
+            conveyanceInput.value = (km * rate).toFixed(2);
         }
     }
 
@@ -2927,11 +2815,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error('Could not load fees');
             const bills = await res.json();
             if (!bills.length) {
-                tbody.innerHTML = '<tr><td colspan="9">No fee register rows found.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="12">No fee register rows found.</td></tr>';
                 return;
             }
-            tbody.innerHTML = bills.map(bill => `<tr><td>${escapeHtml(bill.invoice_no || '—')}</td><td>${escapeHtml(bill.claim_no || '—')}</td><td>${escapeHtml(bill.insurer_name || '')}</td><td>${formatMoney(bill.professional_fee ?? bill.taxable_amount)}</td><td>${formatMoney(bill.gst_amount)}</td><td>${formatMoney(bill.gross_invoice_value ?? bill.total_amount)}</td><td>${formatMoney(bill.amount_received)}</td><td>${formatMoney(bill.outstanding_amount)}</td><td>${escapeHtml(bill.payment_status || '')}</td></tr>`).join('');
-        } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
+            tbody.innerHTML = bills.map(bill => {
+                const insurerDisplay = bill.insurer_gst ? `${escapeHtml(bill.insurer_name || '')}<br><small style="color:#aaa;">GST: ${escapeHtml(bill.insurer_gst)}</small>` : escapeHtml(bill.insurer_name || '—');
+                const convFee = bill.conveyance_fee ?? bill.convenience_fee ?? (Number(bill.convenience_km || 0) * Number(bill.convenience_rate || 0));
+                const photoAmt = bill.photocopy_amount ?? bill.photocopy ?? 0;
+                return `<tr><td>${escapeHtml(bill.invoice_no || '—')}</td><td>${escapeHtml(bill.claim_no || '—')}</td><td><span class="badge badge-outline">${escapeHtml(bill.survey_type || 'Survey Fee')}</span></td><td>${insurerDisplay}</td><td>${formatMoney(bill.professional_fee ?? 0)}</td><td>${formatMoney(convFee)}</td><td>${formatMoney(photoAmt)}</td><td>${formatMoney(bill.gst_amount ?? 0)}</td><td>${formatMoney(bill.gross_invoice_value ?? bill.total_amount ?? 0)}</td><td>${formatMoney(bill.amount_received ?? 0)}</td><td>${formatMoney(bill.outstanding_amount ?? 0)}</td><td>${escapeHtml(bill.payment_status || 'unpaid')}</td></tr>`;
+            }).join('');
+        } catch (error) { tbody.innerHTML = '<tr><td colspan="12">Could not load fee register.</td></tr>'; }
     }
 
     async function handleFeePdfUpload(file) {
@@ -2963,23 +2856,39 @@ document.addEventListener('DOMContentLoaded', () => {
         const reportId = document.getElementById('fee-report-id')?.value;
         const report = workspaceState.claims.find(item => item.id === reportId) || {};
         const professional = Number(document.getElementById('fee-professional')?.value || 0);
+        const convType = document.getElementById('fee-convenience-type')?.value || '1st Convenience';
+        const convRoute = document.getElementById('fee-convenience-route')?.value.trim() || '';
+        const convKm = Number(document.getElementById('fee-convenience-km')?.value || 0);
+        const convRate = Number(document.getElementById('fee-convenience-rate')?.value || 0);
+        const conveyanceFee = Number(document.getElementById('fee-conveyance')?.value || (convKm * convRate));
+        const photocopyAmount = Number(document.getElementById('fee-photocopy')?.value || 0);
+        const taxableAmount = professional + conveyanceFee + photocopyAmount;
         const gstPc = Number(document.getElementById('fee-gst-pc')?.value || 0);
-        const gstAmount = professional * gstPc / 100;
+        const gstAmount = taxableAmount * gstPc / 100;
+        const grossValue = taxableAmount + gstAmount;
+
         const payload = {
             report_id: reportId || null,
+            survey_type: document.getElementById('fee-survey-type')?.value || 'Survey Fee',
             insurer_name: document.getElementById('fee-insurer')?.value.trim(),
             insurer_gst: document.getElementById('fee-insurer-gst')?.value.trim() || '',
             insurer_state: document.getElementById('fee-insurer-state')?.value.trim() || '',
             insurer_address: document.getElementById('fee-insurer-address')?.value.trim() || '',
             insured_name: document.getElementById('fee-insured')?.value.trim(),
             invoice_no: document.getElementById('fee-invoice-no')?.value.trim(),
-            invoice_date: document.getElementById('fee-invoice-date')?.value,
+            invoice_date: document.getElementById('fee-invoice-date')?.value || new Date().toISOString().split('T')[0],
             professional_fee: professional,
-            taxable_amount: professional,
+            convenience_type: convType,
+            convenience_route: convRoute,
+            convenience_km: convKm,
+            convenience_rate: convRate,
+            conveyance_fee: conveyanceFee,
+            photocopy_amount: photocopyAmount,
+            taxable_amount: taxableAmount,
             gst_pc: gstPc,
             gst_amount: gstAmount,
-            gross_invoice_value: professional + gstAmount,
-            total_amount: professional + gstAmount,
+            gross_invoice_value: grossValue,
+            total_amount: grossValue,
             amount_received: Number(document.getElementById('fee-received')?.value || 0),
             outstanding_amount: Number(document.getElementById('fee-outstanding')?.value || 0),
             due_date: document.getElementById('fee-due-date')?.value || null,
@@ -2996,6 +2905,8 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('fee-register-form')?.reset();
             const gstElem = document.getElementById('fee-gst-pc');
             if (gstElem) gstElem.value = '18';
+            const invDateElem = document.getElementById('fee-invoice-date');
+            if (invDateElem) invDateElem.value = new Date().toISOString().split('T')[0];
             const fileNameSpan = document.getElementById('fee-pdf-file-name');
             if (fileNameSpan) fileNameSpan.textContent = '';
             showStatus('Fee register saved.', 'success', true);
@@ -3194,6 +3105,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         document.getElementById('sync-gmail-button')?.addEventListener('click', syncGmail);
         document.getElementById('sync-gmail-import-btn')?.addEventListener('click', syncGmail);
+        document.getElementById('pending-7day-proceed-btn')?.addEventListener('click', () => {
+            document.getElementById('pending-7day-alert-modal')?.classList.add('hidden');
+            document.getElementById('tab-btn-claims')?.click();
+            const filter = document.getElementById('claim-status-filter');
+            if (filter) { filter.value = 'documents_awaited'; fetchClaims(); }
+        });
+        document.getElementById('pending-7day-cancel-btn')?.addEventListener('click', () => {
+            document.getElementById('pending-7day-alert-modal')?.classList.add('hidden');
+        });
         document.getElementById('fee-convenience-km')?.addEventListener('input', updateFeeCalculations);
         document.getElementById('fee-convenience-rate')?.addEventListener('input', updateFeeCalculations);
         document.getElementById('fee-conveyance')?.addEventListener('input', (e) => {
@@ -3347,9 +3267,16 @@ document.addEventListener('DOMContentLoaded', () => {
                             profileForm.elements[key].value = data[key];
                         }
                     }
+                    const storedKeyInput = document.getElementById('settings-gemini-key');
+                    if (storedKeyInput) {
+                        storedKeyInput.value = '';
+                        storedKeyInput.placeholder = data.has_gemini_api_key
+                            ? 'A key is stored securely; enter a replacement to change it'
+                            : 'Optional: enter your Gemini key';
+                    }
                     profileModal.classList.remove('hidden');
                     // Populate models dropdown
-                    await loadAvailableModels(data.gemini_api_key, data.gemini_model);
+                    await loadAvailableModels(null, data.gemini_model);
                     await refreshAdminSettings(data);
                 } else {
                     alert("Failed to load profile settings.");
@@ -3483,8 +3410,11 @@ document.addEventListener('DOMContentLoaded', () => {
         modelSelect.innerHTML = '<option value="">Auto Model Selection (Recommended)</option>';
         
         try {
-            const url = apiKey ? `/api/available_models?api_key=${encodeURIComponent(apiKey)}` : '/api/available_models';
-            const response = await fetch(url);
+            const response = await fetch('/api/available_models', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(apiKey ? { api_key: apiKey } : {})
+            });
             if (response.ok) {
                 const models = await response.json();
                 models.forEach(model => {

@@ -1,6 +1,9 @@
 import os
 from dotenv import load_dotenv
-load_dotenv(override=True)
+# Tests and process-level deployment configuration must win over a developer's
+# local .env file.  ``override=True`` made the test suite talk to production
+# resources whenever a local .env happened to be present.
+load_dotenv()
 import json
 import uuid
 from datetime import date, datetime, timedelta
@@ -206,7 +209,7 @@ class PostgresDB:
                     INSERT INTO users (
                         username, password_hash, full_name, qualifications, designation,
                         license_no, expiry_date, membership_no, address_line_1,
-                        address_line_2, address_line_3, contact_no, email, gemini_api_key, gemini_model,
+                        address_line_2, address_line_3, contact_no, email, encrypted_gemini_api_key, gemini_model,
                         role, admin_id, is_locked, permissions, must_change_password
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;
                 """, (
@@ -216,7 +219,7 @@ class PostgresDB:
                     user_data.get('expiry_date'), user_data.get('membership_no'),
                     user_data.get('address_line_1'), user_data.get('address_line_2'),
                     user_data.get('address_line_3'), user_data.get('contact_no'),
-                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model'),
+                    user_data.get('email'), user_data.get('encrypted_gemini_api_key'), user_data.get('gemini_model'),
                     user_data.get('role', 'employee'), user_data.get('admin_id'),
                     bool(user_data.get('is_locked', False)), json.dumps(user_data.get('permissions') or {}),
                     bool(user_data.get('must_change_password', False))
@@ -236,7 +239,7 @@ class PostgresDB:
                         full_name = %s, qualifications = %s, designation = %s,
                         license_no = %s, expiry_date = %s, membership_no = %s,
                         address_line_1 = %s, address_line_2 = %s, address_line_3 = %s,
-                        contact_no = %s, email = %s, gemini_api_key = %s, gemini_model = %s
+                        contact_no = %s, email = %s, gemini_model = %s
                     WHERE id = %s;
                 """, (
                     user_data.get('full_name'), user_data.get('qualifications'),
@@ -244,13 +247,95 @@ class PostgresDB:
                     user_data.get('expiry_date'), user_data.get('membership_no'),
                     user_data.get('address_line_1'), user_data.get('address_line_2'),
                     user_data.get('address_line_3'), user_data.get('contact_no'),
-                    user_data.get('email'), user_data.get('gemini_api_key'), user_data.get('gemini_model'),
+                    user_data.get('email'), user_data.get('gemini_model'),
                     user_id
                  ))
                 return True
         except Exception as e:
              print(f"Error updating user profile: {e}")
              return False
+
+    def set_user_gemini_api_key(self, user_id, encrypted_value):
+        """Persist an encrypted user key and erase the legacy plaintext column."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users
+                    SET encrypted_gemini_api_key = %s, gemini_api_key = NULL
+                    WHERE id = %s;
+                """, (encrypted_value, user_id))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error storing encrypted Gemini credential: {e}")
+            return False
+
+    def clear_user_gemini_api_key(self, user_id):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users
+                    SET encrypted_gemini_api_key = NULL, gemini_api_key = NULL
+                    WHERE id = %s;
+                """, (user_id,))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error clearing Gemini credential: {e}")
+            return False
+
+    def get_users_with_legacy_gemini_keys(self):
+        """Return only rows requiring the one-time plaintext credential migration."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, gemini_api_key
+                    FROM users
+                    WHERE gemini_api_key IS NOT NULL AND gemini_api_key <> ''
+                      AND (encrypted_gemini_api_key IS NULL OR encrypted_gemini_api_key = '');
+                """)
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error reading legacy Gemini credentials: {e}")
+            return []
+
+    def get_users_without_signature_asset(self):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id FROM users WHERE signature_asset_id IS NULL;")
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            print(f"Error reading users without signature assets: {e}")
+            return []
+
+    def set_user_signature_asset(self, user_id, asset_id):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET signature_asset_id = %s WHERE id = %s;
+                """, (asset_id, user_id))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error storing signature asset: {e}")
+            return False
 
     # --- Workspace User Management ---
     def get_workspace_id_for_user(self, user_id):
@@ -450,7 +535,9 @@ class PostgresDB:
 
 
     # --- Asset Methods ---
-    def create_asset(self, user_id, storage_kind, storage_locator, filename='', mime_type='', expires_at=None, report_id=None):
+    def create_asset(self, user_id, storage_kind, storage_locator, filename='', mime_type='',
+                     expires_at=None, report_id=None, purpose='generic', size_bytes=None,
+                     checksum_sha256=None):
         """Create an application-owned reference to a private stored file."""
         if not self.conn:
             self.connect()
@@ -462,10 +549,13 @@ class PostgresDB:
                 cur.execute("""
                     INSERT INTO assets (
                         id, user_id, storage_kind, storage_locator, filename,
-                        mime_type, expires_at, report_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        mime_type, expires_at, report_id, purpose, size_bytes, checksum_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *;
-                """, (asset_id, user_id, storage_kind, storage_locator, filename, mime_type, expires_at, report_id))
+                """, (
+                    asset_id, user_id, storage_kind, storage_locator, filename, mime_type, expires_at, report_id,
+                    purpose, size_bytes, checksum_sha256
+                ))
                 return dict(cur.fetchone())
         except Exception as e:
             print(f"Error creating asset: {e}")
@@ -490,6 +580,53 @@ class PostgresDB:
         except Exception as e:
             print(f"Error fetching asset: {e}")
             return None
+
+    def get_asset_for_access(self, asset_id, user_id, workspace_admin_id=None):
+        """Return an unexpired asset visible to the caller's personal or shared workspace."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT a.*
+                    FROM assets AS a
+                    LEFT JOIN reports AS r ON r.id = a.report_id
+                    WHERE a.id = %s
+                      AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP)
+                      AND (
+                          a.user_id = %s
+                          OR (r.workspace_admin_id IS NULL AND r.user_id = %s)
+                          OR (%s IS NOT NULL AND r.workspace_admin_id = %s)
+                      );
+                """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching accessible asset: {e}")
+            return None
+
+    def attach_assets_to_report(self, asset_ids, report_id, user_id):
+        """Attach newly uploaded assets to their report and make them durable."""
+        clean_ids = [str(asset_id) for asset_id in (asset_ids or []) if asset_id]
+        if not clean_ids:
+            return True
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE assets
+                    SET report_id = %s, expires_at = NULL
+                    WHERE id = ANY(%s) AND user_id = %s;
+                """, (report_id, clean_ids, user_id))
+                return cur.rowcount == len(clean_ids)
+        except Exception as e:
+            print(f"Error attaching assets to report: {e}")
+            return False
 
     def delete_expired_assets(self):
         """Return storage records that a cleanup worker must remove from their provider."""
@@ -1180,6 +1317,54 @@ class PostgresDB:
             return default
 
 
+    # --- Personal Google Drive Integration ---
+    def get_drive_integration(self, user_id):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM drive_integrations WHERE user_id = %s;", (user_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error reading Drive integration: {e}")
+            return None
+
+    def save_drive_integration(self, user_id, encrypted_token, account_email=None):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO drive_integrations (user_id, encrypted_token, account_email)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        encrypted_token = EXCLUDED.encrypted_token,
+                        account_email = COALESCE(EXCLUDED.account_email, drive_integrations.account_email),
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (user_id, encrypted_token, account_email))
+                return True
+        except Exception as e:
+            print(f"Error saving Drive integration: {e}")
+            return False
+
+    def delete_drive_integration(self, user_id):
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM drive_integrations WHERE user_id = %s;", (user_id,))
+                return cur.rowcount == 1
+        except Exception as e:
+            print(f"Error deleting Drive integration: {e}")
+            return False
+
     # --- Gmail Workspace Integration ---
     def get_gmail_integration(self, workspace_admin_id):
         if not self.conn: self.connect()
@@ -1637,12 +1822,17 @@ class PostgresDB:
         policy_no = bill_data.get('policy_no', '')
         claim_no = bill_data.get('claim_no', '')
         vehicle_no = bill_data.get('vehicle_no', '')
+        survey_type = bill_data.get('survey_type', 'Survey Fee')
+        insurer_gst = bill_data.get('insurer_gst', '')
+        insurer_state = bill_data.get('insurer_state', '')
+        insurer_address = bill_data.get('insurer_address', '')
         professional_fee = float(bill_data.get('professional_fee', bill_data.get('taxable_amount', 0.0)) or 0)
+        convenience_type = bill_data.get('convenience_type', '1st Convenience')
         convenience_route = bill_data.get('convenience_route', '')
         convenience_km = float(bill_data.get('convenience_km', 0.0) or 0)
         convenience_rate = float(bill_data.get('convenience_rate', 0.0) or 0)
-        conveyance_fee = float(bill_data.get('conveyance_fee', convenience_km * convenience_rate) or 0)
-        photocopy_amount = float(bill_data.get('photocopy_amount', 0.0) or 0)
+        conveyance_fee = float(bill_data.get('conveyance_fee', bill_data.get('convenience_fee', convenience_km * convenience_rate)) or 0)
+        photocopy_amount = float(bill_data.get('photocopy_amount', bill_data.get('photocopy', 0.0)) or 0)
         taxable_amount = float(bill_data.get('taxable_amount', professional_fee + conveyance_fee + photocopy_amount) or 0)
         gst_pc = float(bill_data.get('gst_pc', 18.0) or 0)
         gst_amount = float(bill_data.get('gst_amount', taxable_amount * (gst_pc / 100.0)) or 0)
@@ -1656,7 +1846,12 @@ class PostgresDB:
         report_id = bill_data.get('report_id') or None
         created_at = datetime.now().isoformat()
         fee_breakdown = {
+            'survey_type': survey_type,
+            'insurer_gst': insurer_gst,
+            'insurer_state': insurer_state,
+            'insurer_address': insurer_address,
             'professional_fee': professional_fee,
+            'convenience_type': convenience_type,
             'convenience_route': convenience_route,
             'convenience_km': convenience_km,
             'convenience_rate': convenience_rate,
@@ -1682,9 +1877,12 @@ class PostgresDB:
         record = {
             'id': bill_id, 'user_id': str(user_id), 'workspace_admin_id': workspace_admin_id,
             'report_id': report_id, 'invoice_no': invoice_no, 'invoice_date': invoice_date,
+            'survey_type': survey_type, 'insurer_gst': insurer_gst, 'insurer_state': insurer_state,
+            'insurer_address': insurer_address,
             'insurer_name': insurer_name, 'insured_name': insured_name, 'policy_no': policy_no,
             'claim_no': claim_no, 'vehicle_no': vehicle_no, 'taxable_amount': taxable_amount,
-            'professional_fee': professional_fee, 'convenience_route': convenience_route,
+            'professional_fee': professional_fee, 'convenience_type': convenience_type,
+            'convenience_route': convenience_route,
             'convenience_km': convenience_km, 'convenience_rate': convenience_rate,
             'conveyance_fee': conveyance_fee, 'photocopy_amount': photocopy_amount,
             'gst_pc': gst_pc, 'gst_amount': gst_amount,
@@ -1818,6 +2016,11 @@ class PostgresDB:
                 results = []
                 for row in cur.fetchall():
                     item = dict(row)
+                    if isinstance(item.get('bill_data_json'), dict):
+                        bd = item['bill_data_json']
+                        for k, v in bd.items():
+                            if k not in item or item[k] is None:
+                                item[k] = v
                     for key in ('created_at', 'fee_updated_at', 'due_date'):
                         if isinstance(item.get(key), (datetime, date)):
                             item[key] = item[key].isoformat()

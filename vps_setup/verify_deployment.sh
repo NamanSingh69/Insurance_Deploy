@@ -23,8 +23,10 @@ check_service() {
 
 printf '%b\n' "${YELLOW}=== Motor Survey deployment verification ===${NC}"
 check_service postgresql
+check_service redis-server
 check_service nginx
 check_service insurance
+check_service insurance-worker
 
 printf 'Verifying Nginx configuration syntax... '
 if sudo nginx -t >/dev/null 2>&1; then
@@ -54,12 +56,12 @@ else
     exit 1
 fi
 
-printf 'Testing Gunicorn local HTTP port 8000... '
-GUNICORN_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/login || true)"
-if [[ "$GUNICORN_CODE" == '200' || "$GUNICORN_CODE" == '302' ]]; then
-    printf '%b\n' "${GREEN}OK (HTTP ${GUNICORN_CODE})${NC}"
+printf 'Testing Gunicorn healthz endpoint... '
+HEALTHZ_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/healthz || true)"
+if [[ "$HEALTHZ_CODE" == '200' ]]; then
+    printf '%b\n' "${GREEN}OK (HTTP ${HEALTHZ_CODE})${NC}"
 else
-    printf '%b\n' "${RED}FAILED (HTTP ${GUNICORN_CODE})${NC}"
+    printf '%b\n' "${RED}FAILED (HTTP ${HEALTHZ_CODE})${NC}"
     exit 1
 fi
 

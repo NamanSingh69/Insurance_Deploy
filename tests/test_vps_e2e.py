@@ -35,58 +35,40 @@ def e2e_session():
 
 
 def test_vps_endpoint_upload_flow(e2e_session, authenticated_client, mock_sheets_db):
-    """Test retrieving resumable Gemini upload URL and validating credentials."""
-    # Mock drive/gemini endpoints in conftest if running locally
-    mock_sheets_db.create_upload_session.return_value = {'id': 'e2e-session-uuid'}
-    
+    """Verify that old client-driven Gemini direct upload route returns 410 GONE."""
     if e2e_session:
-        # Remote E2E VPS Verification
         upload_url_endpoint = f"{TARGET_URL.rstrip('/')}/get_gemini_upload_url"
         resp = e2e_session.post(upload_url_endpoint, json={
             "filename": "e2e_test_doc.pdf",
             "mime_type": "application/pdf",
             "size": 1024
         })
-        assert resp.status_code == 200, f"Failed to get upload URL: {resp.text}"
-        data = resp.json()
-        assert "url" in data
-        assert "upload_id" in data
+        assert resp.status_code == 410, f"Expected 410 GONE, got: {resp.status_code}"
     else:
-        # Local in-process test verification
-        with patch('requests.post') as mock_post:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.headers = {'X-Goog-Upload-URL': 'https://gemini.upload/resumable'}
-            mock_post.return_value = mock_resp
-            
-            response = authenticated_client.post('/get_gemini_upload_url', json={
-                "filename": "e2e_test_doc.pdf",
-                "mime_type": "application/pdf",
-                "size": 1024
-            })
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data["upload_id"] == "e2e-session-uuid"
-            assert data["url"] == "https://gemini.upload/resumable"
+        response = authenticated_client.post('/get_gemini_upload_url', json={
+            "filename": "e2e_test_doc.pdf",
+            "mime_type": "application/pdf",
+            "size": 1024
+        })
+        assert response.status_code == 410
 
 
 def test_vps_async_processing_endpoints(e2e_session, authenticated_client, mock_sheets_db):
-    """Test async document queue task status endpoint."""
+    """Test async document queue durable job status endpoint."""
+    mock_sheets_db.get_job_for_user.return_value = {
+        'id': 'task-123',
+        'user_id': '1',
+        'status': 'completed',
+        'result': {'parts': []},
+        'error': None
+    }
+
     if e2e_session:
         # Remote status check
         status_url = f"{TARGET_URL.rstrip('/')}/process_pdf/status/nonexistent-task"
         resp = e2e_session.get(status_url)
-        # Should return 200 with status: not_found or 404
         assert resp.status_code in [200, 404]
     else:
-        from app import _task_store
-        import datetime
-        _task_store['task-123'] = {
-            'status': 'completed',
-            'result': {'parts': []},
-            'error': None,
-            'created_at': datetime.datetime.now()
-        }
         # Local mock status assertion
         response = authenticated_client.get('/process_pdf/status/task-123')
         assert response.status_code == 200

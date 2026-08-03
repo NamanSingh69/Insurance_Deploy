@@ -98,17 +98,17 @@ class TestLogoutRoute:
     
     def test_logout_redirects(self, authenticated_client):
         """Test logout redirects to login page."""
-        response = authenticated_client.get('/logout', follow_redirects=False)
+        response = authenticated_client.post('/logout', follow_redirects=False)
         assert response.status_code == 302
     
     def test_logout_clears_session(self, authenticated_client):
         """Test logout clears user session."""
         # First verify we're logged in
         response = authenticated_client.get('/', follow_redirects=False)
-        # Should not redirect to login since authenticated
+        assert response.status_code == 200
         
-        # Now logout
-        authenticated_client.get('/logout', follow_redirects=True)
+        # Now logout via POST
+        authenticated_client.post('/logout', follow_redirects=True)
         
         # Accessing protected page should redirect to login
         response = authenticated_client.get('/', follow_redirects=False)

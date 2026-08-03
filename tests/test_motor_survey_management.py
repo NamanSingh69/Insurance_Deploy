@@ -321,7 +321,9 @@ def test_admin_fee_excel_is_a_real_workbook(client, mock_sheets_db, mock_user):
     workbook = load_workbook(io.BytesIO(response.data))
     sheet = workbook['Survey Fee Register']
     assert sheet['B2'].value == 'EX/01'
-    assert sheet['N2'].value == 580
+    headers = [cell.value for cell in sheet[1]]
+    outstanding_idx = headers.index('Outstanding Amount') + 1
+    assert sheet.cell(row=2, column=outstanding_idx).value == 580
 
 
 def test_motor_survey_migration_declares_workspace_and_gmail_schema():

@@ -22,9 +22,9 @@ os.environ.setdefault("GOOGLE_DRIVE_FOLDER_ID", "test_folder_id")
 @pytest.fixture(scope="session", autouse=True)
 def mock_external_services():
     """Mock external services at session level."""
-    # Mock genai before app import
     with patch('google.generativeai.configure'), \
-         patch('google.generativeai.GenerativeModel') as mock_model:
+         patch('google.generativeai.GenerativeModel') as mock_model, \
+         patch('google.genai.Client') as mock_genai_client:
         mock_instance = MagicMock()
         mock_model.return_value = mock_instance
         yield
@@ -87,17 +87,76 @@ def mock_sheets_db():
         'view_link': 'https://drive.google.com/view',
         'download_link': 'https://drive.google.com/download'
     })
+    # Modern private asset, job, drive, and credential helpers
+    def _mock_create_asset(user_id=None, storage_kind=None, storage_locator=None, *args, **kwargs):
+        return {
+            'id': 'mock-asset-id',
+            'user_id': user_id or '1',
+            'storage_kind': storage_kind or 'private_local',
+            'storage_locator': storage_locator or 'mock_locator.png',
+            'original_name': kwargs.get('filename', 'test.png'),
+            'mime_type': kwargs.get('mime_type', 'image/png'),
+            'purpose': kwargs.get('purpose', 'photo'),
+            'size_bytes': kwargs.get('size_bytes', 100),
+            'checksum_sha256': kwargs.get('checksum_sha256', 'mockhash')
+        }
+    mock_db.create_asset = MagicMock(side_effect=_mock_create_asset)
+
+    mock_db.get_asset_for_access = MagicMock(return_value={
+        'id': 'mock-asset-id',
+        'user_id': '1',
+        'storage_path': 'mock_storage_path.png',
+        'mime_type': 'image/png',
+        'original_name': 'test.png',
+        'purpose': 'signature',
+        'size_bytes': 100
+    })
+
+    def _mock_create_job(user_id, kind, payload=None):
+        return {
+            'id': 'mock-job-id',
+            'user_id': user_id,
+            'kind': kind,
+            'status': 'queued',
+            'payload': payload
+        }
+    mock_db.create_job = MagicMock(side_effect=_mock_create_job)
+
+    mock_db.get_job_for_user = MagicMock(return_value={
+        'id': 'mock-job-id',
+        'user_id': '1',
+        'status': 'completed',
+        'job_type': 'generate_files',
+        'input_asset_ids': [],
+        'result_asset_ids': ['mock-asset-id'],
+        'error_message': None
+    })
+    mock_db.attach_assets_to_report = MagicMock(return_value=True)
+    mock_db.set_user_signature_asset = MagicMock(return_value=True)
+    mock_db.get_users_for_credential_migration = MagicMock(return_value=[])
+    mock_db.update_user_encrypted_gemini_key = MagicMock(return_value=True)
+    mock_db.save_drive_integration = MagicMock(return_value=True)
+    mock_db.get_drive_integration = MagicMock(return_value=None)
+    mock_db.delete_drive_integration = MagicMock(return_value=True)
     return mock_db
 
 
 @pytest.fixture
-def app(mock_sheets_db):
-    """Create Flask test application with mocked dependencies."""
+def app(mock_sheets_db, tmp_path):
+    """Create Flask test application with mocked dependencies and private storage."""
     from app import create_app
-    flask_app = create_app(db_adapter=mock_sheets_db, task_executor=MagicMock())
-    flask_app.config['TESTING'] = True
-    flask_app.config['WTF_CSRF_ENABLED'] = False
-    flask_app.config['LOGIN_DISABLED'] = False
+    private_dir = str(tmp_path / "private_assets")
+    os.makedirs(private_dir, exist_ok=True)
+    flask_app = create_app(
+        db_adapter=mock_sheets_db,
+        task_executor=MagicMock(),
+        config={
+            'TESTING': True,
+            'WTF_CSRF_ENABLED': False,
+            'LOGIN_DISABLED': False,
+            'PRIVATE_STORAGE_DIR': private_dir,
+        }
+    )
     yield flask_app
 
 
@@ -130,6 +189,8 @@ def mock_user():
         'is_locked': False,
         'permissions': {},
         'must_change_password': False,
+        'encrypted_gemini_api_key': None,
+        'signature_asset_id': 'mock-sig-asset-id',
     }
 
 
@@ -140,7 +201,6 @@ def authenticated_client(app, mock_sheets_db, mock_user):
     mock_sheets_db.get_user_by_id.return_value = mock_user
     
     with app.test_client() as client:
-        # Use Flask-Login's test login
         with client.session_transaction() as sess:
             sess['_user_id'] = '1'
             sess['_fresh'] = True

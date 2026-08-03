@@ -29,23 +29,31 @@ class TestDownloadFileEndpoint:
         response = authenticated_client.get('/download/report_pdf/nonexistent-id')
         assert response.status_code == 404
 
-    def test_upload_signature_and_status(self, authenticated_client):
+    def test_upload_signature_and_status(self, authenticated_client, mock_sheets_db):
         """Test uploading a signature image and checking signature status."""
+        valid_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82'
+
         # 1. Status initially
+        mock_sheets_db.get_user_by_id.return_value = {
+            'id': '1', 'username': 'testuser', 'signature_asset_id': None
+        }
         status_res = authenticated_client.get('/signature_status')
         assert status_res.status_code == 200
         
-        # 2. Upload fake image
+        # 2. Upload valid image
         data = {
-            'signature': (io.BytesIO(b'fake png image data'), 'test_signature.png')
+            'signature': (io.BytesIO(valid_png), 'test_signature.png')
         }
         upload_res = authenticated_client.post('/upload_signature', data=data, content_type='multipart/form-data')
         assert upload_res.status_code == 200
         json_data = upload_res.get_json()
         assert json_data['success'] is True
-        assert 'signature' in json_data['url']
+        assert '/assets/' in json_data['url'] and '/content' in json_data['url']
 
         # 3. Status after upload
+        mock_sheets_db.get_user_by_id.return_value = {
+            'id': '1', 'username': 'testuser', 'signature_asset_id': 'mock-asset-id'
+        }
         status_res2 = authenticated_client.get('/signature_status')
         assert status_res2.status_code == 200
         json_data2 = status_res2.get_json()

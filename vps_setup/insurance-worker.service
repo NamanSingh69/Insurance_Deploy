@@ -1,14 +1,23 @@
 [Unit]
 Description=Motor Survey Report Generator worker
-After=network.target postgresql.service
+After=network.target postgresql.service redis-server.service
+Requires=redis-server.service postgresql.service
 
 [Service]
-User=root
+User=insurance
+Group=insurance
 WorkingDirectory=/var/www/insurance-app
+EnvironmentFile=/etc/insurance/insurance.env
 Environment="PATH=/var/www/insurance-app/venv/bin"
 ExecStart=/var/www/insurance-app/venv/bin/python worker.py
 Restart=always
 RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/insurance /var/www/insurance-app
 
 [Install]
 WantedBy=multi-user.target

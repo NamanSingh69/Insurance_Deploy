@@ -68,7 +68,7 @@ def _score_model_for_intelligence(name):
 
 def get_best_models(client):
     """Query available models from Gemini API, rank them and return a sorted list."""
-    default_models = ['gemini-1.5-pro', 'gemini-1.5-flash']
+    default_models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
     try:
         models = []
         for m in client.models.list():
@@ -252,20 +252,28 @@ def build_invoice_gemini_prompt():
     Ensure the output is ONLY the JSON object, without any introductory text, explanations, or markdown formatting like ```json ... ```. If no parts table is found, return {"customer_gstin": "", "parts": []}.
     """
 
+def _clean_json_string(text):
+    if not text:
+        return "{}"
+    text = text.strip()
+    match = re.search(r'```(?:json)?\s*({[\s\S]*?})\s*```', text)
+    if match:
+        text = match.group(1)
+    else:
+        first_brace = text.find('{')
+        last_brace = text.rfind('}')
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            text = text[first_brace:last_brace+1]
+    text = re.sub(r',\s*([}\]])', r'\1', text)
+    text = re.sub(r'(\s*)"(\w+)":\s*undefined', r'\1"\2": ""', text)
+    text = re.sub(r'(\s*)"(\w+)":\s*null', r'\1"\2": ""', text)
+    return text.strip()
+
 def parse_gemini_response(response_text):
     """Parse JSON from Gemini's text response, applying defaults and structural mappings."""
     try:
-        # Basic cleanup and fixes
-        if response_text.strip().startswith("```json"):
-            response_text = response_text.strip()[7:-3].strip()
-        elif response_text.strip().startswith("```"):
-             response_text = response_text.strip()[3:-3].strip()
-        response_text = response_text.strip()
-        response_text = re.sub(r',\s*([}\]])', r'\1', response_text) 
-        response_text = re.sub(r'(\s*)"(\w+)":\s*undefined', r'\1"\2": ""', response_text)
-        response_text = re.sub(r'(\s*)"(\w+)":\s*null', r'\1"\2": ""', response_text)
-
-        data = json.loads(response_text)
+        cleaned_text = _clean_json_string(response_text)
+        data = json.loads(cleaned_text)
 
         survey_data_raw = data.get('survey_report_data', {})
         extracted_survey_data = {key: survey_data_raw.get(key, '') for key in EXPECTED_FIELDS}
@@ -394,16 +402,8 @@ def parse_gemini_response(response_text):
 def parse_invoice_gemini_response(response_text):
     """Parse JSON containing parts data and customer_gstin from Gemini's invoice response."""
     try:
-        if response_text.strip().startswith("```json"):
-            response_text = response_text.strip()[7:-3].strip()
-        elif response_text.strip().startswith("```"):
-             response_text = response_text.strip()[3:-3].strip()
-        response_text = response_text.strip()
-        response_text = re.sub(r',\s*([}\]])', r'\1', response_text)
-        response_text = re.sub(r'(\s*)"(\w+)":\s*undefined', r'\1"\2": ""', response_text)
-        response_text = re.sub(r'(\s*)"(\w+)":\s*null', r'\1"\2": ""', response_text)
-
-        data = json.loads(response_text)
+        cleaned_text = _clean_json_string(response_text)
+        data = json.loads(cleaned_text)
         customer_gstin = str(data.get('customer_gstin', '')).strip()
         parts_list_raw = data.get('parts', [])
         if not isinstance(parts_list_raw, list):

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "py",
+      "args": [
+        "c:/Users/namsi/Desktop/Freelance/Insurance - SK/.agents/memory/server.py"
+      ]
+    }
+  }
+}

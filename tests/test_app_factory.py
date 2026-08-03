@@ -25,36 +25,14 @@ def test_unauthenticated_gemini_upload_rejection(client):
     # Should redirect to login or return 401
     assert response.status_code in [302, 401]
 
-def test_authenticated_gemini_upload_success(authenticated_client, mock_sheets_db):
-    """Verify signed-in users can successfully request a Gemini upload URL."""
-    mock_sheets_db.create_upload_session.return_value = {'id': 'session-123'}
-    
-    with patch('requests.post') as mock_post:
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.headers = {'X-Goog-Upload-URL': 'https://gemini.upload/session'}
-        mock_post.return_value = mock_resp
-        
-        response = authenticated_client.post('/get_gemini_upload_url', json={
-            'filename': 'invoice.pdf',
-            'mime_type': 'application/pdf',
-            'size': 50000000 # 50 MB
-        })
-        
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data['upload_id'] == 'session-123'
-        assert data['url'] == 'https://gemini.upload/session'
-
-def test_gemini_upload_size_validation(authenticated_client):
-    """Verify Gemini upload rejects files larger than 100MB."""
+def test_authenticated_gemini_upload_retired(authenticated_client, mock_sheets_db):
+    """Verify signed-in users receive 410 GONE when attempting retired client upload route."""
     response = authenticated_client.post('/get_gemini_upload_url', json={
-        'filename': 'large.pdf',
+        'filename': 'invoice.pdf',
         'mime_type': 'application/pdf',
-        'size': 101 * 1024 * 1024 # 101 MB
+        'size': 5000000
     })
-    assert response.status_code == 400
-    assert b'up to 100 MB' in response.data
+    assert response.status_code == 410
 
 def test_cross_user_denial_for_job_status(authenticated_client, mock_sheets_db):
     """Verify user cannot view job status of a job they do not own."""

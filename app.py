@@ -3,6 +3,7 @@ import io
 import csv
 import json
 import secrets
+import hmac
 import requests
 import uuid
 import threading
@@ -10,7 +11,7 @@ import time as _time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, urlencode
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, send_file, abort, redirect, url_for, flash, session, g
 from werkzeug.utils import secure_filename
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
@@ -28,7 +29,22 @@ from email.utils import parseaddr, parsedate_to_datetime
 from html import unescape
 from db import db as default_db
 from flask import current_app
-from cryptography.fernet import Fernet, InvalidToken
+from modules.credentials import (
+    CredentialError,
+    decrypt_json,
+    encrypt_json,
+    encrypt_text,
+    get_user_gemini_key,
+    validate_credential_encryption_config,
+)
+from modules.drive import (
+    DriveAuthorizationError,
+    disconnect_drive as disconnect_personal_drive,
+    is_drive_connected,
+    save_drive_authorization,
+)
+from modules.assets import get_accessible_asset_content, store_uploaded_image, store_uploaded_pdf
+from modules.jobs import create_job as create_durable_job, get_job_for_user as get_durable_job_for_user
 
 class DatabaseAdapterProxy:
     def __getattr__(self, name):
@@ -79,11 +95,20 @@ def get_real_client_ip():
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
+    _is_test_or_dev = bool(os.getenv("TESTING") or os.getenv("FLASK_TESTING")) or os.getenv("FLASK_ENV") == "development"
+    _rate_limit_storage_uri = os.getenv("RATELIMIT_STORAGE_URI") or (
+        "memory://" if _is_test_or_dev else "redis://127.0.0.1:6379/0"
+    )
+
+    def get_rate_limit_identity():
+        if current_user.is_authenticated:
+            return f"user:{current_user.id}"
+        return f"ip:{get_real_client_ip()}"
+
     limiter = Limiter(
-        get_real_client_ip,
-        default_limits=["200 per day", "50 per hour"],
-        default_limits_exempt_when=lambda: current_user.is_authenticated,
-        storage_uri="memory://"
+        get_rate_limit_identity,
+        default_limits=["600 per day", "120 per hour"],
+        storage_uri=_rate_limit_storage_uri,
     )
 except ImportError:
     # Fail-fast check outside testing
@@ -117,15 +142,61 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 app.config['SESSION_COOKIE_SECURE'] = True       # Only send over HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True      # JavaScript cannot access cookie
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'    # Prevent CSRF via cross-site requests
+app.config['SESSION_COOKIE_NAME'] = 'insurance_session'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
+app.config['SESSION_REFRESH_EACH_REQUEST'] = False
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
 app.config['REMEMBER_COOKIE_SECURE'] = True
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
+
+
+def _csrf_token():
+    token = session.get('_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['_csrf_token'] = token
+    return token
+
+
+@app.context_processor
+def inject_request_security_values():
+    """Expose only a per-session CSRF token and a per-response CSP nonce to templates."""
+    return {'csrf_token': _csrf_token, 'csp_nonce': getattr(g, 'csp_nonce', '')}
+
+
+@app.before_request
+def enforce_request_security():
+    g.csp_nonce = secrets.token_urlsafe(18)
+    if request.method in {'GET', 'HEAD', 'OPTIONS', 'TRACE'}:
+        return None
+    if current_app.config.get('TESTING') or not current_app.config.get('WTF_CSRF_ENABLED', True):
+        return None
+    expected = session.get('_csrf_token')
+    supplied = request.headers.get('X-CSRFToken') or request.form.get('csrf_token')
+    if expected and supplied and hmac.compare_digest(expected, supplied):
+        return None
+    message = 'CSRF validation failed. Refresh the page and try again.'
+    if request.is_json or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'error': message}), 400
+    abort(400, description=message)
+
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB max upload payload limit
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    message = 'File size exceeds the maximum allowed upload limit (50 MB).'
+    return jsonify({'error': message}), 413
+
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """Minimal liveness health check route. Returns status OK without exposing diagnostics or secrets."""
+    return jsonify({'status': 'ok'}), 200
 
 bcrypt = Bcrypt()
 login_manager = LoginManager()
 login_manager.login_view = 'login' 
 login_manager.login_message_category = 'info'
-
 # --- Database Models (Adapted for Sheets) ---
 class User(UserMixin):
     def __init__(self, user_data):
@@ -143,8 +214,14 @@ class User(UserMixin):
         self.address_line_3 = user_data.get('address_line_3')
         self.contact_no = user_data.get('contact_no')
         self.email = user_data.get('email')
-        self.gemini_api_key = user_data.get('gemini_api_key')
+        # Kept only in process memory for request/job execution.  Never return
+        # this value to a template or JSON caller.
+        try:
+            self.gemini_api_key = get_user_gemini_key(user_data)
+        except CredentialError:
+            self.gemini_api_key = None
         self.gemini_model = user_data.get('gemini_model')
+        self.signature_asset_id = user_data.get('signature_asset_id')
         self.role = user_data.get('role') or 'employee'
         self.admin_id = user_data.get('admin_id')
         self.is_locked = bool(user_data.get('is_locked', False))
@@ -567,50 +644,7 @@ class DiskDataStore:
 generated_data_store = DiskDataStore()
 
 # --- Async Task Infrastructure ---
-# Avoids Cloudflare Free plan's hard 100-second proxy timeout by returning
-# a task_id immediately and processing in a background thread.
-_task_store = {}  # { task_id: { "status": ..., "result": ..., "error": ..., "created_at": ... } }
-_task_lock = threading.Lock()
-_task_executor = ThreadPoolExecutor(max_workers=4)
-
-def _create_task():
-    """Create a new task entry and return its ID."""
-    task_id = str(uuid.uuid4())
-    with _task_lock:
-        _task_store[task_id] = {
-            "status": "processing",
-            "result": None,
-            "error": None,
-            "created_at": _time.time()
-        }
-        # Purge tasks older than 30 minutes to prevent memory leaks
-        cutoff = _time.time() - 1800
-        stale = [k for k, v in _task_store.items() if v["created_at"] < cutoff]
-        for k in stale:
-            del _task_store[k]
-    return task_id
-
-def _complete_task(task_id, result):
-    """Mark a task as completed with its result."""
-    with _task_lock:
-        if task_id in _task_store:
-            _task_store[task_id]["status"] = "completed"
-            _task_store[task_id]["result"] = result
-
-def _fail_task(task_id, error_msg):
-    """Mark a task as failed with an error message."""
-    with _task_lock:
-        if task_id in _task_store:
-            _task_store[task_id]["status"] = "error"
-            _task_store[task_id]["error"] = error_msg
-
-def _get_task(task_id):
-    """Get a copy of the task state."""
-    with _task_lock:
-        task = _task_store.get(task_id)
-        if task:
-            return dict(task)
-        return None
+# Durable background work is dispatched to PostgreSQL job queue and processed by worker.py.
 
 # --- Define the expected fields based on the template ---
 EXPECTED_FIELDS = [
@@ -1037,6 +1071,7 @@ def _is_safe_redirect_url(target):
 
 # --- Security: SSRF Allowlist for Proxy Endpoints ---
 _ALLOWED_UPLOAD_DOMAINS = {'www.googleapis.com', 'googleapis.com'}
+_ASSET_CONTENT_PATH = re.compile(r'^/assets/([A-Za-z0-9-]{16,})/content(?:\?.*)?$')
 
 def _is_allowed_upload_url(url):
     """Validate that the upload URL targets only allowed Google API domains."""
@@ -1046,15 +1081,45 @@ def _is_allowed_upload_url(url):
     except Exception:
         return False
 
+
+def _asset_ids_from_payload(value):
+    """Collect application asset references from a report payload without trusting URLs."""
+    found = set()
+    if isinstance(value, dict):
+        for item in value.values():
+            found.update(_asset_ids_from_payload(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(_asset_ids_from_payload(item))
+    elif isinstance(value, str):
+        match = _ASSET_CONTENT_PATH.match(value)
+        if match:
+            found.add(match.group(1))
+    return found
+
 # --- Security Headers ---
 @app.after_request
 def set_security_headers(response):
     """Add security headers to every response."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+    nonce = getattr(g, 'csp_nonce', '')
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com https://fonts.gstatic.com data:; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; frame-src 'self'; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'self'; "
+        "upgrade-insecure-requests"
+    )
+    if current_user.is_authenticated:
+        response.headers['Cache-Control'] = 'no-store, private'
     # HSTS: only set if on HTTPS (Vercel always serves HTTPS)
     if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
@@ -1076,7 +1141,11 @@ def login():
             flash('This account is locked. Please contact your administrator.', 'danger')
         elif user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
             user = User(user_data)
+            # Drop any pre-authentication state to prevent session fixation.
+            session.clear()
             login_user(user, remember=True)
+            session.permanent = True
+            _csrf_token()
             # SECURITY: Validate 'next' parameter to prevent open redirect (VULN-04)
             next_page = request.args.get('next')
             if next_page and _is_safe_redirect_url(next_page):
@@ -1089,9 +1158,10 @@ def login():
             flash('Login Unsuccessful. Please check username and password', 'danger')
     return render_template('login.html')
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 @login_required
 def logout():
+    session.clear()
     logout_user()
     flash('You have been logged out.', 'info')
     return redirect(url_for('login'))
@@ -1183,10 +1253,23 @@ def google_auth_callback():
     
     tokens = token_response.json()
     
-    # Store tokens in session
-    session['google_access_token'] = tokens.get('access_token')
-    session['google_refresh_token'] = tokens.get('refresh_token')
-    session['google_token_expiry'] = tokens.get('expires_in', 3600)
+    # OAuth credentials are encrypted in PostgreSQL.  Flask sessions are
+    # signed but not encrypted, so storing refresh tokens there exposed them
+    # to every browser that completed the OAuth flow.
+    try:
+        if not save_drive_authorization(current_user.id, tokens):
+            flash('Could not save Google Drive authorization. Please try again.', 'error')
+            return redirect(url_for('index'))
+    except (DriveAuthorizationError, CredentialError) as exc:
+        app.logger.warning('Drive authorization rejected for user %s: %s', current_user.id, exc)
+        flash('Google Drive authorization could not be completed. Please reconnect.', 'error')
+        return redirect(url_for('index'))
+
+    # Clear only legacy token keys in case an old session cookie is still in
+    # circulation during rollout.
+    session.pop('google_access_token', None)
+    session.pop('google_refresh_token', None)
+    session.pop('google_token_expiry', None)
     
     flash('Successfully connected to Google Drive!', 'success')
     return redirect(url_for('index'))
@@ -1195,18 +1278,15 @@ def google_auth_callback():
 @login_required
 def google_auth_status():
     """Check if user has connected Google Drive."""
-    from flask import session
-    has_token = 'google_access_token' in session and session['google_access_token']
-    return jsonify({'connected': has_token})
+    return jsonify({'connected': is_drive_connected(current_user.id)})
 
 @app.route('/auth/google/disconnect', methods=['POST'])
 @login_required
 def google_auth_disconnect():
     """Disconnect Google Drive."""
-    from flask import session
-    session.pop('google_access_token', None)
-    session.pop('google_refresh_token', None)
-    session.pop('google_token_expiry', None)
+    disconnected = disconnect_personal_drive(current_user.id)
+    if not disconnected:
+        return jsonify({'error': 'Google Drive was already disconnected.'}), 404
     return jsonify({'success': True, 'message': 'Disconnected from Google Drive'})
 
 
@@ -1217,24 +1297,14 @@ def _gmail_redirect_uri():
     return f"https://{request.host}/auth/gmail/callback"
 
 
-def _gmail_token_cipher():
-    key = os.getenv('GMAIL_TOKEN_ENCRYPTION_KEY')
-    if not key:
-        raise ValueError('GMAIL_TOKEN_ENCRYPTION_KEY is not configured.')
-    try:
-        return Fernet(key.encode('utf-8'))
-    except Exception as exc:
-        raise ValueError('GMAIL_TOKEN_ENCRYPTION_KEY is invalid.') from exc
-
-
 def _encrypt_gmail_token(token_data):
-    return _gmail_token_cipher().encrypt(json.dumps(token_data).encode('utf-8')).decode('utf-8')
+    return encrypt_json(token_data)
 
 
 def _decrypt_gmail_token(encrypted_token):
     try:
-        return json.loads(_gmail_token_cipher().decrypt(encrypted_token.encode('utf-8')).decode('utf-8'))
-    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return decrypt_json(encrypted_token)
+    except CredentialError as exc:
         raise ValueError('Stored Gmail authorization is invalid. Reconnect the mailbox.') from exc
 
 
@@ -1753,81 +1823,10 @@ def send_pending_documents_reminder(report_id):
 @app.route('/get_user_upload_url', methods=['POST'])
 @login_required
 def get_user_upload_url():
-    """Get upload URL using user's OAuth token (for large files)."""
-    from flask import session
-    access_token = session.get('google_access_token')
-    if not access_token:
-        return jsonify({'error': 'Not connected to Google Drive. Please connect first.'}), 401
-    
-    data = request.get_json()
-    filename = data.get('filename')
-    mime_type = data.get('mime_type', 'application/pdf')
-    
-    if not filename:
-        return jsonify({'error': 'Filename required'}), 400
-    
-    # Retrieve the origin from the frontend request to bind the Google CORS policy
-    origin = request.headers.get('Origin')
-    
-    # Initiate resumable upload with user's token
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'X-Upload-Content-Type': mime_type,
-    }
-    
-    if origin:
-        headers['Origin'] = origin
-    
-    metadata = {
-        'name': filename,
-        'mimeType': mime_type
-    }
-    
-    response = requests.post(
-        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
-        headers=headers,
-        json=metadata
-    )
-    
-    if response.status_code == 200:
-        upload_url = response.headers.get('Location')
-        return jsonify({'url': upload_url, 'access_token': access_token})
-    elif response.status_code == 401:
-        # Token expired, try to refresh
-        refresh_token = session.get('google_refresh_token')
-        if refresh_token:
-            # Attempt token refresh
-            refresh_response = requests.post(
-                'https://oauth2.googleapis.com/token',
-                data={
-                    'client_id': GOOGLE_OAUTH_CLIENT_ID,
-                    'client_secret': GOOGLE_OAUTH_CLIENT_SECRET,
-                    'refresh_token': refresh_token,
-                    'grant_type': 'refresh_token'
-                }
-            )
-            if refresh_response.status_code == 200:
-                new_tokens = refresh_response.json()
-                session['google_access_token'] = new_tokens.get('access_token')
-                # Retry upload URL request
-                if origin:
-                    headers['Origin'] = origin
-                headers['Authorization'] = f"Bearer {new_tokens.get('access_token')}"
-                retry_response = requests.post(
-                    'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
-                    headers=headers,
-                    json=metadata
-                )
-                if retry_response.status_code == 200:
-                    upload_url = retry_response.headers.get('Location')
-                    return jsonify({'url': upload_url, 'access_token': new_tokens.get('access_token')})
-        
-        session.pop('google_access_token', None)
-        return jsonify({'error': 'Google Drive authorization expired. Please reconnect.'}), 401
-    else:
-        print(f"Failed to get user upload URL: {response.text}")
-        return jsonify({'error': f'Failed to initiate upload: {response.status_code}'}), 500
+    """Retired: direct browser-to-Drive upload capabilities are no longer issued."""
+    return jsonify({
+        'error': 'Direct uploads have been retired. Upload the PDF through the secure form instead.'
+    }), 410
 
 # --- Main Application Routes ---
 @app.route('/')
@@ -1840,56 +1839,10 @@ def index():
 @app.route('/get_gemini_upload_url', methods=['POST'])
 @login_required
 def get_gemini_upload_url():
-    data = request.get_json(silent=True) or {}
-    filename = secure_filename(data.get('filename', 'document.pdf')) or 'document.pdf'
-    mime_type = data.get('mime_type', 'application/pdf')
-    try:
-        size = int(data.get('size', 0))
-    except (TypeError, ValueError):
-        size = 0
-
-    if mime_type != 'application/pdf' or size <= 0 or size > app.config['MAX_CONTENT_LENGTH']:
-        return jsonify({'error': 'Only PDF uploads up to 100 MB are supported.'}), 400
-    
-    api_key = current_user.gemini_api_key or os.getenv('GEMINI_API_KEY')
-    if not api_key:
-        return jsonify({"error": "No API key"}), 500
-
-    upload_session = sheets_db.create_upload_session(
-        current_user.id, 'gemini', filename, mime_type, size
-    )
-    if not isinstance(upload_session, dict) or not upload_session.get('id'):
-        return jsonify({'error': 'Unable to create an upload record.'}), 503
-        
-    origin = request.headers.get('Origin')
-        
-    headers = {
-        'X-Goog-Upload-Protocol': 'resumable',
-        'X-Goog-Upload-Command': 'start',
-        'X-Goog-Upload-Header-Content-Length': str(size),
-        'X-Goog-Upload-Header-Content-Type': mime_type,
-        'Content-Type': 'application/json'
-    }
-    
-    if origin:
-        headers['Origin'] = origin
-    
-    metadata = {
-        'file': {
-            'display_name': filename
-        }
-    }
-    
-    url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
-    resp = requests.post(url, headers=headers, json=metadata)
-    
-    if resp.status_code != 200:
-        return jsonify({"error": f"Failed to get upload URL: {resp.text}"}), 500
-        
-    upload_url = resp.headers.get('X-Goog-Upload-URL')
-    if not upload_url:
-        return jsonify({'error': 'Gemini did not return an upload URL.'}), 502
-    return jsonify({"url": upload_url, "upload_id": str(upload_session['id'])})
+    """Retired: Gemini upload capabilities must not be exposed to browsers."""
+    return jsonify({
+        'error': 'Direct AI-provider uploads have been retired. Upload the PDF through the secure form instead.'
+    }), 410
 
 def download_drive_file_with_token(access_token, file_id):
     """Downloads file content from Drive using the user's OAuth access token."""
@@ -2028,41 +1981,8 @@ def upload_pdf_to_drive(access_token, pdf_bytes, filename, folder_name):
 @app.route('/upload_report_to_drive', methods=['POST'])
 @login_required
 def upload_report_to_drive():
-    """Upload the generated report PDF to Google Drive (service account)."""
-    data = request.get_json()
-    request_id = data.get('request_id')
-    
-    if not request_id or request_id not in generated_data_store:
-        return jsonify({'error': 'Report not found. Please generate the report first.'}), 404
-    
-    report_data = generated_data_store[request_id]
-    pdf_bytes = report_data.get('pdf_report')
-    vehicle_no = report_data.get('vehicle_no', '').strip()
-    report_no = report_data.get('report_no', 'SurveyReport')
-    
-    if not pdf_bytes:
-        return jsonify({'error': 'No PDF data found for this report.'}), 400
-    
-    filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip() if vehicle_no else report_no.replace(' ', '_').replace('/', '-')
-    filename = f"{filename_base}.pdf"
-    folder_name_to_use = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() if vehicle_no else 'Unknown_Vehicle'
-    
-    from flask import session
-    access_token = session.get('google_access_token')
-    
-    drive_link = None
-    if access_token:
-        # Upload to user's personal drive
-        drive_link = upload_pdf_to_drive(access_token, pdf_bytes, filename, folder_name_to_use)
-        
-    if not drive_link:
-        # Fallback to service account
-        drive_link = sheets_db.upload_report_pdf(pdf_bytes, filename, vehicle_no if vehicle_no else 'Unknown_Vehicle')
-    
-    if drive_link:
-        return jsonify({'success': True, 'drive_link': drive_link, 'message': f'Report uploaded to Drive!'})
-    else:
-        return jsonify({'error': 'Failed to upload report to Google Drive. Check server logs.'}), 500
+    """Retired: generated jobs now deliver to Drive server-side when connected."""
+    return jsonify({'error': 'Reports are delivered to connected Drive accounts automatically.'}), 410
 
 @app.route('/api/extract_fee_pdf', methods=['POST'])
 @login_required
@@ -2086,7 +2006,7 @@ def extract_fee_pdf():
             api_key=api_key,
             pdf_part=pdf_part,
             user_model=user_model,
-            is_invoice=True
+            is_invoice=False
         )
 
         survey = extracted_result.get('survey_report') or extracted_result.get('extracted') or {}
@@ -2107,98 +2027,26 @@ def extract_fee_pdf():
 
 @app.route('/process_pdf', methods=['POST'])
 @login_required
+@limiter.limit("20 per hour")
 def process_pdf():
-    """Accept a PDF and start async Gemini processing. Returns a task_id for polling."""
-    # --- Extract everything from the request context NOW (before background thread) ---
-    pdf_part = None
-    user_id = current_user.id
-    # Snapshot user object data for the background thread
-    user_data_snapshot = {
-        'id': current_user.id,
-        'username': current_user.username,
-        'password_hash': current_user.password_hash,
-        'full_name': current_user.full_name,
-        'qualifications': current_user.qualifications,
-        'designation': current_user.designation,
-        'license_no': current_user.license_no,
-        'expiry_date': current_user.expiry_date,
-        'membership_no': current_user.membership_no,
-        'address_line_1': current_user.address_line_1,
-        'address_line_2': current_user.address_line_2,
-        'address_line_3': current_user.address_line_3,
-        'contact_no': current_user.contact_no,
-        'email': current_user.email,
-        'gemini_api_key': current_user.gemini_api_key,
-        'gemini_model': current_user.gemini_model,
-    }
-
-    if request.content_type == 'application/json':
-        data = request.get_json()
-        mime_type = data.get('mime_type', 'application/pdf')
-        
-        if 'drive_file_id' in data:
-            drive_file_id = data['drive_file_id']
-            from flask import session
-            access_token = session.get('google_access_token')
-            if not access_token:
-                 return jsonify({"error": "Google Drive not connected. Please reconnect in Profile Settings."}), 401
-                 
-            print(f"Downloading file {drive_file_id} from user's Drive...")
-            pdf_bytes = download_drive_file_with_token(access_token, drive_file_id)
-            if not pdf_bytes:
-                 return jsonify({"error": "Failed to download file from Google Drive. Ensure the file still exists."}), 500
-                 
-            print("Successfully downloaded from Drive. Uploading to Gemini...")
-            import tempfile
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(pdf_bytes)
-                temp_filename = temp_file.name
-                
-            try:
-                uploaded_file = genai.upload_file(path=temp_filename, mime_type=mime_type)
-                print(f"Uploaded to Gemini URI: {uploaded_file.uri}")
-                pdf_part = {
-                    "file_data": {
-                        "mime_type": mime_type,
-                        "file_uri": uploaded_file.uri
-                    }
-                }
-            except Exception as e:
-                print(f"Error uploading to Gemini: {e}")
-                return jsonify({"error": "Failed to upload file to AI limits."}), 500
-            finally:
-                if os.path.exists(temp_filename):
-                    os.remove(temp_filename)
-                    
-        elif 'gemini_file_uri' in data:
-            gemini_file_uri = data['gemini_file_uri']
-            print(f"Using direct Gemini URI: {gemini_file_uri}")
-            pdf_part = {
-                "file_data": {
-                    "mime_type": mime_type,
-                    "file_uri": gemini_file_uri
-                }
-            }
-        else:
-            return jsonify({"error": "No drive_file_id or gemini_file_uri provided"}), 400
-             
-    elif 'pdf_file' in request.files:
-        file = request.files['pdf_file']
-        if file.filename == '':
-            return jsonify({"error": "No selected file"}), 400
-        if file and file.mimetype == 'application/pdf':
-            pdf_content = file.read()
-            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-        else:
-             return jsonify({"error": "Invalid file type. Please upload a PDF."}), 400
-    else:
-         return jsonify({"error": "No file provided"}), 400
-
-    # --- Dispatch to background thread ---
-    task_id = _create_task()
-    _task_executor.submit(_process_pdf_worker, task_id, pdf_part, user_data_snapshot, user_id)
-    return jsonify({"task_id": task_id}), 202
+    """Persist a PDF as a private asset, then enqueue durable extraction work."""
+    file = request.files.get('pdf_file')
+    if not file or not file.filename:
+        return jsonify({'error': 'A PDF file is required.'}), 400
+    try:
+        asset = store_uploaded_pdf(current_user.id, file, purpose='pdf_input')
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('PDF upload failed for user %s', current_user.id)
+        return jsonify({'error': 'Could not store the PDF.'}), 500
+    job = create_durable_job(current_user.id, 'process_pdf', {
+        'source_asset_id': asset['id'],
+        'mime_type': asset['mime_type'],
+    })
+    if not isinstance(job, dict) or not job.get('id'):
+        return jsonify({'error': 'Could not queue PDF processing.'}), 503
+    return jsonify({'task_id': str(job['id'])}), 202
 
 
 def _process_pdf_worker(task_id, pdf_part, user_data_snapshot, user_id):
@@ -2278,17 +2126,15 @@ def _process_pdf_worker(task_id, pdf_part, user_data_snapshot, user_id):
 @app.route('/process_pdf/status/<task_id>', methods=['GET'])
 @login_required
 def process_pdf_status(task_id):
-    """Poll for the status of an async PDF processing task."""
-    task = _get_task(task_id)
+    """Poll the PostgreSQL-backed job owned by the requesting user."""
+    task = get_durable_job_for_user(task_id, current_user.id)
     if not task:
         return jsonify({"error": "Task not found"}), 404
-    
-    if task["status"] == "completed":
-        return jsonify({"status": "completed", "result": task["result"]})
-    elif task["status"] == "error":
-        return jsonify({"status": "error", "error": task["error"]})
-    else:
-        return jsonify({"status": "processing"})
+    return jsonify({
+        'status': task.get('status'),
+        'result': task.get('result') if task.get('status') == 'completed' else None,
+        'error': task.get('error') if task.get('status') == 'error' else None,
+    })
 
 # --- Depreciation Calculation Helper ---
 def get_backend_depreciation_rate(part_type, vehicle_year_str):
@@ -2341,55 +2187,25 @@ def _process_invoice_worker(task_id, pdf_part, user_data_snapshot, user_id):
 
 @app.route('/process_invoice', methods=['POST'])
 @login_required
+@limiter.limit("20 per hour")
 def process_invoice():
-    pdf_content = None
-    pdf_part = None
-    user_id = current_user.id
-    user_data_snapshot = {
-        'id': current_user.id,
-        'username': current_user.username,
-        'password_hash': current_user.password_hash,
-        'full_name': current_user.full_name,
-        'qualifications': current_user.qualifications,
-        'designation': current_user.designation,
-        'license_no': current_user.license_no,
-        'expiry_date': current_user.expiry_date,
-        'membership_no': current_user.membership_no,
-        'address_line_1': current_user.address_line_1,
-        'address_line_2': current_user.address_line_2,
-        'address_line_3': current_user.address_line_3,
-        'contact_no': current_user.contact_no,
-        'email': current_user.email,
-        'gemini_api_key': current_user.gemini_api_key,
-        'gemini_model': current_user.gemini_model,
-    }
-
-    if request.content_type == 'application/json':
-        data = request.get_json() or {}
-        drive_file_id = data.get('drive_file_id')
-        if not drive_file_id:
-             return jsonify({"error": "No drive_file_id provided"}), 400
-        
-        pdf_content = sheets_db.get_file_content(drive_file_id)
-        if not pdf_content:
-             return jsonify({"error": "Failed to retrieve file content from Drive."}), 500
-        pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-             
-    elif 'invoice_pdf_file' in request.files:
-        file = request.files['invoice_pdf_file']
-        if file.filename == '':
-            return jsonify({"error": "No selected invoice file"}), 400
-        if file and (file.mimetype == 'application/pdf' or file.filename.lower().endswith('.pdf')):
-            pdf_content = file.read()
-            pdf_part = {"mime_type": "application/pdf", "data": pdf_content}
-        else:
-             return jsonify({"error": "Invalid file type. Please upload a PDF for the invoice."}), 400
-    else:
-         return jsonify({"error": "No invoice file provided"}), 400
-
-    task_id = _create_task()
-    _task_executor.submit(_process_invoice_worker, task_id, pdf_part, user_data_snapshot, user_id)
-    return jsonify({"task_id": task_id}), 202
+    file = request.files.get('invoice_pdf_file')
+    if not file or not file.filename:
+        return jsonify({'error': 'An invoice PDF file is required.'}), 400
+    try:
+        asset = store_uploaded_pdf(current_user.id, file, purpose='invoice_input')
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('Invoice upload failed for user %s', current_user.id)
+        return jsonify({'error': 'Could not store the invoice PDF.'}), 500
+    job = create_durable_job(current_user.id, 'process_invoice', {
+        'source_asset_id': asset['id'],
+        'mime_type': asset['mime_type'],
+    })
+    if not isinstance(job, dict) or not job.get('id'):
+        return jsonify({'error': 'Could not queue invoice processing.'}), 503
+    return jsonify({'task_id': str(job['id'])}), 202
     
 def number_to_words_indian(number_val):
     """
@@ -2654,7 +2470,7 @@ def get_user_profile():
         "address_line_3": user.address_line_3,
         "contact_no": user.contact_no,
         "email": user.email,
-        "gemini_api_key": user.gemini_api_key,
+        "has_gemini_api_key": bool(user.gemini_api_key),
         "gemini_model": user.gemini_model,
         "role": user.role,
         "permissions": user.permissions,
@@ -2669,8 +2485,10 @@ def change_password():
     data = request.get_json() or {}
     current_password = data.get('current_password', '')
     new_password = data.get('new_password', '')
-    if len(new_password) < 8:
-        return jsonify({'error': 'New password must be at least 8 characters.'}), 400
+    if len(new_password) < 12:
+        return jsonify({'error': 'New password must be at least 12 characters.'}), 400
+    if new_password.lower() == (current_user.username or '').lower() or not any(char.isalpha() for char in new_password) or not any(char.isdigit() for char in new_password):
+        return jsonify({'error': 'Use a password with letters and numbers that is not your username.'}), 400
     if not bcrypt.check_password_hash(current_user.password_hash, current_password):
         return jsonify({'error': 'Current password is incorrect.'}), 403
     password_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
@@ -2829,11 +2647,25 @@ def admin_delete_gmail_domain(domain_id):
 @app.route('/update_user_profile', methods=['POST'])
 @login_required
 def update_user_profile():
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Profile data must be a JSON object.'}), 400
+    supplied_key = data.pop('gemini_api_key', None)
+    clear_key = data.pop('clear_gemini_api_key', False) in (True, 1, '1', 'true', 'True', 'on')
     try:
         success = sheets_db.update_user(current_user.id, data)
         if not success:
             return jsonify({"error": "Failed to update profile in database."}), 500
+
+        if isinstance(supplied_key, str) and supplied_key.strip():
+            encrypted_key = encrypt_text(supplied_key.strip())
+            if not sheets_db.set_user_gemini_api_key(current_user.id, encrypted_key):
+                return jsonify({'error': 'Profile was updated but the Gemini credential could not be stored.'}), 500
+            current_user.gemini_api_key = supplied_key.strip()
+        elif clear_key:
+            if not sheets_db.clear_user_gemini_api_key(current_user.id):
+                return jsonify({'error': 'Profile was updated but the Gemini credential could not be cleared.'}), 500
+            current_user.gemini_api_key = None
         
         # update current session user object
         current_user.full_name = data.get('full_name', current_user.full_name)
@@ -2847,197 +2679,149 @@ def update_user_profile():
         current_user.address_line_3 = data.get('address_line_3', current_user.address_line_3)
         current_user.contact_no = data.get('contact_no', current_user.contact_no)
         current_user.email = data.get('email', current_user.email)
-        current_user.gemini_api_key = data.get('gemini_api_key', current_user.gemini_api_key)
         current_user.gemini_model = data.get('gemini_model', current_user.gemini_model)
         
         return jsonify({"success": True, "message": "Profile updated successfully."})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except CredentialError:
+        return jsonify({'error': 'Credential encryption is not configured correctly.'}), 500
+    except Exception:
+        app.logger.exception('Failed to update profile for user %s', current_user.id)
+        return jsonify({"error": 'Could not update the profile.'}), 500
 
 @app.route('/upload_signature', methods=['POST'])
 @login_required
+@limiter.limit("10 per hour")
 def upload_signature():
     if 'signature' not in request.files:
         return jsonify({'error': 'No signature file provided'}), 400
     file = request.files['signature']
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
-    
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    uploads_dir = os.path.join(project_root, 'uploads')
-    static_dir = os.path.join(project_root, 'static')
-    os.makedirs(uploads_dir, exist_ok=True)
-    os.makedirs(static_dir, exist_ok=True)
-
-    user_id_str = str(current_user.id)
-    sig_user_filename = f'signature_{user_id_str}.png'
-    sig_path = os.path.join(uploads_dir, sig_user_filename)
-    file.save(sig_path)
-    
-    # Also save as signature.png for fallback
-    global_sig_path = os.path.join(uploads_dir, 'signature.png')
-    
-    # Mirror to static directory for direct URL serving
-    static_sig_path = os.path.join(static_dir, sig_user_filename)
-    global_static_sig_path = os.path.join(static_dir, 'signature.png')
-    
     try:
-        import shutil
-        shutil.copy2(sig_path, static_sig_path)
-        shutil.copy2(sig_path, global_sig_path)
-        shutil.copy2(sig_path, global_static_sig_path)
-    except Exception as copy_err:
-        print(f"Signature copy error: {copy_err}")
-    
-    ts = int(_time.time())
-    return jsonify({'success': True, 'message': 'Digital seal & signature uploaded successfully!', 'url': f'/static/{sig_user_filename}?v={ts}'})
+        asset = store_uploaded_image(current_user.id, file, purpose='signature')
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('Signature upload failed for user %s', current_user.id)
+        return jsonify({'error': 'Could not store the signature.'}), 500
+    if not sheets_db.set_user_signature_asset(current_user.id, asset['id']):
+        return jsonify({'error': 'Signature was stored but could not be linked to the user.'}), 500
+    current_user.signature_asset_id = asset['id']
+    return jsonify({
+        'success': True,
+        'message': 'Digital seal & signature uploaded successfully!',
+        'url': f"/assets/{asset['id']}/content",
+    })
 
 @app.route('/signature_status', methods=['GET'])
 @login_required
 def get_signature_status():
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    user_id_str = str(current_user.id)
-    sig_user_filename = f'signature_{user_id_str}.png'
-    
-    per_user_uploads = os.path.join(project_root, 'uploads', sig_user_filename)
-    per_user_static = os.path.join(project_root, 'static', sig_user_filename)
-    global_uploads = os.path.join(project_root, 'uploads', 'signature.png')
-    global_static = os.path.join(project_root, 'static', 'signature.png')
-    
-    if os.path.exists(per_user_uploads) or os.path.exists(per_user_static):
-        sig_url = f'/static/{sig_user_filename}'
-        sig_exists = True
-    elif os.path.exists(global_uploads) or os.path.exists(global_static):
-        sig_url = '/static/signature.png'
-        sig_exists = True
-    else:
-        sig_url = None
-        sig_exists = False
-        
-    ts = int(_time.time())
-    return jsonify({'has_signature': sig_exists, 'url': f'{sig_url}?v={ts}' if sig_exists else None})
+    asset_id = current_user.signature_asset_id
+    return jsonify({
+        'has_signature': bool(asset_id),
+        'url': f'/assets/{asset_id}/content' if asset_id else None,
+    })
 
-@app.route('/api/available_models', methods=['GET'])
+@app.route('/api/available_models', methods=['POST'])
 @login_required
 def available_models():
-    # Allow passing custom API key as query parameter for validation/testing in real-time
-    custom_key = request.args.get('api_key')
-    key_to_use = custom_key if custom_key is not None else (current_user.gemini_api_key or os.getenv("GEMINI_API_KEY"))
+    data = request.get_json(silent=True) or {}
+    custom_key = data.get('api_key')
+    key_to_use = custom_key if isinstance(custom_key, str) and custom_key else (current_user.gemini_api_key or os.getenv("GEMINI_API_KEY"))
     models = get_user_best_models(key_to_use)
     return jsonify(models)
 
 # --- Photo Upload Route ---
 @app.route('/upload_photo', methods=['POST'])
 @login_required
+@limiter.limit("30 per hour")
 def upload_photo():
     if 'photo' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     file = request.files['photo']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-    
-    if file:
-        filename = secure_filename(f"{uuid.uuid4()}_{file.filename}")
-        # Read file content
-        content = file.read()
-        
-        # 1. Try uploading to Drive
-        try:
-            result = sheets_db.upload_image_to_drive(content, filename, file.mimetype)
-            if result and result.get('id'):
-                # Return a proxy URL that will serve the image through the backend
-                proxy_url = f"/proxy_image/{result.get('id')}"
-                return jsonify({'success': True, 'url': proxy_url})
-        except Exception as e:
-            print(f"Drive upload exception: {e}")
-            
-        # 2. Local Fallback if Drive upload fails or returns None (quota exceeded)
-        print("Drive upload failed or quota exceeded. Falling back to local VPS storage...")
-        try:
-            upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-            os.makedirs(upload_dir, exist_ok=True)
-            local_path = os.path.join(upload_dir, filename)
-            with open(local_path, 'wb') as f:
-                f.write(content)
-            
-            proxy_url = f"/local_image/{filename}"
-            return jsonify({'success': True, 'url': proxy_url, 'warning': 'Saved to local storage (Drive full)'})
-        except Exception as local_err:
-            print(f"Local storage fallback failed: {local_err}")
-            return jsonify({'error': 'Failed to upload to Drive or local storage'}), 500
+    try:
+        asset = store_uploaded_image(
+            current_user.id, file, purpose='photo',
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('Photo upload failed for user %s', current_user.id)
+        return jsonify({'error': 'Could not store the photo.'}), 500
+    return jsonify({'success': True, 'url': f"/assets/{asset['id']}/content", 'asset_id': asset['id']})
+
+
+@app.route('/assets/<asset_id>/content')
+@login_required
+def asset_content(asset_id):
+    """Serve an owned private file without exposing provider file identifiers."""
+    content, asset = get_accessible_asset_content(
+        asset_id, current_user.id, workspace_admin_id_for(current_user)
+    )
+    if not asset or content is None:
+        abort(404)
+    mime_type = asset.get('mime_type') or 'application/octet-stream'
+    allowed_types = {'application/pdf', 'image/jpeg', 'image/png', 'image/webp'}
+    if mime_type not in allowed_types:
+        abort(404)
+    return send_file(
+        io.BytesIO(content),
+        mimetype=mime_type,
+        as_attachment=request.args.get('download') == '1',
+        download_name=asset.get('filename') or 'download',
+        conditional=False,
+    )
 
 # --- Photo Proxy Route ---
 @app.route('/proxy_image/<file_id>')
 @login_required
 def proxy_image(file_id):
-    """Serves images from Google Drive through the backend proxy."""
-    # SECURITY: Validate file_id format to prevent injection (VULN-06)
-    import re as re_module
-    if not re_module.match(r'^[a-zA-Z0-9_-]+$', file_id):
-        abort(400)
-    
-    content = sheets_db.get_file_content(file_id)
-    if content:
-        # Detect image type from content (basic check for common types)
-        mime_type = 'image/jpeg'  # default
-        if content[:8] == b'\x89PNG\r\n\x1a\n':
-            mime_type = 'image/png'
-        elif content[:4] == b'GIF8':
-            mime_type = 'image/gif'
-        elif content[:4] == b'RIFF' and content[8:12] == b'WEBP':
-            mime_type = 'image/webp'
-        
-        return send_file(io.BytesIO(content), mimetype=mime_type)
-    else:
-        abort(404)
+    # Existing report rows are migrated to /assets/<id>/content during rollout.
+    # A raw Drive identifier can never be treated as authorization.
+    abort(410)
 
 # --- Local Photo Serve Route ---
 @app.route('/local_image/<filename>')
 @login_required
 def serve_local_image(filename):
-    """Serves locally stored backup images."""
-    # Validate filename to prevent directory traversal
-    import re as re_module
-    if not re_module.match(r'^[a-zA-Z0-9_-]+\.[a-zA-Z0-9]+$', filename):
-        abort(400)
-    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-    from flask import send_from_directory
-    return send_from_directory(upload_dir, filename)
+    # Existing report rows are migrated to /assets/<id>/content during rollout.
+    abort(410)
 
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])
 @login_required
+@limiter.limit("30 per hour")
 def generate_files():
-    """Accept report data and start async PDF generation. Returns a task_id for polling."""
-    data = request.get_json()
-    if not data:
+    """Queue PDF generation in PostgreSQL instead of a Gunicorn worker thread."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not data:
         return jsonify({"error": "No data received"}), 400
-
-    # Snapshot request-context values needed by the worker thread
-    user_full_name = current_user.full_name
-    user_id = current_user.id
-    from flask import session
-    access_token = session.get('google_access_token')
-
-    task_id = _create_task()
-    _task_executor.submit(_generate_files_worker, task_id, data, user_full_name, user_id, access_token)
-    return jsonify({"task_id": task_id}), 202
+    try:
+        if len(json.dumps(data)) > 2 * 1024 * 1024:
+            return jsonify({'error': 'Report data is too large to generate.'}), 413
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Report data must be JSON serializable.'}), 400
+    job = create_durable_job(current_user.id, 'generate_files', {'report_data': data})
+    if not isinstance(job, dict) or not job.get('id'):
+        return jsonify({'error': 'Could not queue file generation.'}), 503
+    return jsonify({'task_id': str(job['id'])}), 202
 
 
 @app.route('/generate_files/status/<task_id>', methods=['GET'])
 @login_required
 def generate_files_status(task_id):
-    """Poll for the status of an async file generation task."""
-    task = _get_task(task_id)
+    """Poll the PostgreSQL-backed generation job owned by the user."""
+    task = get_durable_job_for_user(task_id, current_user.id)
     if not task:
         return jsonify({"error": "Task not found"}), 404
-    
-    if task["status"] == "completed":
-        return jsonify({"status": "completed", "result": task["result"]})
-    elif task["status"] == "error":
-        return jsonify({"status": "error", "error": task["error"]})
-    else:
-        return jsonify({"status": "processing"})
+    return jsonify({
+        'status': task.get('status'),
+        'result': task.get('result') if task.get('status') == 'completed' else None,
+        'error': task.get('error') if task.get('status') == 'error' else None,
+    })
 
 
 def _generate_files_worker(task_id, data, user_full_name, user_id, access_token):
@@ -4352,16 +4136,33 @@ def download_file(file_type, request_id):
     vehicle_no = ''
     report_no = 'SurveyReport'
 
-    # Priority 1: Check in-memory store
-    if request_id in generated_data_store:
+    # Priority 1: Durable job result pointing to a private generated asset.
+    if job and job.get('result_json'):
+        result_data = job['result_json']
+        if isinstance(result_data, str):
+            try:
+                result_data = json.loads(result_data)
+            except (TypeError, ValueError):
+                result_data = {}
+        if isinstance(result_data, dict) and result_data.get('asset_id'):
+            asset_bytes, asset = get_accessible_asset_content(
+                result_data['asset_id'], current_user.id, workspace_admin_id_for(current_user)
+            )
+            if asset_bytes is not None and asset:
+                pdf_bytes = asset_bytes
+                vehicle_no = result_data.get('vehicle_no', '').strip()
+                report_no = result_data.get('report_no', 'SurveyReport')
+
+    # Priority 2: legacy in-memory store during the transition.
+    if pdf_bytes is None and request_id in generated_data_store:
         data = generated_data_store[request_id]
         if data.get('user_id') is not None and str(data.get('user_id')) != str(current_user.id):
             abort(403, description="Access denied. You do not own this report.")
         pdf_bytes = data['pdf_report']
         vehicle_no = data.get('vehicle_no', '').strip()
         report_no = data.get('report_no', 'SurveyReport')
-    else:
-        # Priority 2: Check local temporary files (production cross-process)
+    elif pdf_bytes is None:
+        # Priority 3: legacy local temporary files during the transition.
         project_root = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(project_root, 'uploads', 'temp_pdfs', f"{request_id}.pdf")
         
@@ -4447,9 +4248,10 @@ def download_file(file_type, request_id):
 @login_required
 def save_report():
     try:
-        data = request.get_json()
-        if not data or 'survey_report' not in data or 'assessment' not in data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or 'survey_report' not in data or 'assessment' not in data:
             return jsonify({"error": "Invalid data format received"}), 400
+        asset_ids = _asset_ids_from_payload(data)
 
         survey_report = data.get('survey_report', {})
         report_no = survey_report.get('report_no', '').strip()
@@ -4480,6 +4282,8 @@ def save_report():
                 if existing.get('workspace_admin_id') is None:
                     saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
                     if saved_id:
+                        if not sheets_db.attach_assets_to_report(list(asset_ids), saved_id, current_user.id):
+                            return jsonify({'error': 'Report saved, but its uploaded files could not be linked.'}), 500
                         return jsonify({"success": True, "message": f'Report "{report_no}" saved successfully.', "report_id": saved_id})
                     return jsonify({"error": "Failed to save legacy report."}), 500
 
@@ -4496,18 +4300,18 @@ def save_report():
             else:
                 saved_id = sheets_db.save_report(current_user.id, data, existing_report_id=existing_report_id)
             if saved_id:
+                if not sheets_db.attach_assets_to_report(list(asset_ids), saved_id, current_user.id):
+                    return jsonify({'error': 'Report saved, but its uploaded files could not be linked.'}), 500
                 return jsonify({"success": True, "message": f'Report "{report_no}" saved successfully.', "report_id": saved_id})
             else:
                 return jsonify({"error": "Failed to save to Database (unknown error)."}), 500
-        except Exception as sheet_error:
-            print(f"Database Error: {sheet_error}")
-            import traceback; traceback.print_exc()
-            return jsonify({"error": f"Failed to save to Database: {str(sheet_error)}"}), 500
+        except Exception:
+            app.logger.exception('Database error saving report for user %s', current_user.id)
+            return jsonify({"error": 'Failed to save the report.'}), 500
 
-    except Exception as e:
-        print(f"Error saving report: {e}")
-        import traceback; traceback.print_exc()
-        return jsonify({"error": f"An unexpected error occurred while saving: {e}"}), 500
+    except Exception:
+        app.logger.exception('Unexpected report save error for user %s', current_user.id)
+        return jsonify({"error": 'Could not save the report.'}), 500
     
 
 @app.route('/get_saved_reports', methods=['GET'])
@@ -4614,6 +4418,35 @@ def get_dashboard():
             dashboard.pop(key, None)
     return jsonify(dashboard)
 
+
+
+@app.route('/api/claims/pending_alerts', methods=['GET'])
+@login_required
+def pending_claims_alerts():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    reports_page = sheets_db.get_workspace_reports_page(workspace_admin_id, '', 1, 1000)
+    claims = reports_page.get('reports', [])
+    now = datetime.now()
+    pending_7day_count = 0
+    pending_7day_claims = []
+    for c in claims:
+        created_at_str = c.get('created_at')
+        status = c.get('status', 'new_appointment')
+        if status not in ('closed', 'submitted', 'work_approved'):
+            try:
+                created_dt = datetime.fromisoformat(created_at_str) if created_at_str else now
+                age_days = (now - created_dt).days
+                if age_days >= 7:
+                    pending_7day_count += 1
+                    pending_7day_claims.append(c)
+            except Exception:
+                pass
+    return jsonify({
+        'pending_7day_count': pending_7day_count,
+        'claims': pending_7day_claims[:20]
+    }), 200
 
 
 @app.route('/api/claims', methods=['GET', 'POST'])
@@ -4971,9 +4804,10 @@ def download_fees_excel():
         sheet = workbook.active
         sheet.title = 'Survey Fee Register'
         headers = [
-            'Invoice Date', 'Invoice No', 'Insurer', 'Insured Name', 'Claim No', 'Policy No',
-            'Vehicle No', 'Professional Fee', 'GST %', 'GST Amount', 'Gross Invoice Value',
-            'TDS Amount', 'Cash Received', 'Outstanding Amount', 'Due Date', 'Payment Status', 'Invoice Status'
+            'Invoice Date', 'Invoice No', 'Survey Type', 'Insurer', 'Insurer GSTIN', 'Insured Name', 'Claim No', 'Policy No',
+            'Vehicle No', 'Professional Fee', 'Convenience Type', 'Route', 'KM', 'Rate/KM', 'Convenience Fee', 'Photo Charges',
+            'Taxable Amount', 'GST %', 'GST Amount', 'Gross Invoice Value', 'TDS Amount', 'Cash Received', 'Outstanding Amount',
+            'Due Date', 'Payment Status', 'Invoice Status'
         ]
         sheet.append(headers)
         for cell in sheet[1]:
@@ -4981,10 +4815,15 @@ def download_fees_excel():
             cell.fill = PatternFill('solid', fgColor='1F4E78')
         for bill in bills:
             sheet.append([
-                bill.get('invoice_date', ''), bill.get('invoice_no', ''), bill.get('insurer_name', ''),
-                bill.get('insured_name', ''), bill.get('claim_no', ''), bill.get('policy_no', ''),
-                bill.get('vehicle_no', ''), float(bill.get('professional_fee', bill.get('taxable_amount', 0)) or 0),
-                float(bill.get('gst_pc', 0) or 0), float(bill.get('gst_amount', 0) or 0),
+                bill.get('invoice_date', ''), bill.get('invoice_no', ''), bill.get('survey_type', 'Survey Fee'),
+                bill.get('insurer_name', ''), bill.get('insurer_gst', ''), bill.get('insured_name', ''),
+                bill.get('claim_no', ''), bill.get('policy_no', ''), bill.get('vehicle_no', ''),
+                float(bill.get('professional_fee', 0) or 0), bill.get('convenience_type', ''), bill.get('convenience_route', ''),
+                float(bill.get('convenience_km', 0) or 0), float(bill.get('convenience_rate', 0) or 0),
+                float(bill.get('conveyance_fee', bill.get('convenience_fee', 0)) or 0),
+                float(bill.get('photocopy_amount', bill.get('photocopy', 0)) or 0),
+                float(bill.get('taxable_amount', 0) or 0), float(bill.get('gst_pc', 0) or 0),
+                float(bill.get('gst_amount', 0) or 0),
                 float(bill.get('gross_invoice_value', bill.get('total_amount', 0)) or 0),
                 float(bill.get('tds_amount', 0) or 0), float(bill.get('amount_received', 0) or 0),
                 float(bill.get('outstanding_amount', 0) or 0), bill.get('due_date', ''),
@@ -4992,7 +4831,7 @@ def download_fees_excel():
             ])
         for column in range(1, len(headers) + 1):
             sheet.column_dimensions[get_column_letter(column)].width = min(28, max(13, len(headers[column - 1]) + 2))
-        for row in sheet.iter_rows(min_row=2, min_col=8, max_col=14):
+        for row in sheet.iter_rows(min_row=2, min_col=10, max_col=23):
             for cell in row:
                 cell.number_format = '#,##0.00'
         output = io.BytesIO()
@@ -5216,23 +5055,78 @@ def create_employee_cli(username, temporary_password, admin_username, name, emai
     else:
         print(f"Error: Could not create employee '{username}'.")
 
+
+@app.cli.command('migrate-credentials')
+def migrate_credentials_command():
+    """Encrypt legacy per-user Gemini credentials and clear their plaintext column."""
+    try:
+        validate_credential_encryption_config()
+    except CredentialError as exc:
+        raise click.ClickException(str(exc))
+    migrated = 0
+    for user in sheets_db.get_users_with_legacy_gemini_keys():
+        try:
+            encrypted = encrypt_text(user['gemini_api_key'])
+            if sheets_db.set_user_gemini_api_key(user['id'], encrypted):
+                migrated += 1
+        except CredentialError as exc:
+            raise click.ClickException(f"Could not encrypt a legacy credential: {exc}")
+    click.echo(f"Migrated {migrated} Gemini credential(s).")
+
+
+@app.cli.command('migrate-legacy-assets')
+def migrate_legacy_assets_command():
+    """Turn legacy photo URLs and user signature files into private asset records."""
+    from modules.assets import store_private_bytes, validate_image_bytes
+
+    migrated_reports = sheets_db.migrate_legacy_photo_references()
+    migrated_signatures = 0
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    for user in sheets_db.get_users_without_signature_asset():
+        user_id = str(user['id'])
+        candidates = (
+            os.path.join(project_root, 'uploads', f'signature_{user_id}.png'),
+            os.path.join(project_root, 'static', f'signature_{user_id}.png'),
+        )
+        for candidate in candidates:
+            if not os.path.isfile(candidate):
+                continue
+            try:
+                with open(candidate, 'rb') as handle:
+                    content = handle.read()
+                mime_type, _ = validate_image_bytes(content)
+                asset = store_private_bytes(
+                    user['id'], content, os.path.basename(candidate), mime_type, 'signature'
+                )
+                if sheets_db.set_user_signature_asset(user['id'], asset['id']):
+                    migrated_signatures += 1
+                break
+            except (OSError, ValueError, RuntimeError):
+                app.logger.warning('Could not migrate legacy signature for user %s', user_id)
+    click.echo(
+        f"Migrated {migrated_reports} report photo record(s) and {migrated_signatures} signature(s)."
+    )
+
 # --- App Factory Pattern ---
-def create_app(db_adapter=None, task_executor=None):
+def create_app(db_adapter=None, task_executor=None, config=None):
     new_app = Flask(__name__)
     new_app.config.update(app.config)
-    
+    if config:
+        new_app.config.update(config)
     if db_adapter:
         new_app.config['DB_ADAPTER'] = db_adapter
     if task_executor:
         new_app.config['TASK_EXECUTOR'] = task_executor
-        
+
     # Copy route mappings and middleware hooks from the global app instance
     new_app.url_map = app.url_map
     new_app.view_functions = app.view_functions.copy()
+    new_app.view_functions['static'] = new_app.send_static_file
     new_app.before_request_funcs = app.before_request_funcs.copy()
     new_app.after_request_funcs = app.after_request_funcs.copy()
     new_app.teardown_request_funcs = app.teardown_request_funcs.copy()
     new_app.teardown_appcontext_funcs = app.teardown_appcontext_funcs.copy()
+    new_app.template_context_processors = app.template_context_processors.copy()
     new_app.error_handler_spec = app.error_handler_spec.copy()
     new_app.cli = app.cli
     
@@ -5240,6 +5134,11 @@ def create_app(db_adapter=None, task_executor=None):
     login_manager.init_app(new_app)
     if hasattr(limiter, 'init_app'):
         limiter.init_app(new_app)
+
+    if os.getenv('FLASK_ENV') == 'production' and not new_app.config.get('TESTING'):
+        validate_credential_encryption_config()
+        if _rate_limit_storage_uri == 'memory://':
+            raise RuntimeError('RATELIMIT_STORAGE_URI must use shared storage in production.')
         
     return new_app
 

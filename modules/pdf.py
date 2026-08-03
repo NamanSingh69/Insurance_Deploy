@@ -4,6 +4,7 @@ import io
 import base64
 import uuid
 import requests
+import tempfile
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.errors import FPDFException
@@ -45,6 +46,38 @@ class UserSnapshot:
         self.address_line_3 = data.get('address_line_3', '')
         self.contact_no = data.get('contact_no', '')
         self.email = data.get('email', '')
+
+
+def _private_signature_path(user_id):
+    """Materialize an owned signature briefly for FPDF without public static files."""
+    if not user_id:
+        return None
+    try:
+        user_data = db.get_user_by_id(user_id)
+        asset_id = user_data.get('signature_asset_id') if user_data else None
+        if not asset_id:
+            return None
+        content, asset = get_owned_asset_content(asset_id, user_id)
+        if not content or not asset or asset.get('mime_type') not in {'image/jpeg', 'image/png', 'image/webp'}:
+            return None
+        suffix = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}[asset['mime_type']]
+        handle = tempfile.NamedTemporaryFile(prefix='insurance-signature-', suffix=suffix, delete=False)
+        try:
+            handle.write(content)
+            return handle.name
+        finally:
+            handle.close()
+    except Exception:
+        return None
+
+
+def _remove_temporary_signature(path):
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 def is_number(s):
     try:
@@ -1183,28 +1216,15 @@ def render_report(data, user_data_snapshot, user_id):
     pdf.ln(line_h_page3 * gap_lines)
     sig_included = data.get('include_signature', True) if isinstance(data, dict) else True
     if sig_included:
-        sig_img_path = None
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_id_str = str(user_id) if user_id else ''
-        per_user_static = os.path.join(project_root, 'static', f'signature_{user_id_str}.png')
-        per_user_uploads = os.path.join(project_root, 'uploads', f'signature_{user_id_str}.png')
-        user_sig_file = os.path.join(project_root, 'static', 'signature.png')
-        uploads_sig = os.path.join(project_root, 'uploads', 'signature.png')
-        if os.path.exists(per_user_static):
-            sig_img_path = per_user_static
-        elif os.path.exists(per_user_uploads):
-            sig_img_path = per_user_uploads
-        elif os.path.exists(user_sig_file):
-            sig_img_path = user_sig_file
-        elif os.path.exists(uploads_sig):
-            sig_img_path = uploads_sig
-
+        sig_img_path = _private_signature_path(user_id)
         if sig_img_path:
             try:
                 pdf.image(sig_img_path, x=sig_start_x + (sig_block_width - 40) / 2, y=pdf.get_y(), w=40)
                 pdf.ln(18)
-            except Exception as e_sig:
-                print(f"Error rendering signature image: {e_sig}")
+            except Exception:
+                pass
+            finally:
+                _remove_temporary_signature(sig_img_path)
 
     pdf.set_x(sig_start_x); pdf.set_font("Helvetica", 'B', base_font_size_page3)
     pdf.cell(sig_block_width, line_h_page3, normalize_pdf_text_for_fpdf(u.full_name), border=0, new_x="LMARGIN", new_y="NEXT", align='C')
@@ -1336,28 +1356,15 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
 
     sig_included = fee_data.get('include_signature', include_signature)
     if sig_included:
-        sig_img_path = None
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        user_id_str = str(user_id) if user_id else ''
-        per_user_static = os.path.join(project_root, 'static', f'signature_{user_id_str}.png')
-        per_user_uploads = os.path.join(project_root, 'uploads', f'signature_{user_id_str}.png')
-        user_sig_file = os.path.join(project_root, 'static', 'signature.png')
-        uploads_sig = os.path.join(project_root, 'uploads', 'signature.png')
-        if os.path.exists(per_user_static):
-            sig_img_path = per_user_static
-        elif os.path.exists(per_user_uploads):
-            sig_img_path = per_user_uploads
-        elif os.path.exists(user_sig_file):
-            sig_img_path = user_sig_file
-        elif os.path.exists(uploads_sig):
-            sig_img_path = uploads_sig
-
+        sig_img_path = _private_signature_path(user_id)
         if sig_img_path:
             try:
                 pdf.image(sig_img_path, x=sig_start_x + (sig_block_width - 40) / 2, y=pdf.get_y(), w=40)
                 pdf.ln(18)
-            except Exception as e_sig:
-                print(f"Error embedding signature in fee report: {e_sig}")
+            except Exception:
+                pass
+            finally:
+                _remove_temporary_signature(sig_img_path)
 
     pdf.set_x(sig_start_x)
     pdf.set_font("Helvetica", 'B', 10)
@@ -1372,4 +1379,3 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
         "invoice_no": fee_data.get('invoice_no', 'FeeBill'),
         "vehicle_no": fee_data.get('vehicle_no', '')
     }
-

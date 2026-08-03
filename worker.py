@@ -4,10 +4,12 @@ import json
 import socket
 import time
 import uuid
-import traceback
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from db import db
-from modules.assets import get_owned_asset_content
+from modules.assets import get_owned_asset_content, store_private_bytes
+from modules.credentials import get_user_gemini_key
+from modules.drive import DriveAuthorizationError, is_drive_connected, upload_report_to_personal_drive
 from modules.gemini import execute_gemini_task
 from modules.pdf import render_report
 from modules.jobs import fail_job, complete_job, claim_next_job, requeue_stale_jobs, cleanup_temp_files
@@ -15,6 +17,7 @@ from modules.jobs import fail_job, complete_job, claim_next_job, requeue_stale_j
 POLL_INTERVAL_SECONDS = float(os.getenv('JOB_POLL_INTERVAL_SECONDS', '1'))
 WORKER_ID = os.getenv('JOB_WORKER_ID', f'{socket.gethostname()}-{os.getpid()}')
 MAX_ATTEMPTS = 3
+logger = logging.getLogger(__name__)
 
 def _job_input(job):
     payload = job.get('input_json') or {}
@@ -57,24 +60,18 @@ def _run_process_pdf(job, payload, user_data):
     mime_type = payload.get('mime_type', 'application/pdf')
     is_invoice = (kind == 'process_invoice')
     
-    # 1. Fetch content from private asset or gemini_file_uri
+    # 1. Fetch content from an application-owned private asset.  The browser
+    # never submits provider file URIs or access capabilities to the worker.
     if payload.get('source_asset_id'):
         content, asset = get_owned_asset_content(payload['source_asset_id'], user_id)
         if not content:
             raise ValueError("The uploaded PDF is no longer available. Please upload it again.")
         pdf_part = {'mime_type': mime_type, 'data': content}
-    elif payload.get('gemini_file_uri'):
-        pdf_part = {
-            'file_data': {
-                'mime_type': mime_type,
-                'file_uri': payload['gemini_file_uri'],
-            }
-        }
     else:
         raise ValueError("The processing job has no valid PDF input.")
 
     # 2. Setup Gemini Credentials
-    api_key = user_data.get('gemini_api_key') or os.getenv("GEMINI_API_KEY")
+    api_key = get_user_gemini_key(user_data) or os.getenv("GEMINI_API_KEY")
     user_model = user_data.get('gemini_model')
 
     # 3. Execute Gemini Task
@@ -128,20 +125,28 @@ def _run_generate_files(job, payload, user_data):
     report_no = render_result["report_no"]
     vehicle_no = render_result["vehicle_no"]
     drive_link = render_result["drive_link"]
+    filename_base = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-')).rstrip() or "SurveyReport"
+    filename = f"{filename_base}.pdf"
+    if is_drive_connected(user_id):
+        try:
+            folder_name = "".join(c for c in vehicle_no if c.isalnum() or c in ('_', '-', ' ')).strip() or "Unknown Vehicle"
+            drive_link = upload_report_to_personal_drive(user_id, pdf_bytes, filename, folder_name)
+        except DriveAuthorizationError:
+            # The report is still available through its private application
+            # asset and the existing service-account fallback.
+            logger.warning("Could not deliver generated report to connected Drive for user %s", user_id)
 
-    # 2. Write locally to temp_pdfs (remains downloadable for 30 minutes)
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    temp_pdfs_dir = os.path.join(project_root, 'uploads', 'temp_pdfs')
-    os.makedirs(temp_pdfs_dir, exist_ok=True)
-
+    # 2. Keep the downloadable copy in private storage for 30 minutes.
+    generated_asset = store_private_bytes(
+        user_id, pdf_bytes, filename, "application/pdf", "generated_report",
+        expires_at=datetime.utcnow() + timedelta(minutes=30),
+    )
     request_id = str(uuid.uuid4())
-    filepath = os.path.join(temp_pdfs_dir, f"{request_id}.pdf")
-    with open(filepath, 'wb') as f:
-        f.write(pdf_bytes)
 
-    # 3. Complete Job with metadata
+    # 3. Complete Job with metadata only; no document bytes live in the job row.
     complete_job(job_id, {
         "request_id": request_id,
+        "asset_id": generated_asset["id"],
         "drive_link": drive_link,
         "report_no": report_no,
         "vehicle_no": vehicle_no
@@ -165,8 +170,8 @@ def run_job(job):
             
         print(f"[JOB-COMPLETED] Job {job_id} finished successfully.")
     except Exception as e:
-        tb = traceback.format_exc()
-        handle_job_failure(job, f"{str(e)}\n{tb}")
+        logger.exception("Job %s (%s) failed", job_id, job.get('kind'))
+        handle_job_failure(job, "The background task could not be completed. Please try again.")
 
 def main():
     print(f"[WORKER-STARTUP] Worker ID: {WORKER_ID}. Initializing DB connection pool.")
