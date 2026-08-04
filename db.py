@@ -2049,4 +2049,215 @@ class PostgresDB:
         return True
 
 
+    # --- Insurer Master CRUD & Auto-Fill ---
+    def get_insurer_masters(self, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address, gstin,
+                           invoice_prefix, default_conveyance_rate, created_at, updated_at
+                    FROM insurer_master
+                    WHERE workspace_admin_id = %s
+                    ORDER BY insurer_name ASC, branch_name ASC;
+                """, (workspace_admin_id,))
+                results = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    for k in ('created_at', 'updated_at'):
+                        if isinstance(item.get(k), (datetime, date)):
+                            item[k] = item[k].isoformat()
+                    results.append(item)
+                return results
+        except Exception as e:
+            print(f"Error fetching insurer masters: {e}")
+            return []
+
+    def get_insurer_master_by_id(self, insurer_id, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM insurer_master
+                    WHERE id = %s AND workspace_admin_id = %s;
+                """, (insurer_id, workspace_admin_id))
+                row = cur.fetchone()
+                if row:
+                    item = dict(row)
+                    for k in ('created_at', 'updated_at'):
+                        if isinstance(item.get(k), (datetime, date)):
+                            item[k] = item[k].isoformat()
+                    return item
+                return None
+        except Exception as e:
+            print(f"Error fetching insurer master by id: {e}")
+            return None
+
+    def save_insurer_master(self, workspace_admin_id, insurer_data):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        insurer_name = str(insurer_data.get('insurer_name', '')).strip()
+        branch_name = str(insurer_data.get('branch_name', '')).strip()
+        branch_address = str(insurer_data.get('branch_address', '')).strip()
+        gstin = str(insurer_data.get('gstin', '')).strip()
+        invoice_prefix = str(insurer_data.get('invoice_prefix', '')).strip().upper()
+        try:
+            default_conveyance_rate = float(insurer_data.get('default_conveyance_rate', 10.0))
+        except (ValueError, TypeError):
+            default_conveyance_rate = 10.0
+
+        insurer_id = insurer_data.get('id')
+        try:
+            with self.conn.cursor() as cur:
+                if insurer_id:
+                    cur.execute("""
+                        UPDATE insurer_master SET
+                            insurer_name = %s, branch_name = %s, branch_address = %s,
+                            gstin = %s, invoice_prefix = %s, default_conveyance_rate = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s AND workspace_admin_id = %s
+                        RETURNING id;
+                    """, (insurer_name, branch_name, branch_address, gstin, invoice_prefix,
+                          default_conveyance_rate, insurer_id, workspace_admin_id))
+                    res = cur.fetchone()
+                    return res[0] if res else None
+                else:
+                    cur.execute("""
+                        INSERT INTO insurer_master (
+                            workspace_admin_id, insurer_name, branch_name, branch_address,
+                            gstin, invoice_prefix, default_conveyance_rate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (workspace_admin_id, insurer_name, branch_name) DO UPDATE SET
+                            branch_address = EXCLUDED.branch_address,
+                            gstin = EXCLUDED.gstin,
+                            invoice_prefix = EXCLUDED.invoice_prefix,
+                            default_conveyance_rate = EXCLUDED.default_conveyance_rate,
+                            updated_at = CURRENT_TIMESTAMP
+                        RETURNING id;
+                    """, (workspace_admin_id, insurer_name, branch_name, branch_address, gstin,
+                          invoice_prefix, default_conveyance_rate))
+                    res = cur.fetchone()
+                    return res[0] if res else None
+        except Exception as e:
+            print(f"Error saving insurer master: {e}")
+            return None
+
+    def delete_insurer_master(self, insurer_id, workspace_admin_id):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("DELETE FROM insurer_master WHERE id = %s AND workspace_admin_id = %s RETURNING id;",
+                            (insurer_id, workspace_admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error deleting insurer master: {e}")
+            return False
+
+    def get_next_insurer_invoice_number(self, workspace_admin_id, prefix):
+        if not prefix:
+            prefix = "BILL"
+        prefix = prefix.strip().upper()
+        if not self.conn: self.connect()
+        if not self.conn: return f"{prefix}-1"
+        try:
+            with self.conn.cursor() as cur:
+                # Find maximum numeric sequence for this insurer prefix
+                pattern = f"{prefix}-%"
+                cur.execute("""
+                    SELECT invoice_no FROM fee_bills
+                    WHERE workspace_admin_id = %s AND (insurer_prefix = %s OR invoice_no ILIKE %s);
+                """, (workspace_admin_id, prefix, pattern))
+                rows = cur.fetchall()
+                max_seq = 0
+                for r in rows:
+                    inv_str = str(r[0] or '')
+                    if '-' in inv_str:
+                        parts = inv_str.split('-')
+                        if parts[-1].isdigit():
+                            seq = int(parts[-1])
+                            if seq > max_seq:
+                                max_seq = seq
+                return f"{prefix}-{max_seq + 1}"
+        except Exception as e:
+            print(f"Error calculating next insurer invoice number: {e}")
+            return f"{prefix}-1"
+
+    # --- Gmail Intimations Staging ---
+    def get_staged_gmail_intimations(self, workspace_admin_id, status='pending'):
+        if not self.conn: self.connect()
+        if not self.conn: return []
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM gmail_intimations_staging
+                    WHERE workspace_admin_id = %s AND (%s IS NULL OR status = %s)
+                    ORDER BY received_at DESC;
+                """, (workspace_admin_id, status, status))
+                results = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    if isinstance(item.get('received_at'), (datetime, date)):
+                        item['received_at'] = item['received_at'].isoformat()
+                    if isinstance(item.get('created_at'), (datetime, date)):
+                        item['created_at'] = item['created_at'].isoformat()
+                    results.append(item)
+                return results
+        except Exception as e:
+            print(f"Error reading staged Gmail intimations: {e}")
+            return []
+
+    def save_staged_gmail_intimation(self, workspace_admin_id, data):
+        if not self.conn: self.connect()
+        if not self.conn: return None
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO gmail_intimations_staging (
+                        workspace_admin_id, gmail_message_id, sender_email, subject, received_at,
+                        extracted_claim_no, extracted_insured_name, extracted_vehicle_no,
+                        extracted_policy_no, extracted_insurer_name, raw_body, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                    ON CONFLICT (workspace_admin_id, gmail_message_id) DO UPDATE SET
+                        sender_email = EXCLUDED.sender_email,
+                        subject = EXCLUDED.subject,
+                        extracted_claim_no = EXCLUDED.extracted_claim_no,
+                        extracted_insured_name = EXCLUDED.extracted_insured_name,
+                        extracted_vehicle_no = EXCLUDED.extracted_vehicle_no,
+                        extracted_policy_no = EXCLUDED.extracted_policy_no,
+                        extracted_insurer_name = EXCLUDED.extracted_insurer_name,
+                        raw_body = EXCLUDED.raw_body
+                    RETURNING id;
+                """, (
+                    workspace_admin_id, data.get('gmail_message_id'), data.get('sender_email'),
+                    data.get('subject'), data.get('received_at'), data.get('extracted_claim_no'),
+                    data.get('extracted_insured_name'), data.get('extracted_vehicle_no'),
+                    data.get('extracted_policy_no'), data.get('extracted_insurer_name'),
+                    data.get('raw_body')
+                ))
+                res = cur.fetchone()
+                return res[0] if res else None
+        except Exception as e:
+            print(f"Error saving staged Gmail intimation: {e}")
+            return None
+
+    def update_staged_gmail_intimation_status(self, intimation_id, workspace_admin_id, status):
+        if not self.conn: self.connect()
+        if not self.conn: return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE gmail_intimations_staging SET status = %s
+                    WHERE id = %s AND workspace_admin_id = %s
+                    RETURNING id;
+                """, (status, intimation_id, workspace_admin_id))
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Error updating staged Gmail intimation status: {e}")
+            return False
+
+
 db = PostgresDB()
+

@@ -2543,6 +2543,96 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 
+    let globalInsurerMasters = [];
+
+    async function loadInsurerMasters() {
+        try {
+            const res = await fetch('/api/insurers');
+            if (!res.ok) return;
+            const data = await res.json();
+            globalInsurerMasters = data.insurers || [];
+
+            const feeSelect = document.getElementById('fee-insurer-master-select');
+            const claimSelect = document.getElementById('claim-input-insurer-select');
+            const optionsHtml = '<option value="">Select Insurer Master...</option>' +
+                globalInsurerMasters.map(i => `<option value="${i.id}">${escapeHtml(i.insurer_name)} ${i.branch_name ? '(' + escapeHtml(i.branch_name) + ')' : ''}</option>`).join('');
+
+            if (feeSelect) feeSelect.innerHTML = optionsHtml;
+            if (claimSelect) claimSelect.innerHTML = optionsHtml;
+
+            const tbody = document.getElementById('insurer-master-tbody');
+            if (tbody) {
+                if (!globalInsurerMasters.length) {
+                    tbody.innerHTML = '<tr><td colspan="6">No Insurer Masters added yet.</td></tr>';
+                } else {
+                    tbody.innerHTML = globalInsurerMasters.map(i => `
+                        <tr>
+                            <td><strong>${escapeHtml(i.insurer_name)}</strong></td>
+                            <td>${escapeHtml(i.branch_name || '—')}</td>
+                            <td><code>${escapeHtml(i.invoice_prefix || '')}</code></td>
+                            <td>${escapeHtml(i.gstin || '—')}</td>
+                            <td>Rs. ${escapeHtml(i.default_conveyance_rate || 10)}/km</td>
+                            <td>
+                                <button type="button" class="btn btn-secondary btn-sm edit-im-btn" data-id="${i.id}">Edit</button>
+                                <button type="button" class="btn btn-danger btn-sm delete-im-btn" data-id="${i.id}">Delete</button>
+                            </td>
+                        </tr>
+                    `).join('');
+
+                    tbody.querySelectorAll('.edit-im-btn').forEach(btn => btn.addEventListener('click', () => editInsurerMaster(btn.dataset.id)));
+                    tbody.querySelectorAll('.delete-im-btn').forEach(btn => btn.addEventListener('click', () => deleteInsurerMaster(btn.dataset.id)));
+                }
+            }
+        } catch (err) {
+            console.error('Error loading insurer masters:', err);
+        }
+    }
+
+    function editInsurerMaster(id) {
+        const item = globalInsurerMasters.find(i => String(i.id) === String(id));
+        if (!item) return;
+        document.getElementById('insurer-master-id').value = item.id;
+        document.getElementById('im-insurer-name').value = item.insurer_name || '';
+        document.getElementById('im-branch-name').value = item.branch_name || '';
+        document.getElementById('im-prefix').value = item.invoice_prefix || '';
+        document.getElementById('im-gstin').value = item.gstin || '';
+        document.getElementById('im-conveyance-rate').value = item.default_conveyance_rate || 10;
+        document.getElementById('im-branch-address').value = item.branch_address || '';
+    }
+
+    async function deleteInsurerMaster(id) {
+        if (!confirm('Are you sure you want to delete this Insurer Master entry?')) return;
+        try {
+            const res = await fetch(`/api/insurers/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                showStatus('Insurer Master deleted.', 'success', true);
+                loadInsurerMasters();
+            } else {
+                showStatus('Could not delete Insurer Master.', 'error', true);
+            }
+        } catch (err) { showStatus(err.message, 'error', true); }
+    }
+
+    function updateDistanceConveyanceCalc() {
+        const mode = document.getElementById('fee-conveyance-calc-mode')?.value || 'flat';
+        const distBox = document.getElementById('fee-distance-inputs');
+        const conveyanceInput = document.getElementById('fee-conveyance');
+        const preview = document.getElementById('fee-dist-calc-preview');
+
+        if (mode === 'distance') {
+            if (distBox) distBox.style.display = 'block';
+            const onewayKm = parseFloat(document.getElementById('fee-dist-oneway-km')?.value || 0);
+            const ratePerKm = parseFloat(document.getElementById('fee-dist-rate-per-km')?.value || 10);
+            const visits = parseInt(document.getElementById('fee-dist-visits')?.value || 1, 10);
+
+            const totalConveyance = onewayKm * 2 * ratePerKm * visits;
+            if (preview) preview.textContent = `Formula: ${onewayKm}km × 2 × Rs.${ratePerKm} × ${visits} visit(s) = Rs. ${totalConveyance.toFixed(2)}`;
+            if (conveyanceInput) conveyanceInput.value = totalConveyance.toFixed(2);
+        } else {
+            if (distBox) distBox.style.display = 'none';
+        }
+    }
+
     function claimFilterQuery() {
         const pairs = new URLSearchParams();
         const mappings = [['q', 'claim-search-input'], ['status', 'claim-status-filter'], ['month', 'claim-month-filter'], ['insurer', 'claim-insurer-filter']];
@@ -3172,6 +3262,88 @@ document.addEventListener('DOMContentLoaded', () => {
             if (res.ok) { showStatus('Password updated.', 'success', true); document.getElementById('current-password-input').value = ''; document.getElementById('new-password-input').value = ''; }
             else showStatus(result.error || 'Could not update password.', 'error', true);
         });
+
+        // Insurer Master Auto-Fill Listeners
+        document.getElementById('fee-insurer-master-select')?.addEventListener('change', async (e) => {
+            const id = e.target.value;
+            if (!id) return;
+            const item = globalInsurerMasters.find(i => String(i.id) === String(id));
+            if (!item) return;
+            const insurerInput = document.getElementById('fee-insurer');
+            const gstinInput = document.getElementById('fee-insurer-gst');
+            const addressInput = document.getElementById('fee-insurer-address');
+            const rateInput = document.getElementById('fee-dist-rate-per-km');
+
+            if (insurerInput) insurerInput.value = item.insurer_name || '';
+            if (gstinInput) gstinInput.value = item.gstin || '';
+            if (addressInput) addressInput.value = item.branch_address || '';
+            if (rateInput) rateInput.value = item.default_conveyance_rate || 10;
+
+            if (item.invoice_prefix) {
+                try {
+                    const res = await fetch(`/api/insurers/next-invoice-no?prefix=${encodeURIComponent(item.invoice_prefix)}`);
+                    const data = await res.json();
+                    if (data.success && data.next_invoice_no) {
+                        const invInput = document.getElementById('fee-invoice-no');
+                        if (invInput) invInput.value = data.next_invoice_no;
+                    }
+                } catch (err) { console.error('Error fetching next invoice number:', err); }
+            }
+            updateDistanceConveyanceCalc();
+        });
+
+        document.getElementById('claim-input-insurer-select')?.addEventListener('change', (e) => {
+            const id = e.target.value;
+            if (!id) return;
+            const item = globalInsurerMasters.find(i => String(i.id) === String(id));
+            if (!item) return;
+            const insurerInput = document.getElementById('claim-input-insurer');
+            const branchInput = document.getElementById('claim-input-branch');
+            if (insurerInput) insurerInput.value = item.insurer_name || '';
+            if (branchInput) branchInput.value = item.branch_name || '';
+        });
+
+        // Conveyance Distance Formula Listeners
+        document.getElementById('fee-conveyance-calc-mode')?.addEventListener('change', updateDistanceConveyanceCalc);
+        document.getElementById('fee-dist-oneway-km')?.addEventListener('input', updateDistanceConveyanceCalc);
+        document.getElementById('fee-dist-rate-per-km')?.addEventListener('input', updateDistanceConveyanceCalc);
+        document.getElementById('fee-dist-visits')?.addEventListener('change', updateDistanceConveyanceCalc);
+
+        // Insurer Master Form Submit & Modal Controls
+        document.getElementById('insurer-master-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                id: document.getElementById('insurer-master-id')?.value || null,
+                insurer_name: document.getElementById('im-insurer-name')?.value.trim(),
+                branch_name: document.getElementById('im-branch-name')?.value.trim(),
+                invoice_prefix: document.getElementById('im-prefix')?.value.trim(),
+                gstin: document.getElementById('im-gstin')?.value.trim(),
+                default_conveyance_rate: document.getElementById('im-conveyance-rate')?.value,
+                branch_address: document.getElementById('im-branch-address')?.value.trim()
+            };
+            try {
+                const res = await fetch('/api/insurers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || 'Failed to save Insurer Master');
+                showStatus('Insurer Master saved.', 'success', true);
+                document.getElementById('insurer-master-form')?.reset();
+                document.getElementById('insurer-master-id').value = '';
+                await loadInsurerMasters();
+            } catch (err) { showStatus(err.message, 'error', true); }
+        });
+
+        document.getElementById('im-reset-btn')?.addEventListener('click', () => {
+            document.getElementById('insurer-master-form')?.reset();
+            document.getElementById('insurer-master-id').value = '';
+        });
+
+        document.getElementById('close-insurer-master-modal')?.addEventListener('click', () => {
+            document.getElementById('insurer-master-modal')?.classList.add('hidden');
+        });
+
+        document.getElementById('close-gmail-staging-modal')?.addEventListener('click', () => {
+            document.getElementById('gmail-staging-modal')?.classList.add('hidden');
+        });
     }
 
     // --- Initial Load ---
@@ -3179,6 +3351,7 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchSavedReports();
     bindMotorWorkspaceEvents();
     initMotorSurveyWorkspace();
+    loadInsurerMasters();
 
     if (downloadConsolidatedCsvButton) {
         downloadConsolidatedCsvButton.addEventListener('click', handleConsolidatedCsvDownload);

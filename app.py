@@ -4482,6 +4482,14 @@ def claims_register():
             'claim_no': claim_no,
             'vehicle_regn_no': str(data.get('vehicle_no', '')).strip(),
             'insured': str(data.get('insured_name', '')).strip(),
+            'insured_contact_no': str(data.get('insured_contact_no', '')).strip(),
+            'insured_email': str(data.get('insured_email', '')).strip(),
+            'claim_manager_email': str(data.get('claim_manager_email', '')).strip(),
+            'claim_manager_phone': str(data.get('claim_manager_phone', '')).strip(),
+            'vehicle_type': str(data.get('vehicle_type', '')).strip(),
+            'workshop_name': str(data.get('workshop_name', '')).strip(),
+            'workshop_phone': str(data.get('workshop_phone', '')).strip(),
+            'insurer_branch': str(data.get('insurer_branch', '')).strip(),
             'policy_no': str(data.get('policy_no', '')).strip(),
             'insurer': insurer,
             'date_of_loss': str(data.get('date_of_loss', '')).strip(),
@@ -4513,6 +4521,126 @@ def update_claim(report_id):
     if not sheets_db.update_workspace_report_status(report_id, workspace_admin_id, current_user.id, status):
         return jsonify({'error': 'Claim not found or access denied.'}), 404
     return jsonify({'success': True, 'status': status})
+
+
+# --- Insurer Master API Endpoints ---
+@app.route('/api/insurers', methods=['GET', 'POST'])
+@login_required
+def manage_insurers():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    if request.method == 'GET':
+        insurers = sheets_db.get_insurer_masters(workspace_admin_id)
+        return jsonify({'success': True, 'insurers': insurers})
+
+    if not is_admin_user(current_user):
+        return jsonify({'error': 'Admin permission required.'}), 403
+
+    data = request.get_json() or {}
+    if not data.get('insurer_name'):
+        return jsonify({'error': 'Insurer name is required.'}), 400
+
+    insurer_id = sheets_db.save_insurer_master(workspace_admin_id, data)
+    if not insurer_id:
+        return jsonify({'error': 'Failed to save Insurer Master.'}), 500
+    return jsonify({'success': True, 'id': insurer_id}), 201
+
+
+@app.route('/api/insurers/<int:insurer_id>', methods=['GET', 'DELETE'])
+@login_required
+def get_or_delete_insurer(insurer_id):
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    if request.method == 'GET':
+        item = sheets_db.get_insurer_master_by_id(insurer_id, workspace_admin_id)
+        if not item:
+            return jsonify({'error': 'Insurer not found.'}), 404
+        return jsonify({'success': True, 'insurer': item})
+
+    if not is_admin_user(current_user):
+        return jsonify({'error': 'Admin permission required.'}), 403
+    success = sheets_db.delete_insurer_master(insurer_id, workspace_admin_id)
+    if not success:
+        return jsonify({'error': 'Failed to delete Insurer Master.'}), 500
+    return jsonify({'success': True})
+
+
+@app.route('/api/insurers/next-invoice-no', methods=['GET'])
+@login_required
+def get_next_insurer_invoice_no():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    prefix = request.args.get('prefix', 'BILL')
+    next_no = sheets_db.get_next_insurer_invoice_number(workspace_admin_id, prefix)
+    return jsonify({'success': True, 'next_invoice_no': next_no, 'prefix': prefix})
+
+
+# --- Gmail Staging API Endpoints ---
+@app.route('/api/gmail/staged', methods=['GET'])
+@login_required
+def get_staged_gmail():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    status = request.args.get('status', 'pending')
+    items = sheets_db.get_staged_gmail_intimations(workspace_admin_id, status=status)
+    return jsonify({'success': True, 'intimations': items})
+
+
+@app.route('/api/gmail/staged/<int:intimation_id>/accept', methods=['POST'])
+@login_required
+def accept_staged_gmail(intimation_id):
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    items = sheets_db.get_staged_gmail_intimations(workspace_admin_id, status=None)
+    target = next((item for item in items if item['id'] == intimation_id), None)
+    if not target:
+        return jsonify({'error': 'Staged intimation not found.'}), 404
+
+    claim_no = target.get('extracted_claim_no') or f"GMAIL-{target['gmail_message_id'][-8:]}"
+    insurer = target.get('extracted_insurer_name') or "Unknown Insurer"
+    prefix = _report_prefix_for_insurer(insurer)
+    sequence = sheets_db.reserve_report_number(workspace_admin_id, prefix, str(datetime.now().year))
+    if sequence is None:
+        return jsonify({'error': 'Failed to reserve a report number.'}), 500
+
+    report_data = {
+        'survey_report': {
+            'report_no': f'{prefix}/{datetime.now().year}/{sequence:02d}',
+            'claim_no': claim_no,
+            'vehicle_regn_no': target.get('extracted_vehicle_no', ''),
+            'insured': target.get('extracted_insured_name', ''),
+            'policy_no': target.get('extracted_policy_no', ''),
+            'insurer': insurer,
+            'email_received_date': target.get('received_at', '')
+        },
+        'assessment': {'report_type': 'Final Survey Report'},
+        'photos': {},
+        'claim_meta': {'status': 'new_appointment', 'survey_type': 'final'},
+    }
+    report_id = sheets_db.save_workspace_report(
+        current_user.id, workspace_admin_id, report_data, status='new_appointment', survey_type='final',
+        gmail_message_id=target.get('gmail_message_id'), email_received_date=target.get('received_at'))
+    if not report_id:
+        return jsonify({'error': 'Failed to create claim.'}), 500
+
+    sheets_db.update_staged_gmail_intimation_status(intimation_id, workspace_admin_id, 'accepted')
+    return jsonify({'success': True, 'report_id': str(report_id)})
+
+
+@app.route('/api/gmail/staged/<int:intimation_id>/reject', methods=['POST'])
+@login_required
+def reject_staged_gmail(intimation_id):
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    sheets_db.update_staged_gmail_intimation_status(intimation_id, workspace_admin_id, 'rejected')
+    return jsonify({'success': True})
+
 
 
 @app.route('/api/reports/monthly', methods=['GET'])
