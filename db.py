@@ -2057,7 +2057,7 @@ class PostgresDB:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address, gstin,
-                           invoice_prefix, default_conveyance_rate, created_at, updated_at
+                           state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
                     FROM insurer_master
                     WHERE workspace_admin_id = %s
                     ORDER BY insurer_name ASC, branch_name ASC;
@@ -2102,6 +2102,7 @@ class PostgresDB:
         branch_name = str(insurer_data.get('branch_name', '')).strip()
         branch_address = str(insurer_data.get('branch_address', '')).strip()
         gstin = str(insurer_data.get('gstin', '')).strip()
+        state_code = str(insurer_data.get('state_code', '19')).strip()
         invoice_prefix = str(insurer_data.get('invoice_prefix', '')).strip().upper()
         try:
             default_conveyance_rate = float(insurer_data.get('default_conveyance_rate', 10.0))
@@ -2115,11 +2116,11 @@ class PostgresDB:
                     cur.execute("""
                         UPDATE insurer_master SET
                             insurer_name = %s, branch_name = %s, branch_address = %s,
-                            gstin = %s, invoice_prefix = %s, default_conveyance_rate = %s,
+                            gstin = %s, state_code = %s, invoice_prefix = %s, default_conveyance_rate = %s,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = %s AND workspace_admin_id = %s
                         RETURNING id;
-                    """, (insurer_name, branch_name, branch_address, gstin, invoice_prefix,
+                    """, (insurer_name, branch_name, branch_address, gstin, state_code, invoice_prefix,
                           default_conveyance_rate, insurer_id, workspace_admin_id))
                     res = cur.fetchone()
                     return res[0] if res else None
@@ -2127,16 +2128,17 @@ class PostgresDB:
                     cur.execute("""
                         INSERT INTO insurer_master (
                             workspace_admin_id, insurer_name, branch_name, branch_address,
-                            gstin, invoice_prefix, default_conveyance_rate
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            gstin, state_code, invoice_prefix, default_conveyance_rate
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (workspace_admin_id, insurer_name, branch_name) DO UPDATE SET
                             branch_address = EXCLUDED.branch_address,
                             gstin = EXCLUDED.gstin,
+                            state_code = EXCLUDED.state_code,
                             invoice_prefix = EXCLUDED.invoice_prefix,
                             default_conveyance_rate = EXCLUDED.default_conveyance_rate,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id;
-                    """, (workspace_admin_id, insurer_name, branch_name, branch_address, gstin,
+                    """, (workspace_admin_id, insurer_name, branch_name, branch_address, gstin, state_code,
                           invoice_prefix, default_conveyance_rate))
                     res = cur.fetchone()
                     return res[0] if res else None

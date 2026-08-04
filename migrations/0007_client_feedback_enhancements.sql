@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS insurer_master (
     branch_name VARCHAR(255),
     branch_address TEXT,
     gstin VARCHAR(50),
+    state_code VARCHAR(10) DEFAULT '19',
     invoice_prefix VARCHAR(50) NOT NULL,
     default_conveyance_rate NUMERIC(10, 2) DEFAULT 10.00,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

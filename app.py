@@ -4957,6 +4957,20 @@ def download_fees_excel():
                 float(bill.get('outstanding_amount', 0) or 0), bill.get('due_date', ''),
                 bill.get('payment_status', ''), bill.get('invoice_status', ''),
             ])
+
+        # Summary Totals Row at the bottom
+        if len(bills) > 0:
+            summary_row = ['TOTALS', '', '', '', '', '', '', '', '',
+                           '=SUM(J2:J{})'.format(len(bills)+1), '', '', '=SUM(M2:M{})'.format(len(bills)+1), '',
+                           '=SUM(O2:O{})'.format(len(bills)+1), '=SUM(P2:P{})'.format(len(bills)+1),
+                           '=SUM(Q2:Q{})'.format(len(bills)+1), '', '=SUM(S2:S{})'.format(len(bills)+1),
+                           '=SUM(T2:T{})'.format(len(bills)+1), '=SUM(U2:U{})'.format(len(bills)+1),
+                           '=SUM(V2:V{})'.format(len(bills)+1), '=SUM(W2:W{})'.format(len(bills)+1), '', '', '']
+            sheet.append(summary_row)
+            last_row_idx = len(bills) + 2
+            for cell in sheet[last_row_idx]:
+                cell.font = Font(bold=True)
+
         for column in range(1, len(headers) + 1):
             sheet.column_dimensions[get_column_letter(column)].width = min(28, max(13, len(headers[column - 1]) + 2))
         for row in sheet.iter_rows(min_row=2, min_col=10, max_col=23):
@@ -4973,6 +4987,91 @@ def download_fees_excel():
     except Exception as exc:
         print(f'Error generating fee XLSX: {exc}')
         return jsonify({'error': 'Failed to generate Survey Fee Register.'}), 500
+
+
+@app.route('/download_gstr1_csv', methods=['GET'])
+@login_required
+@admin_required
+def download_gstr1_csv():
+    """Download GSTR-1 formatted B2B CSV export for CA submission."""
+    month = request.args.get('month') or datetime.now().strftime('%Y-%m')
+    insurer = request.args.get('insurer') or None
+    if not re.fullmatch(r'\d{4}-\d{2}', month):
+        return jsonify({'error': 'month must use YYYY-MM format.'}), 400
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    try:
+        bills = sheets_db.get_workspace_fee_bills(workspace_admin_id, month=month, insurer=insurer)
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        headers = [
+            "GSTIN/UIN of Recipient",
+            "Receiver Name",
+            "Invoice Number",
+            "Invoice Date",
+            "Invoice Value",
+            "Place Of Supply",
+            "Reverse Charge",
+            "Applicable % of Tax Rate",
+            "Invoice Type",
+            "E-Commerce GSTIN",
+            "Rate",
+            "Taxable Value",
+            "Cess Amount",
+            "Integrated Tax Amount",
+            "Central Tax Amount",
+            "State/UT Tax Amount"
+        ]
+        writer.writerow(headers)
+
+        for b in bills:
+            gstin = b.get('insurer_gst', '').strip()
+            receiver_name = b.get('insurer_name', '').strip()
+            inv_no = b.get('invoice_no', '').strip()
+            inv_date = b.get('invoice_date', '').strip()
+            taxable = float(b.get('taxable_amount', 0) or 0)
+            gst_pc = float(b.get('gst_pc', 18.0) or 18.0)
+            gst_amt = float(b.get('gst_amount', taxable * (gst_pc / 100.0)) or 0)
+            total_amt = float(b.get('gross_invoice_value', b.get('total_amount', taxable + gst_amt)) or 0)
+            state_code = str(b.get('state_code', '19')).strip()
+            pos = f"{state_code}-West Bengal" if state_code == '19' else f"{state_code}-Other State"
+
+            cgst = round(gst_amt / 2.0, 2) if state_code == '19' else 0.0
+            sgst = round(gst_amt / 2.0, 2) if state_code == '19' else 0.0
+            igst = gst_amt if state_code != '19' else 0.0
+
+            writer.writerow([
+                gstin or 'URP',
+                receiver_name,
+                inv_no,
+                inv_date,
+                f"{total_amt:.2f}",
+                pos,
+                'N',
+                f"{gst_pc:g}%",
+                'Regular',
+                '',
+                f"{gst_pc:g}",
+                f"{taxable:.2f}",
+                '0.00',
+                f"{igst:.2f}",
+                f"{cgst:.2f}",
+                f"{sgst:.2f}"
+            ])
+
+        output.seek(0)
+        filename = f"GSTR1_B2B_{month}.csv"
+        return send_file(
+            io.BytesIO(output.getvalue().encode('utf-8')),
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print(f"Error generating GSTR-1 CSV: {e}")
+        return jsonify({'error': 'Failed to generate GSTR-1 report.'}), 500
 
 
 @app.route('/api/next_invoice_no', methods=['GET'])

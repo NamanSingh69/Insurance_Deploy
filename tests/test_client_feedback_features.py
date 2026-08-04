@@ -115,3 +115,72 @@ def test_claim_registration_new_contact_fields(client, mock_sheets_db):
     assert data['success'] is True
     assert data['report_id'] == 'workspace-report-uuid'
 
+
+def test_insurer_master_delete_and_validation(client, mock_sheets_db):
+    """Test deleting an insurer master item, fetching single entry, and POST validation errors."""
+    _auth(client, mock_sheets_db, role='admin')
+
+    mock_sheets_db.get_insurer_master_by_id.return_value = {
+        'id': 1,
+        'insurer_name': 'Oriental Insurance',
+        'branch_name': 'DO 2',
+        'invoice_prefix': 'OIC'
+    }
+    mock_sheets_db.delete_insurer_master.return_value = True
+
+    # GET /api/insurers/1
+    res_get = client.get('/api/insurers/1')
+    assert res_get.status_code == 200
+    assert res_get.get_json()['insurer']['invoice_prefix'] == 'OIC'
+
+    # DELETE /api/insurers/1
+    res_del = client.delete('/api/insurers/1')
+    assert res_del.status_code == 200
+    assert res_del.get_json()['success'] is True
+
+    # POST /api/insurers (Missing insurer_name)
+    res_err = client.post('/api/insurers', json={'branch_name': 'Test Branch'})
+    assert res_err.status_code == 400
+    assert 'error' in res_err.get_json()
+
+
+def test_distance_conveyance_fee_bill(client, mock_sheets_db):
+    """Test saving a survey fee bill with distance conveyance calculation inputs."""
+    _auth(client, mock_sheets_db, role='admin')
+
+    mock_sheets_db.save_fee_bill.return_value = 'bill-uuid-123'
+
+    payload = {
+        'invoice_no': 'NIA-1',
+        'invoice_date': '2026-08-05',
+        'insurer_name': 'New India Assurance',
+        'insured_name': 'Anowar Ali',
+        'claim_no': 'CLM-001',
+        'professional_fee': 5000.0,
+        'convenience_type': 'distance',
+        'convenience_km': 135.0,
+        'convenience_rate': 10.0,
+        'convenience_visits': 2,
+        'conveyance_fee': 5400.0,
+        'taxable_amount': 10400.0,
+        'gst_pc': 18.0,
+        'gst_amount': 1872.0,
+        'total_amount': 12272.0
+    }
+
+    res = client.post('/api/fee_bills', json=payload)
+    assert res.status_code == 201
+    assert res.get_json()['id'] == 'bill-uuid-123'
+
+
+def test_gmail_staged_not_found_handling(client, mock_sheets_db):
+    """Test 404 response when attempting to accept a non-existent staged intimation."""
+    _auth(client, mock_sheets_db, role='admin')
+
+    mock_sheets_db.get_staged_gmail_intimations.return_value = []
+
+    res = client.post('/api/gmail/staged/999/accept')
+    assert res.status_code == 404
+    assert res.get_json()['error'] == 'Staged intimation not found.'
+
+

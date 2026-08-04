@@ -3318,6 +3318,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 branch_name: document.getElementById('im-branch-name')?.value.trim(),
                 invoice_prefix: document.getElementById('im-prefix')?.value.trim(),
                 gstin: document.getElementById('im-gstin')?.value.trim(),
+                state_code: document.getElementById('im-state-code')?.value.trim() || '19',
                 default_conveyance_rate: document.getElementById('im-conveyance-rate')?.value,
                 branch_address: document.getElementById('im-branch-address')?.value.trim()
             };
