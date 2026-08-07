@@ -1301,7 +1301,7 @@ def render_report(data, user_data_snapshot, user_id):
     add_photo_section(pdf, "Dismantling/follow up photo", get_survey_val('vehicle_regn_no'), p2_imgs, p2_per)
     add_photo_section(pdf, "Re-inspection photo", get_survey_val('vehicle_regn_no'), p3_imgs, p3_per)
 
-    pdf_bytes = pdf.output()
+    pdf_bytes = bytes(pdf.output())
     report_no = final_survey_data.get('report_no', 'SurveyReport')
     vehicle_no = final_survey_data.get('vehicle_regn_no', '')
     
