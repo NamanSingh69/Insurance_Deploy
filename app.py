@@ -43,7 +43,7 @@ from modules.drive import (
     is_drive_connected,
     save_drive_authorization,
 )
-from modules.assets import get_accessible_asset_content, store_uploaded_image, store_uploaded_pdf
+from modules.assets import get_accessible_asset_content, get_asset_for_access, read_asset_content, store_uploaded_image, store_uploaded_pdf
 from modules.jobs import create_job as create_durable_job, get_job_for_user as get_durable_job_for_user
 
 class DatabaseAdapterProxy:
@@ -2786,7 +2786,7 @@ def asset_content(asset_id):
 def proxy_image(file_id):
     if not file_id:
         abort(404)
-    asset = db.get_asset_by_locator(file_id, current_user.id)
+    asset = sheets_db.get_asset_by_locator(file_id, current_user.id)
     if not asset:
         ws_admin_id = workspace_admin_id_for(current_user)
         asset = get_asset_for_access(file_id, current_user.id, ws_admin_id)
@@ -2795,7 +2795,7 @@ def proxy_image(file_id):
         if content:
             mime = asset.get('mime_type') or 'image/jpeg'
             return send_file(io.BytesIO(content), mimetype=mime)
-    content = db.get_file_content(file_id)
+    content = sheets_db.get_file_content(file_id)
     if content:
         return send_file(io.BytesIO(content), mimetype='image/jpeg')
     abort(404)
@@ -2806,7 +2806,7 @@ def proxy_image(file_id):
 def serve_local_image(filename):
     if not filename:
         abort(404)
-    asset = db.get_asset_by_locator(filename, current_user.id)
+    asset = sheets_db.get_asset_by_locator(filename, current_user.id)
     if not asset:
         ws_admin_id = workspace_admin_id_for(current_user)
         asset = get_asset_for_access(filename, current_user.id, ws_admin_id)

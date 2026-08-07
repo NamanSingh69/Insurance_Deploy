@@ -78,6 +78,18 @@ class TestSecurityHardening:
         res_proxy = authenticated_client.get('/proxy_image?url=http://example.com/test.jpg')
         assert res_proxy.status_code in [404, 410]
 
+    def test_proxy_image_and_local_image_handling(self, authenticated_client, mock_sheets_db):
+        """Verify proxy_image and local_image routes handle missing assets gracefully without 500 errors."""
+        mock_sheets_db.get_asset_by_locator.return_value = None
+        mock_sheets_db.get_asset_for_access.return_value = None
+        mock_sheets_db.get_file_content.return_value = None
+
+        res_p = authenticated_client.get('/proxy_image/nonexistent_123')
+        assert res_p.status_code == 404
+
+        res_l = authenticated_client.get('/local_image/nonexistent_123')
+        assert res_l.status_code == 404
+
     def test_private_asset_content_denies_unauthorized_user(self, authenticated_client, mock_sheets_db):
         """Access to an asset owned by another user is denied (404/403)."""
         # Return asset owned by user '999'
