@@ -2764,10 +2764,14 @@ def asset_content(asset_id):
     )
     if not asset or content is None:
         abort(404)
-    mime_type = asset.get('mime_type') or 'application/octet-stream'
-    allowed_types = {'application/pdf', 'image/jpeg', 'image/png', 'image/webp'}
+    raw_mime = asset.get('mime_type') or 'application/octet-stream'
+    mime_type = str(raw_mime).lower().split(';')[0].strip()
+    allowed_types = {'application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/pjpeg', 'image/x-png', 'image/bmp'}
     if mime_type not in allowed_types:
-        abort(404)
+        if asset.get('purpose') in ('photo', 'signature') or mime_type.startswith('image/'):
+            mime_type = 'image/jpeg'
+        else:
+            abort(404)
     return send_file(
         io.BytesIO(content),
         mimetype=mime_type,
@@ -2780,16 +2784,49 @@ def asset_content(asset_id):
 @app.route('/proxy_image/<file_id>')
 @login_required
 def proxy_image(file_id):
-    # Existing report rows are migrated to /assets/<id>/content during rollout.
-    # A raw Drive identifier can never be treated as authorization.
-    abort(410)
+    if not file_id:
+        abort(404)
+    asset = db.get_asset_by_locator(file_id, current_user.id)
+    if not asset:
+        ws_admin_id = workspace_admin_id_for(current_user)
+        asset = get_asset_for_access(file_id, current_user.id, ws_admin_id)
+    if asset:
+        content = read_asset_content(asset)
+        if content:
+            mime = asset.get('mime_type') or 'image/jpeg'
+            return send_file(io.BytesIO(content), mimetype=mime)
+    content = db.get_file_content(file_id)
+    if content:
+        return send_file(io.BytesIO(content), mimetype='image/jpeg')
+    abort(404)
 
 # --- Local Photo Serve Route ---
 @app.route('/local_image/<filename>')
 @login_required
 def serve_local_image(filename):
-    # Existing report rows are migrated to /assets/<id>/content during rollout.
-    abort(410)
+    if not filename:
+        abort(404)
+    asset = db.get_asset_by_locator(filename, current_user.id)
+    if not asset:
+        ws_admin_id = workspace_admin_id_for(current_user)
+        asset = get_asset_for_access(filename, current_user.id, ws_admin_id)
+    if asset:
+        content = read_asset_content(asset)
+        if content:
+            mime = asset.get('mime_type') or 'image/jpeg'
+            return send_file(io.BytesIO(content), mimetype=mime)
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        os.path.join(project_root, 'uploads', filename),
+        os.path.join(project_root, 'uploads', 'assets', filename),
+        os.path.join(project_root, 'instance', 'private_assets', filename),
+    ]
+    for path in possible_paths:
+        if os.path.isfile(path):
+            with open(path, 'rb') as f:
+                content = f.read()
+            return send_file(io.BytesIO(content), mimetype='image/jpeg')
+    abort(404)
 
 # --- File Generation Route ---
 @app.route('/generate_files', methods=['POST'])

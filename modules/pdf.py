@@ -575,7 +575,7 @@ def render_report(data, user_data_snapshot, user_id):
         pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y()); pdf.ln(1); pdf.set_font("Helvetica", '', base_font_size_page1)
 
     def add_photo_section(pdf_obj, title, vehicle_no, photos_list, photos_per_page):
-        if not photos_list:
+        if not photos_list or not isinstance(photos_list, list):
             return
         margin = 10
         page_width = 210 - (2 * margin)
@@ -584,6 +584,7 @@ def render_report(data, user_data_snapshot, user_id):
         cols = 2
         try: photos_per_page = int(photos_per_page)
         except: photos_per_page = 4
+        if photos_per_page <= 0: photos_per_page = 4
         if photos_per_page == 4: rows = 2
         elif photos_per_page == 6: rows = 3
         elif photos_per_page == 8: rows = 4
@@ -593,7 +594,16 @@ def render_report(data, user_data_snapshot, user_id):
         img_height = (page_height - 5) / rows 
         
         start_y = 0
-        for idx, photo_b64 in enumerate(photos_list):
+        for idx, raw_photo in enumerate(photos_list):
+            if not raw_photo:
+                continue
+            if isinstance(raw_photo, dict):
+                photo_b64 = str(raw_photo.get('url') or raw_photo.get('src') or '')
+            else:
+                photo_b64 = str(raw_photo)
+            if not photo_b64:
+                continue
+
             if idx % photos_per_page == 0:
                 pdf_obj.add_page(orientation='P'); add_pdf_header(pdf_obj)
                 pdf_obj.set_font("Helvetica", 'B', 12)
@@ -1274,9 +1284,22 @@ def render_report(data, user_data_snapshot, user_id):
     pdf.cell(sig_block_width, line_h_page3, "( Surveyor and Loss Assessor )", border=0, new_x="LMARGIN", new_y="NEXT", align='C')
 
     # --- Add Photo Pages ---
-    add_photo_section(pdf, "First inspection photo", get_survey_val('vehicle_regn_no'), photos_data.get('first_inspection', {}).get('images', []), photos_data.get('first_inspection', {}).get('per_page', 4))
-    add_photo_section(pdf, "Dismantling/follow up photo", get_survey_val('vehicle_regn_no'), photos_data.get('dismantling', {}).get('images', []), photos_data.get('dismantling', {}).get('per_page', 4))
-    add_photo_section(pdf, "Re-inspection photo", get_survey_val('vehicle_regn_no'), photos_data.get('reinspection', {}).get('images', []), photos_data.get('reinspection', {}).get('per_page', 4))
+    def _extract_photos(sec_data):
+        if isinstance(sec_data, dict):
+            imgs = sec_data.get('images', [])
+            per_p = sec_data.get('per_page', 4)
+            return (imgs if isinstance(imgs, list) else []), per_p
+        elif isinstance(sec_data, list):
+            return sec_data, 4
+        return [], 4
+
+    p1_imgs, p1_per = _extract_photos(photos_data.get('first_inspection'))
+    p2_imgs, p2_per = _extract_photos(photos_data.get('dismantling'))
+    p3_imgs, p3_per = _extract_photos(photos_data.get('reinspection'))
+
+    add_photo_section(pdf, "First inspection photo", get_survey_val('vehicle_regn_no'), p1_imgs, p1_per)
+    add_photo_section(pdf, "Dismantling/follow up photo", get_survey_val('vehicle_regn_no'), p2_imgs, p2_per)
+    add_photo_section(pdf, "Re-inspection photo", get_survey_val('vehicle_regn_no'), p3_imgs, p3_per)
 
     pdf_bytes = pdf.output()
     report_no = final_survey_data.get('report_no', 'SurveyReport')
