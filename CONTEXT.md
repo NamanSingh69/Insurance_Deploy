@@ -88,6 +88,28 @@ Create backups outside the web root and protect them with filesystem permissions
 - Nginx site: `/etc/nginx/sites-available/skinsurance`
 - Production environment file: `/var/www/insurance-app/.env` (mode `600`, outside source control)
 
+## System Credentials & VPS Operations Reference
+
+### VPS Host Credentials
+- **Host IP:** `185.199.52.85`
+- **IPv6:** `2a02:4780:12:aa78::1`
+- **Username:** `root`
+- **Password:** `surveyorportal@2026`
+- **SSH Port:** `22`
+- **Hostinger VPS ID:** `1789781`
+- **Hostinger Firewall ID:** `319602`
+
+### Database Details
+- **Engine:** PostgreSQL (local instance on port 5432)
+- **Database Name:** `insurance_db`
+- **DB User:** `insurance_user`
+- **DB Password:** `surveyorportal@2026`
+- **Connection String:** `postgresql://insurance_user:surveyorportal@2026@localhost/insurance_db`
+
+### Default Application Login Credentials
+- **Admin User:** `NAMAN` / `69420`
+- **Employee User:** `USER` / `UH65A#DF`
+
 ## Architecture & Feature Decisions
 
 - **Survey Fee PDF Extraction**: Uploaded policy or RC PDFs extract key fields (Insurer, Insured, Vehicle No, Policy No) directly into the live Survey Fee Register form fields for visual review, allowing the user to enter professional fees manually before saving.
@@ -95,8 +117,3 @@ Create backups outside the web root and protect them with filesystem permissions
 - **Dashboard Date Range Filter**: A quick-select dropdown ('1 Month' default, '3 Months', '1 Year', 'All Time') dynamically updates all operational and financial metrics.
 - **Consolidated CSV Export**: Includes 'Insurer Company Name' (positioned next to Insured Name) and 'Assigned Date' (positioned next to Invoice Date).
 - **Automated Daily Backup**: Background daily backup to Google Drive with an Admin Settings button to download backup snapshots on demand.
-
-
-
-
-

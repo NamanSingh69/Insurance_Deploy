@@ -77,6 +77,13 @@ def test_teardown_appcontext_closes_db_connection(app, mock_sheets_db):
         pass
     mock_sheets_db.close_scoped_connection.assert_called()
 
+def test_healthz_endpoint(client):
+    """Verify /healthz returns 200 OK status without auth."""
+    response = client.get('/healthz')
+    assert response.status_code == 200
+    assert response.get_json() == {'status': 'ok'}
+
+
 
 
 

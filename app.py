@@ -189,6 +189,7 @@ def request_entity_too_large(error):
     return jsonify({'error': message}), 413
 
 @app.route('/healthz', methods=['GET'])
+@limiter.exempt
 def healthz():
     """Minimal liveness health check route. Returns status OK without exposing diagnostics or secrets."""
     return jsonify({'status': 'ok'}), 200
