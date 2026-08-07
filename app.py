@@ -1072,7 +1072,7 @@ def _is_safe_redirect_url(target):
 
 # --- Security: SSRF Allowlist for Proxy Endpoints ---
 _ALLOWED_UPLOAD_DOMAINS = {'www.googleapis.com', 'googleapis.com'}
-_ASSET_CONTENT_PATH = re.compile(r'^/assets/([A-Za-z0-9-]{16,})/content(?:\?.*)?$')
+_ASSET_CONTENT_PATH = re.compile(r'/assets/([A-Za-z0-9-]{16,})/content')
 
 def _is_allowed_upload_url(url):
     """Validate that the upload URL targets only allowed Google API domains."""
@@ -1093,9 +1093,9 @@ def _asset_ids_from_payload(value):
         for item in value:
             found.update(_asset_ids_from_payload(item))
     elif isinstance(value, str):
-        match = _ASSET_CONTENT_PATH.match(value)
-        if match:
-            found.add(match.group(1))
+        matches = _ASSET_CONTENT_PATH.findall(value)
+        for match in matches:
+            found.add(match)
     return found
 
 # --- Security Headers ---

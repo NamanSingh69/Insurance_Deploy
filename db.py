@@ -598,14 +598,41 @@ class PostgresDB:
                       AND (
                           a.user_id = %s
                           OR (r.workspace_admin_id IS NULL AND r.user_id = %s)
-                          OR (%s IS NOT NULL AND r.workspace_admin_id = %s)
+                          OR (%s IS NOT NULL AND (r.workspace_admin_id = %s OR a.user_id = %s))
                       );
-                """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id))
+                """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id, workspace_admin_id))
                 row = cur.fetchone()
                 return dict(row) if row else None
         except Exception as e:
             print(f"Error fetching accessible asset: {e}")
             return None
+
+    def get_asset_by_locator(self, locator, user_id=None):
+        """Return an unexpired asset matching a storage locator."""
+        if not self.conn:
+            self.connect()
+        if not self.conn:
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if user_id:
+                    cur.execute("""
+                        SELECT * FROM assets
+                        WHERE storage_locator = %s AND user_id = %s
+                        LIMIT 1;
+                    """, (locator, user_id))
+                else:
+                    cur.execute("""
+                        SELECT * FROM assets
+                        WHERE storage_locator = %s
+                        LIMIT 1;
+                    """, (locator,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"Error fetching asset by locator: {e}")
+            return None
+
 
     def attach_assets_to_report(self, asset_ids, report_id, user_id):
         """Attach newly uploaded assets to their report and make them durable."""

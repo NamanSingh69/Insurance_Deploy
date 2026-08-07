@@ -9,7 +9,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.errors import FPDFException
 from db import db
-from modules.assets import get_owned_asset_content
+from modules.assets import get_owned_asset_content, get_accessible_asset_content
 
 EXPECTED_FIELDS = [
     "report_no", "report_date", "policy_no", "claim_no", "policy_validity",
@@ -85,6 +85,17 @@ def is_number(s):
         return True
     except ValueError:
         return False
+
+def safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        s = str(val).replace(',', '').strip()
+        if not s or s == '-':
+            return default
+        return float(s)
+    except (ValueError, TypeError):
+        return default
 
 def normalize_pdf_text_for_fpdf(text_val):
     if not isinstance(text_val, str):
@@ -213,13 +224,13 @@ def render_report(data, user_data_snapshot, user_id):
     spot_report_text_raw = assessment_data.get('spot_report_text', '') 
     spot_report_enclosures_raw = assessment_data.get('spot_report_enclosures', '') 
 
-    labour_paint_depn_input = float(assessment_data.get('labour_paint_depn', 0.0))
+    labour_paint_depn_input = safe_float(assessment_data.get('labour_paint_depn', 0.0))
     salvage_raw_data = assessment_data.get('salvage', '0') 
 
     est_labour_override = assessment_data.get('est_labour_override', '')
-    nd_deduction_pc = float(assessment_data.get('nd_deduction_pc', 5))
-    nd_deduction_amount = float(assessment_data.get('nd_deduction_amount', 0.0))
-    towing_charges = float(assessment_data.get('towing_charges', 0.0))
+    nd_deduction_pc = safe_float(assessment_data.get('nd_deduction_pc', 5), 5.0)
+    nd_deduction_amount = safe_float(assessment_data.get('nd_deduction_amount', 0.0))
+    towing_charges = safe_float(assessment_data.get('towing_charges', 0.0))
     est_paint_override = assessment_data.get('est_paint_override', '')
     est_parts_override = assessment_data.get('est_parts_override', '')
 
@@ -303,7 +314,7 @@ def render_report(data, user_data_snapshot, user_id):
             estimate_amt = float(part.get('estimate_amt', 0.0))
             bill_amt = float(part.get('bill_amt', 0.0))
             
-            depr_amount_from_frontend = float(str(part.get('depr', '-1.0')).strip())
+            depr_amount_from_frontend = safe_float(part.get('depr', -1.0), -1.0)
             
             total_parts_amt = qty * part_amt 
             
@@ -344,8 +355,8 @@ def render_report(data, user_data_snapshot, user_id):
         except Exception as e:
             print(f"Error processing part: {e}")
 
-    excess_final = float(assessment_data.get('deductibles', 1000.0))
-    impose_excess_final = float(assessment_data.get('impose_excess', 0.0))
+    excess_final = safe_float(assessment_data.get('deductibles', 1000.0), 1000.0)
+    impose_excess_final = safe_float(assessment_data.get('impose_excess', 0.0), 0.0)
     try: salvage_val_numeric = float(str(salvage_raw).replace(',', ''))
     except (ValueError, TypeError): salvage_val_numeric = 0.0
     
@@ -596,15 +607,46 @@ def render_report(data, user_data_snapshot, user_id):
                 img_stream = None
                 if photo_b64.startswith('/assets/'):
                     asset_id = photo_b64.split('/')[2] if len(photo_b64.split('/')) > 2 else ''
-                    img_data, _asset = get_owned_asset_content(asset_id, user_id)
+                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
+                    img_data, _asset = get_accessible_asset_content(asset_id, user_id, ws_admin_id)
+                    if not img_data:
+                        img_data, _asset = get_owned_asset_content(asset_id, user_id)
                     if img_data:
                         img_stream = io.BytesIO(img_data)
                     else:
                         pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
                         continue
-                elif photo_b64.startswith(('/proxy_image/', '/local_image/', 'http')):
-                    pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Legacy image unavailable", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                    continue
+                elif photo_b64.startswith(('/proxy_image/', '/local_image/')):
+                    locator = photo_b64.split('/')[-1]
+                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
+                    asset = db.get_asset_by_locator(locator, user_id)
+                    if asset:
+                        img_data, _ = get_accessible_asset_content(asset['id'], user_id, ws_admin_id)
+                        if img_data:
+                            img_stream = io.BytesIO(img_data)
+                    if not img_stream and photo_b64.startswith('/proxy_image/'):
+                        img_data = db.get_file_content(locator)
+                        if img_data:
+                            img_stream = io.BytesIO(img_data)
+                    if not img_stream and photo_b64.startswith('/local_image/'):
+                        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                        local_path = os.path.join(project_root, 'uploads', locator)
+                        if os.path.exists(local_path):
+                            with open(local_path, 'rb') as f:
+                                img_stream = io.BytesIO(f.read())
+                    if not img_stream:
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Legacy image unavailable", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                        continue
+                elif photo_b64.startswith('http'):
+                    try:
+                        resp = requests.get(photo_b64, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+                        if resp.ok:
+                            img_stream = io.BytesIO(resp.content)
+                    except Exception:
+                        pass
+                    if not img_stream:
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                        continue
                 elif ',' in photo_b64: 
                     photo_b64_data = photo_b64.split(',')[1]
                     img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)

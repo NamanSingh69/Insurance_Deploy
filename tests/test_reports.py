@@ -105,13 +105,46 @@ class TestPhotosInReport:
     
     def test_report_with_empty_photos(self):
         """Test report structure with no photos."""
-        # This logic is mostly in PDF generation which is harder to unit test
-        # without inspecting binary PDF.
-        pass
-        
+        from modules.pdf import render_report
+        data = {
+            'survey_report': {'report_no': 'R-100', 'vehicle_regn_no': 'WB01A1234'},
+            'assessment': {'parts': []},
+            'photos': {'reinspection': {'images': [], 'per_page': 4}}
+        }
+        user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
+        result = render_report(data, user_snapshot, 'user_1')
+        assert 'pdf_bytes' in result
+        assert isinstance(result['pdf_bytes'], (bytes, bytearray))
+
     def test_report_with_photo_urls(self):
-        """Test report with photo URLs."""
-        pass
+        """Test report rendering with asset photo URLs and edge-case assessment values."""
+        from modules.pdf import render_report
+        data = {
+            'survey_report': {'report_no': 'R-101', 'vehicle_regn_no': 'WB01A1234'},
+            'assessment': {
+                'parts': [{'part_name': 'Bumper', 'qty': 1, 'part_amt': 500, 'depr': ''}],
+                'labour_paint_depn': None,
+                'nd_deduction_pc': '',
+                'nd_deduction_amount': None,
+                'towing_charges': ''
+            },
+            'photos': {
+                'reinspection': {
+                    'images': ['/assets/test-asset-12345/content', '/proxy_image/legacy-123'],
+                    'per_page': 4
+                }
+            }
+        }
+        user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
+        with patch('modules.assets.get_accessible_asset_content') as mock_asset, \
+             patch('modules.pdf.db') as mock_db:
+            mock_asset.return_value = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82', {'mime_type': 'image/png'})
+            mock_db.get_asset_by_locator.return_value = None
+            mock_db.get_file_content.return_value = None
+            mock_db.upload_report_pdf.return_value = None
+            result = render_report(data, user_snapshot, 'user_1')
+            assert 'pdf_bytes' in result
+            assert len(result['pdf_bytes']) > 0
 
 
 class TestConsolidatedCSVDownload:
