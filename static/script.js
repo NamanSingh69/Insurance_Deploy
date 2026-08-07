@@ -1596,11 +1596,19 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = ''; // Clear current view
 
         uploadedPhotos[category].forEach((photoData, index) => {
+            let src = '';
+            if (typeof photoData === 'string') {
+                src = photoData.trim();
+            } else if (photoData && typeof photoData === 'object') {
+                src = String(photoData.url || photoData.src || photoData.path || '').trim();
+            }
+            if (!src || src === '[object Object]') return;
+
             const photoItem = document.createElement('div');
             photoItem.className = 'photo-item';
 
             const img = document.createElement('img');
-            img.src = photoData;
+            img.src = src;
 
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'photo-delete-btn';

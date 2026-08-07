@@ -598,10 +598,10 @@ def render_report(data, user_data_snapshot, user_id):
             if not raw_photo:
                 continue
             if isinstance(raw_photo, dict):
-                photo_b64 = str(raw_photo.get('url') or raw_photo.get('src') or '')
+                photo_b64 = str(raw_photo.get('url') or raw_photo.get('src') or raw_photo.get('path') or '').strip()
             else:
-                photo_b64 = str(raw_photo)
-            if not photo_b64:
+                photo_b64 = str(raw_photo or '').strip()
+            if not photo_b64 or photo_b64 == '[object Object]':
                 continue
 
             if idx % photos_per_page == 0:
@@ -615,8 +615,9 @@ def render_report(data, user_data_snapshot, user_id):
             x = pdf_obj.l_margin + (col * (img_width + 5)); y = start_y + (row * (img_height + 5))
             try:
                 img_stream = None
-                if photo_b64.startswith('/assets/'):
-                    asset_id = photo_b64.split('/')[2] if len(photo_b64.split('/')) > 2 else ''
+                if '/assets/' in photo_b64:
+                    parts = photo_b64.split('/assets/')
+                    asset_id = parts[1].split('/')[0] if len(parts) > 1 else ''
                     ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
                     img_data, _asset = get_accessible_asset_content(asset_id, user_id, ws_admin_id)
                     if not img_data:
@@ -626,19 +627,22 @@ def render_report(data, user_data_snapshot, user_id):
                     else:
                         pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
                         continue
-                elif photo_b64.startswith(('/proxy_image/', '/local_image/')):
-                    locator = photo_b64.split('/')[-1]
+                elif '/proxy_image/' in photo_b64 or '/local_image/' in photo_b64:
+                    if '/proxy_image/' in photo_b64:
+                        locator = photo_b64.split('/proxy_image/')[-1].split('?')[0].split('/')[0]
+                    else:
+                        locator = photo_b64.split('/local_image/')[-1].split('?')[0].split('/')[0]
                     ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
                     asset = db.get_asset_by_locator(locator, user_id)
                     if asset:
                         img_data, _ = get_accessible_asset_content(asset['id'], user_id, ws_admin_id)
                         if img_data:
                             img_stream = io.BytesIO(img_data)
-                    if not img_stream and photo_b64.startswith('/proxy_image/'):
+                    if not img_stream and '/proxy_image/' in photo_b64:
                         img_data = db.get_file_content(locator)
                         if img_data:
                             img_stream = io.BytesIO(img_data)
-                    if not img_stream and photo_b64.startswith('/local_image/'):
+                    if not img_stream and '/local_image/' in photo_b64:
                         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                         local_path = os.path.join(project_root, 'uploads', locator)
                         if os.path.exists(local_path):
@@ -650,21 +654,33 @@ def render_report(data, user_data_snapshot, user_id):
                 elif photo_b64.startswith('http'):
                     try:
                         resp = requests.get(photo_b64, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-                        if resp.ok:
+                        content_type = str(resp.headers.get('content-type', '')).lower()
+                        if resp.ok and resp.content and (content_type.startswith('image/') or not content_type.startswith('text/html')):
                             img_stream = io.BytesIO(resp.content)
                     except Exception:
                         pass
                     if not img_stream:
                         pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", border=1, new_x="RIGHT", new_y="TOP", align='C')
                         continue
-                elif ',' in photo_b64: 
-                    photo_b64_data = photo_b64.split(',')[1]
-                    img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)
+                elif ',' in photo_b64:
+                    try:
+                        photo_b64_data = photo_b64.split(',')[1]
+                        img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)
+                    except Exception:
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                        continue
                 else:
-                    img_data = base64.b64decode(photo_b64); img_stream = io.BytesIO(img_data)
+                    try:
+                        img_data = base64.b64decode(photo_b64); img_stream = io.BytesIO(img_data)
+                    except Exception:
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                        continue
                 
                 if img_stream:
-                    pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
+                    try:
+                        pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
+                    except Exception:
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
             except Exception:
                 pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
 

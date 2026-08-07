@@ -168,6 +168,35 @@ class TestPhotosInReport:
             assert 'pdf_bytes' in result
             assert len(result['pdf_bytes']) > 0
 
+    def test_report_with_full_asset_urls_and_invalid_data(self):
+        """Test report rendering with absolute domain asset URLs and corrupt/invalid data strings."""
+        from modules.pdf import render_report
+        data = {
+            'survey_report': {'report_no': 'R-103', 'vehicle_regn_no': 'WB01A5678'},
+            'assessment': {'parts': []},
+            'photos': {
+                'first_inspection': {
+                    'images': [
+                        'https://skinsurance.tech/assets/test-full-url-asset/content',
+                        '[object Object]',
+                        'invalid_base64_string!!!',
+                        {'url': 'https://skinsurance.tech/assets/test-full-url-2/content'}
+                    ],
+                    'per_page': 4
+                }
+            }
+        }
+        user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
+        with patch('modules.assets.get_accessible_asset_content') as mock_asset, \
+             patch('modules.pdf.db') as mock_db:
+            mock_asset.return_value = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82', {'mime_type': 'image/png'})
+            mock_db.get_asset_by_locator.return_value = None
+            mock_db.get_file_content.return_value = None
+            mock_db.upload_report_pdf.return_value = None
+            result = render_report(data, user_snapshot, 'user_1')
+            assert 'pdf_bytes' in result
+            assert len(result['pdf_bytes']) > 0
+
 
 class TestConsolidatedCSVDownload:
     """Tests for CSV download logic."""

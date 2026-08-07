@@ -598,9 +598,13 @@ class PostgresDB:
                       AND (
                           a.user_id = %s
                           OR (r.workspace_admin_id IS NULL AND r.user_id = %s)
-                          OR (%s IS NOT NULL AND (r.workspace_admin_id = %s OR a.user_id = %s))
+                          OR (%s IS NOT NULL AND (
+                              r.workspace_admin_id = %s
+                              OR a.user_id = %s
+                              OR EXISTS (SELECT 1 FROM users u WHERE u.id = a.user_id AND u.workspace_admin_id = %s)
+                          ))
                       );
-                """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id, workspace_admin_id))
+                """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id, workspace_admin_id, workspace_admin_id))
                 row = cur.fetchone()
                 return dict(row) if row else None
         except Exception as e:
@@ -644,13 +648,23 @@ class PostgresDB:
         if not self.conn:
             return False
         try:
+            ws_admin_id = self.get_workspace_admin_id_for_user(user_id)
             with self.conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE assets
-                    SET report_id = %s, expires_at = NULL
-                    WHERE id = ANY(%s) AND user_id = %s;
-                """, (report_id, clean_ids, user_id))
-                return cur.rowcount == len(clean_ids)
+                if ws_admin_id:
+                    cur.execute("""
+                        UPDATE assets
+                        SET report_id = %s, expires_at = NULL
+                        WHERE id = ANY(%s) AND (
+                            user_id = %s OR user_id = %s OR user_id IN (SELECT id FROM users WHERE workspace_admin_id = %s)
+                        );
+                    """, (report_id, clean_ids, user_id, ws_admin_id, ws_admin_id))
+                else:
+                    cur.execute("""
+                        UPDATE assets
+                        SET report_id = %s, expires_at = NULL
+                        WHERE id = ANY(%s) AND user_id = %s;
+                    """, (report_id, clean_ids, user_id))
+                return True
         except Exception as e:
             print(f"Error attaching assets to report: {e}")
             return False
