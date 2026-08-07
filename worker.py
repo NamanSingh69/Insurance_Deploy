@@ -171,7 +171,7 @@ def run_job(job):
         print(f"[JOB-COMPLETED] Job {job_id} finished successfully.")
     except Exception as e:
         logger.exception("Job %s (%s) failed", job_id, job.get('kind'))
-        handle_job_failure(job, "The background task could not be completed. Please try again.")
+        handle_job_failure(job, f"The background task could not be completed: {e}")
 
 def main():
     print(f"[WORKER-STARTUP] Worker ID: {WORKER_ID}. Initializing DB connection pool.")
