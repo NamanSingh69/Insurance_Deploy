@@ -19,6 +19,14 @@ WORKER_ID = os.getenv('JOB_WORKER_ID', f'{socket.gethostname()}-{os.getpid()}')
 MAX_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
+def _database():
+    """Use the injected database adapter in tests; workers use the real store."""
+    try:
+        from flask import current_app
+        return current_app.config.get('DB_ADAPTER', db)
+    except RuntimeError:
+        return db
+
 def _job_input(job):
     payload = job.get('input_json') or {}
     if isinstance(payload, str):
@@ -47,7 +55,7 @@ def handle_job_failure(job, error_message):
     
     if attempts < MAX_ATTEMPTS:
         print(f"[JOB-RETRY] Requeuing job {job_id} for next attempt.")
-        db.requeue_job(job_id)
+        _database().requeue_job(job_id)
     else:
         print(f"[JOB-FATAL] Job {job_id} exceeded maximum retry attempts. Marking as failed.")
         fail_job(job_id, error_message)
@@ -101,7 +109,7 @@ def _run_process_pdf(job, payload, user_data):
             survey_data['remark'] = "The declaration of the accident appeared consistent with the nature of the damages sustained"
         
         # Inject Last Saved Surveyor Details
-        last_surveyor_details = db.get_last_surveyor_details(user_id)
+        last_surveyor_details = _database().get_last_surveyor_details(user_id)
         if last_surveyor_details:
             if 'assessment' in result:
                 if 'page3_details' not in result['assessment']:
@@ -157,7 +165,7 @@ def run_job(job):
     print(f"[JOB-STARTED] Running job {job_id} ({job['kind']}) for user {job['user_id']}")
     try:
         payload = _job_input(job)
-        user_data = db.get_user_by_id(job['user_id'])
+        user_data = _database().get_user_by_id(job['user_id'])
         if not user_data:
             raise ValueError("The job owner no longer exists.")
             

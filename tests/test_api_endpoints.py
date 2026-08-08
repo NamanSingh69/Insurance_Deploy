@@ -1,6 +1,7 @@
 """
 Tests for API endpoints - report CRUD, photo upload, PDF generation.
 """
+import json
 import pytest
 import sys
 import os
@@ -8,9 +9,7 @@ import io
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-class TestSaveReportEndpoint:
+class TestSaveReportEndpoint:
     """Tests for /save_report endpoint."""
     
     def test_save_report_success(self, authenticated_client, mock_sheets_db, sample_report_data):
@@ -253,6 +252,45 @@ class TestGenerateFilesEndpoint:
                                              content_type='application/json')
         
         assert response.status_code in [400, 500]
+
+    def test_generate_files_end_to_end_worker_execution(self, authenticated_client, sample_report_data, mock_sheets_db):
+        """Test queuing generate_files and executing worker completes without binary data error."""
+        response = authenticated_client.post('/generate_files',
+                                             json=sample_report_data,
+                                             content_type='application/json')
+        assert response.status_code == 202
+        task_id = response.get_json()['task_id']
+        
+        from worker import run_job
+        job = {
+            'id': task_id,
+            'user_id': 1,
+            'kind': 'generate_files',
+            'input_json': json.dumps({'report_data': sample_report_data}),
+            'attempts': 1,
+            'status': 'queued'
+        }
+        
+        user_data = {
+            'id': 1, 'username': 'NAMAN', 'full_name': 'Naman Singh',
+            'qualifications': 'B.Tech', 'designation': 'Surveyor',
+            'license_no': 'SL123', 'expiry_date': '2030-01-01',
+            'membership_no': 'M123', 'address_line_1': 'Addr1',
+            'address_line_2': 'Addr2', 'address_line_3': 'Addr3',
+            'contact_no': '9999999999', 'email': 'test@example.com'
+        }
+        mock_sheets_db.get_user_by_id.return_value = user_data
+        
+        # Execute the worker job directly
+        run_job(job)
+        
+        # Verify job completed successfully and created asset
+        assert mock_sheets_db.complete_job.called
+        completed_args = mock_sheets_db.complete_job.call_args[0]
+        completed_result = completed_args[1]
+        assert 'asset_id' in completed_result
+        assert 'request_id' in completed_result
+
 
 
 class TestProcessPDFEndpoint:

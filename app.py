@@ -4101,7 +4101,7 @@ def _generate_files_worker(task_id, data, user_full_name, user_id, access_token)
         add_photo_section(pdf, "Dismantling/follow up photo", get_survey_val('vehicle_regn_no'), photos_data.get('dismantling', {}).get('images', []), photos_data.get('dismantling', {}).get('per_page', 4))
         add_photo_section(pdf, "Re-inspection photo", get_survey_val('vehicle_regn_no'), photos_data.get('reinspection', {}).get('images', []), photos_data.get('reinspection', {}).get('per_page', 4))
 
-        pdf_bytes = pdf.output()
+        pdf_bytes = bytes(pdf.output())
         request_id = str(uuid.uuid4())
         vehicle_no_raw = final_survey_data.get('vehicle_regn_no', '')
         

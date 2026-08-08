@@ -154,7 +154,9 @@ def create_asset(user_id, storage_kind, storage_locator, filename='', mime_type=
 def store_private_bytes(user_id, content: bytes, filename: str, mime_type: str, purpose: str,
                         expires_at: datetime | None = None, report_id: str | None = None):
     """Write validated bytes privately, then create the durable ownership row."""
-    if not isinstance(content, (bytes, bytearray)):
+    if isinstance(content, str):
+        content = content.encode('latin1')
+    elif not isinstance(content, (bytes, bytearray)):
         raise ValueError("Uploaded content must be binary data.")
     content = bytes(content)
     locator = _write_private_bytes(content, _extension_for_mime(mime_type, filename))

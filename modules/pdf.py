@@ -1454,7 +1454,7 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
     pdf.set_font("Helvetica", '', 10)
     pdf.cell(sig_block_width, 6, "( Surveyor and Loss Assessor )", border=0, new_x="LMARGIN", new_y="NEXT", align='C')
 
-    pdf_bytes = pdf.output()
+    pdf_bytes = bytes(pdf.output())
     return {
         "pdf_bytes": pdf_bytes,
         "invoice_no": fee_data.get('invoice_no', 'FeeBill'),
