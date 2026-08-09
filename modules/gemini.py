@@ -2,9 +2,14 @@
 import os
 import re
 import json
-from google import genai
-from google.genai import types
-from google.genai.errors import APIError
+try:
+    from google import genai
+    from google.genai import types
+    from google.genai.errors import APIError
+except (ImportError, AttributeError):
+    import google.generativeai as genai
+    types = None
+    APIError = Exception
 
 EXPECTED_FIELDS = [
     "report_no", "report_date", "policy_no", "claim_no", "policy_validity",

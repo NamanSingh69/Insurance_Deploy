@@ -573,7 +573,7 @@ class PostgresDB:
                     SELECT * FROM assets
                     WHERE id = %s
                       AND user_id = %s
-                      AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
+                      AND (expires_at IS NULL OR expires_at > (NOW() AT TIME ZONE 'UTC'));
                 """, (asset_id, user_id))
                 row = cur.fetchone()
                 return dict(row) if row else None
@@ -594,7 +594,7 @@ class PostgresDB:
                     FROM assets AS a
                     LEFT JOIN reports AS r ON r.id = a.report_id
                     WHERE a.id = %s
-                      AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP)
+                      AND (a.expires_at IS NULL OR a.expires_at > (NOW() AT TIME ZONE 'UTC'))
                       AND (
                           a.user_id = %s
                           OR (r.workspace_admin_id IS NULL AND r.user_id = %s)
@@ -679,7 +679,7 @@ class PostgresDB:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     DELETE FROM assets
-                    WHERE expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP
+                    WHERE expires_at IS NOT NULL AND expires_at <= (NOW() AT TIME ZONE 'UTC')
                     RETURNING *;
                 """)
                 return [dict(row) for row in cur.fetchall()]
@@ -771,7 +771,7 @@ class PostgresDB:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT * FROM upload_sessions
-                    WHERE id = %s AND user_id = %s AND provider = %s AND expires_at > CURRENT_TIMESTAMP;
+                    WHERE id = %s AND user_id = %s AND provider = %s AND expires_at > (NOW() AT TIME ZONE 'UTC');
                 """, (upload_id, user_id, provider))
                 row = cur.fetchone()
                 return dict(row) if row else None
@@ -787,7 +787,7 @@ class PostgresDB:
                 cur.execute("""
                     UPDATE upload_sessions
                     SET provider_uri = %s
-                    WHERE id = %s AND user_id = %s AND expires_at > CURRENT_TIMESTAMP;
+                    WHERE id = %s AND user_id = %s AND expires_at > (NOW() AT TIME ZONE 'UTC');
                 """, (provider_uri, upload_id, user_id))
                 return cur.rowcount == 1
         except Exception as e:

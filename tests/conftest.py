@@ -23,8 +23,7 @@ os.environ.setdefault("GOOGLE_DRIVE_FOLDER_ID", "test_folder_id")
 def mock_external_services():
     """Mock external services at session level."""
     with patch('google.generativeai.configure'), \
-         patch('google.generativeai.GenerativeModel') as mock_model, \
-         patch('google.genai.Client') as mock_genai_client:
+         patch('google.generativeai.GenerativeModel') as mock_model:
         mock_instance = MagicMock()
         mock_model.return_value = mock_instance
         yield
