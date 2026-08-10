@@ -601,7 +601,7 @@ class PostgresDB:
                           OR (%s IS NOT NULL AND (
                               r.workspace_admin_id = %s
                               OR a.user_id = %s
-                              OR EXISTS (SELECT 1 FROM users u WHERE u.id = a.user_id AND u.workspace_admin_id = %s)
+                              OR EXISTS (SELECT 1 FROM users u WHERE u.id = a.user_id AND COALESCE(u.admin_id, u.id) = %s)
                           ))
                       );
                 """, (asset_id, user_id, user_id, workspace_admin_id, workspace_admin_id, workspace_admin_id, workspace_admin_id))
