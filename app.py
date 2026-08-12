@@ -4327,8 +4327,9 @@ def save_report():
 
             if workspace_admin_id:
                 claim_meta = data.get('claim_meta') or {}
-                status = claim_meta.get('status') or data.get('status') or 'new_appointment'
+                status = claim_meta.get('status') or data.get('status') or 'report_under_preparation'
                 if status not in VALID_CLAIM_STATUSES:
+
                     return jsonify({'error': 'Invalid claim status.'}), 400
                 requested_type = (claim_meta.get('survey_type') or data.get('survey_type') or '').lower()
                 survey_type = 'spot' if requested_type == 'spot' or 'spot' in str(data.get('assessment', {}).get('report_type', '')).lower() else 'final'

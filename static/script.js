@@ -2568,6 +2568,23 @@ document.addEventListener('DOMContentLoaded', () => {
             if (feeSelect) feeSelect.innerHTML = optionsHtml;
             if (claimSelect) claimSelect.innerHTML = optionsHtml;
 
+            // Datalists for autocompletion
+            const mastersList = document.getElementById('insurer-masters-datalist');
+            const gstinList = document.getElementById('insurer-gstin-datalist');
+            const addressList = document.getElementById('insurer-address-datalist');
+            if (mastersList) {
+                const uniqueNames = [...new Set(globalInsurerMasters.map(i => i.insurer_name).filter(Boolean))];
+                mastersList.innerHTML = uniqueNames.map(n => `<option value="${escapeHtml(n)}">`).join('');
+            }
+            if (gstinList) {
+                const uniqueGstins = [...new Set(globalInsurerMasters.map(i => i.gstin).filter(Boolean))];
+                gstinList.innerHTML = uniqueGstins.map(g => `<option value="${escapeHtml(g)}">`).join('');
+            }
+            if (addressList) {
+                const uniqueAddrs = [...new Set(globalInsurerMasters.map(i => i.branch_address).filter(Boolean))];
+                addressList.innerHTML = uniqueAddrs.map(a => `<option value="${escapeHtml(a)}">`).join('');
+            }
+
             const tbody = document.getElementById('insurer-master-tbody');
             if (tbody) {
                 if (!globalInsurerMasters.length) {
@@ -2622,24 +2639,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateDistanceConveyanceCalc() {
-        const mode = document.getElementById('fee-conveyance-calc-mode')?.value || 'flat';
-        const distBox = document.getElementById('fee-distance-inputs');
-        const conveyanceInput = document.getElementById('fee-conveyance');
+        const flatAmt = parseFloat(document.getElementById('fee-conveyance-flat')?.value || 0);
+        const onewayKm = parseFloat(document.getElementById('fee-dist-oneway-km')?.value || 0);
+        const ratePerKm = parseFloat(document.getElementById('fee-dist-rate-per-km')?.value || 10);
+        const visits = parseInt(document.getElementById('fee-dist-visits')?.value || 1, 10);
+
+        const distTotal = onewayKm * 2 * ratePerKm * visits;
         const preview = document.getElementById('fee-dist-calc-preview');
+        if (preview) preview.textContent = `Dist Total: Rs. ${distTotal.toFixed(2)}`;
 
-        if (mode === 'distance') {
-            if (distBox) distBox.style.display = 'block';
-            const onewayKm = parseFloat(document.getElementById('fee-dist-oneway-km')?.value || 0);
-            const ratePerKm = parseFloat(document.getElementById('fee-dist-rate-per-km')?.value || 10);
-            const visits = parseInt(document.getElementById('fee-dist-visits')?.value || 1, 10);
-
-            const totalConveyance = onewayKm * 2 * ratePerKm * visits;
-            if (preview) preview.textContent = `Formula: ${onewayKm}km × 2 × Rs.${ratePerKm} × ${visits} visit(s) = Rs. ${totalConveyance.toFixed(2)}`;
-            if (conveyanceInput) conveyanceInput.value = totalConveyance.toFixed(2);
-        } else {
-            if (distBox) distBox.style.display = 'none';
-        }
+        const combinedTotal = flatAmt + distTotal;
+        const conveyanceInput = document.getElementById('fee-conveyance');
+        if (conveyanceInput) conveyanceInput.value = combinedTotal.toFixed(2);
     }
+
 
     function claimFilterQuery() {
         const pairs = new URLSearchParams();
@@ -2965,9 +2978,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const gstAmount = taxableAmount * gstPc / 100;
         const grossValue = taxableAmount + gstAmount;
 
+        const checkedTypes = Array.from(document.querySelectorAll('.fee-survey-type-cb:checked')).map(cb => cb.value);
+        const surveyTypeVal = checkedTypes.length ? checkedTypes.join(', ') : (document.getElementById('fee-survey-type')?.value || 'Survey Fee');
+
         const payload = {
             report_id: reportId || null,
-            survey_type: document.getElementById('fee-survey-type')?.value || 'Survey Fee',
+            survey_type: surveyTypeVal,
+
             insurer_name: document.getElementById('fee-insurer')?.value.trim(),
             insurer_gst: document.getElementById('fee-insurer-gst')?.value.trim() || '',
             insurer_state: document.getElementById('fee-insurer-state')?.value.trim() || '',
@@ -3311,11 +3328,43 @@ document.addEventListener('DOMContentLoaded', () => {
             if (branchInput) branchInput.value = item.branch_name || '';
         });
 
-        // Conveyance Distance Formula Listeners
-        document.getElementById('fee-conveyance-calc-mode')?.addEventListener('change', updateDistanceConveyanceCalc);
+        // State-Aware GSTIN Auto-Selection on Address Change
+        document.getElementById('fee-insurer-address')?.addEventListener('input', (e) => {
+            const addr = e.target.value.toLowerCase();
+            const insurerName = document.getElementById('fee-insurer')?.value.trim().toLowerCase();
+            if (!insurerName) return;
+            const matches = globalInsurerMasters.filter(i => (i.insurer_name || '').toLowerCase().includes(insurerName));
+            if (!matches.length) return;
+
+            const isWB = addr.includes('west bengal') || addr.includes('wb') || addr.includes('kolkata') || addr.includes('murshidabad') || addr.includes('hooghly') || addr.includes('howrah') || addr.includes('700') || addr.includes('742');
+            let targetGstin = '';
+            if (isWB) {
+                const wbMatch = matches.find(m => (m.gstin || '').startsWith('19'));
+                if (wbMatch) targetGstin = wbMatch.gstin;
+            } else {
+                const nonWbMatch = matches.find(m => m.gstin && !m.gstin.startsWith('19'));
+                if (nonWbMatch) targetGstin = nonWbMatch.gstin;
+            }
+            if (!targetGstin && matches[0]?.gstin) targetGstin = matches[0].gstin;
+
+            const gstinInput = document.getElementById('fee-insurer-gst');
+            if (gstinInput && targetGstin) gstinInput.value = targetGstin;
+        });
+
+        // Open Insurer Master Control Panel Modal Buttons
+        document.querySelectorAll('.open-insurer-master-modal-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('insurer-master-modal')?.classList.remove('hidden');
+                loadInsurerMasters();
+            });
+        });
+
+        // Conveyance Combined Calculator Listeners
+        document.getElementById('fee-conveyance-flat')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-oneway-km')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-rate-per-km')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-visits')?.addEventListener('change', updateDistanceConveyanceCalc);
+
 
         // Insurer Master Form Submit & Modal Controls
         document.getElementById('insurer-master-form')?.addEventListener('submit', async (e) => {

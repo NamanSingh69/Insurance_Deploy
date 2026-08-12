@@ -157,8 +157,11 @@
                     <option value="Miscellaneous">Miscellaneous</option>
                 </select>
                 <input id="claim-input-policy" type="text" placeholder="Policy No.">
-                <select id="claim-input-insurer-select"><option value="">Select Insurer Master...</option></select>
-                <input id="claim-input-insurer" type="text" placeholder="Insurer Name">
+                <div style="display: flex; gap: 0.3rem;">
+                    <select id="claim-input-insurer-select" style="flex: 1;"><option value="">Select Insurer Master...</option></select>
+                    <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" title="Manage Insurer Masters"><i class="fas fa-building"></i> Master</button>
+                </div>
+                <input id="claim-input-insurer" type="text" placeholder="Insurer Name" list="insurer-masters-datalist">
                 <input id="claim-input-branch" type="text" placeholder="Branch / Division Office">
                 <input id="claim-input-workshop" type="text" placeholder="Workshop / Garage Name">
                 <input id="claim-input-workshop-phone" type="text" placeholder="Workshop Contact No.">
@@ -178,25 +181,38 @@
                 <input id="claim-search-input" type="text" placeholder="Search claim, policy, vehicle, insured…">
                 <select id="claim-status-filter"><option value="">All statuses</option><option value="new_appointment">New appointment</option><option value="inspection_pending">Inspection pending</option><option value="documents_awaited">Documents awaited</option><option value="report_under_preparation">Report under preparation</option><option value="report_submitted">Report submitted</option><option value="closed">Closed</option></select>
                 <input id="claim-month-filter" type="month">
-                <input id="claim-insurer-filter" type="text" placeholder="Insurer">
-                <button type="button" id="claim-filter-button" class="btn btn-secondary btn-sm">Filter</button>
+                <button type="button" id="claim-filter-reset" class="btn btn-secondary btn-sm"><i class="fas fa-undo"></i> Reset</button>
             </div>
-            <div class="table-container"><table class="register-table"><thead><tr><th>Claim No.</th><th>Vehicle</th><th>Insured</th><th>Insurer</th><th>Status</th><th>Type</th><th>Actions</th></tr></thead><tbody id="claim-register-tbody"><tr><td colspan="7">Loading claim register…</td></tr></tbody></table></div>
-            <div class="register-pagination" aria-label="Claim register pagination">
-                <button type="button" id="claim-page-prev" class="btn btn-secondary btn-sm">Previous</button>
-                <span id="claim-page-label" class="workspace-subtitle" aria-live="polite">Page 1</span>
-                <button type="button" id="claim-page-next" class="btn btn-secondary btn-sm">Next</button>
+            <div id="claim-register-table-container" class="table-responsive">
+                <table class="data-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Claim No.</th>
+                            <th>Vehicle</th>
+                            <th>Insured</th>
+                            <th>Insurer</th>
+                            <th>Status</th>
+                            <th>Type</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="claim-register-tbody">
+                        <tr><td colspan="7">Loading claims…</td></tr>
+                    </tbody>
+                </table>
             </div>
         </section>
 
-        <section id="fee-register-section" class="card hidden">
+        <!-- Survey Fee Register Workspace Section (Admin only) -->
+        <section id="fees-workspace" class="card hidden">
             <div class="workspace-heading">
-                <div><h2><i class="fas fa-receipt"></i> Survey Fee Register</h2><p class="workspace-subtitle">Financial information is visible to administrators only.</p></div>
-                <div class="workspace-toolbar"><input id="fee-month-filter" type="month"><button type="button" id="download-fees-excel" class="btn btn-info btn-sm"><i class="fas fa-file-excel"></i> CA Excel</button></div>
+                <div>
+                    <h2><i class="fas fa-receipt"></i> Survey Fee Register</h2>
+                    <p class="workspace-subtitle">Income tracking, GST billing, GST export, and CA reports.</p>
+                </div>
             </div>
 
-            <!-- PDF Upload & Auto-Extraction Box for Fee Register -->
-            <div class="fee-upload-box" style="margin-bottom: 1rem; padding: 0.75rem; border: 1px dashed var(--border-color, #444); border-radius: 6px; background: rgba(255,255,255,0.02);">
+            <div style="background: rgba(255,255,255,0.03); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.75rem; border: 1px solid var(--border-color);">
                 <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
                     <div>
                         <strong style="font-size: 0.9rem;"><i class="fas fa-file-pdf"></i> Upload Policy / RC Copy (PDF)</strong>
@@ -212,36 +228,52 @@
 
             <form id="fee-register-form" class="compact-form fee-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem;">
                 <select id="fee-report-id"><option value="">Linked report (optional)</option></select>
-                <select id="fee-survey-type"><option value="Survey Fee">Survey Fee</option><option value="Re-inspection Fee">Re-inspection Survey Fee</option><option value="Spot Survey Fee">Spot Survey Fee</option></select>
-                <select id="fee-insurer-master-select"><option value="">Select Insurer Master...</option></select>
-                <input id="fee-insurer" type="text" placeholder="Insurer *" required>
-                <input id="fee-insurer-gst" type="text" placeholder="Insurer GSTIN">
-                <input id="fee-insurer-address" type="text" placeholder="Insurer Branch Address">
+                
+                <div id="fee-survey-types-container" style="grid-column: 1 / -1; display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.03); padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid var(--border-color);">
+                    <span style="font-size: 0.75rem; color: #aaa;"><i class="fas fa-list-check"></i> Fee Types (Select All Applicable):</span>
+                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Survey Fee" checked> Survey Fee</label>
+                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Re-inspection Fee"> Re-Inspection Fee</label>
+                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Spot Survey Fee"> Spot Survey Fee</label>
+                </div>
+                <select id="fee-survey-type" style="display: none;"><option value="Survey Fee">Survey Fee</option></select>
+
+                <div style="display: flex; gap: 0.3rem;">
+                    <select id="fee-insurer-master-select" style="flex: 1;"><option value="">Select Insurer Master...</option></select>
+                    <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" title="Manage Insurer Masters"><i class="fas fa-building"></i> Master</button>
+                </div>
+                <input id="fee-insurer" type="text" placeholder="Insurer *" list="insurer-masters-datalist" required>
+                <input id="fee-insurer-gst" type="text" placeholder="Insurer GSTIN" list="insurer-gstin-datalist">
+                <input id="fee-insurer-address" type="text" placeholder="Insurer Branch Address" list="insurer-address-datalist">
                 <input id="fee-insured" type="text" placeholder="Insured name *" required>
                 <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice No (Auto-Prefix)</label><input id="fee-invoice-no" type="text" placeholder="e.g. NIA-1, IGI-2376"></div>
                 <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice Date</label><input id="fee-invoice-date" type="date" title="Invoice date"></div>
                 <input id="fee-professional" type="number" min="0" step="0.01" placeholder="Professional Fee *">
                 
-                <!-- Conveyance Mode & Formula Calculator -->
-                <select id="fee-conveyance-calc-mode">
-                    <option value="flat">Conveyance: Flat Rate</option>
-                    <option value="distance">Conveyance: Distance-Based (Km Formula)</option>
-                </select>
-                <div id="fee-distance-inputs" style="display: none; grid-column: 1 / -1; background: rgba(255,255,255,0.03); padding: 0.5rem; border-radius: 4px; border: 1px dashed var(--border-color);">
-                    <small style="color: #aaa; display: block; margin-bottom: 0.4rem;"><i class="fas fa-calculator"></i> Conveyance Formula: One-Way Km &times; 2 &times; Rate/Km &times; Visits</small>
-                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <input id="fee-dist-oneway-km" type="number" min="0" step="0.1" placeholder="One-Way Km (e.g. 135)" style="width: 150px;">
-                        <input id="fee-dist-rate-per-km" type="number" min="0" step="0.1" value="10" placeholder="Rate / Km (Rs. 10)" style="width: 130px;">
-                        <select id="fee-dist-visits" style="width: 120px;">
-                            <option value="1">1 Visit</option>
-                            <option value="2">2 Visits</option>
-                            <option value="3">3 Visits</option>
-                        </select>
-                        <span id="fee-dist-calc-preview" style="font-weight: bold; color: #4CAF50; align-self: center;">Total: Rs. 0</span>
+                <!-- Conveyance Mode & Combined Calculator (Flat + Distance) -->
+                <div style="grid-column: 1 / -1; background: rgba(255,255,255,0.03); padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-car"></i> Conveyance Charges (Flat Rate &amp; Distance Km Formula)</strong>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                        <input id="fee-conveyance-flat" type="number" min="0" step="0.01" placeholder="Flat Rate Conveyance (Rs.)" style="flex: 1; min-width: 150px;">
+                        <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; flex: 2; background: rgba(0,0,0,0.2); padding: 0.4rem; border-radius: 4px; border: 1px dashed var(--border-color);">
+                            <span style="font-size: 0.75rem; color: #aaa;">Km Formula:</span>
+                            <input id="fee-dist-oneway-km" type="number" min="0" step="0.1" placeholder="One-Way Km" style="width: 110px;">
+                            <input id="fee-dist-rate-per-km" type="number" min="0" step="0.1" value="10" placeholder="Rate/Km" style="width: 90px;">
+                            <select id="fee-dist-visits" style="width: 90px;">
+                                <option value="1">1 Visit</option>
+                                <option value="2">2 Visits</option>
+                                <option value="3">3 Visits</option>
+                            </select>
+                            <span id="fee-dist-calc-preview" style="font-size: 0.8rem; font-weight: bold; color: #4CAF50;">Dist Total: Rs. 0</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <label for="fee-conveyance" style="font-size: 0.8rem; color: #aaa; margin: 0;">Total Conveyance (Flat + Dist):</label>
+                        <input id="fee-conveyance" type="number" min="0" step="0.01" placeholder="Conveyance Total" style="flex: 1; font-weight: bold; color: #4CAF50;">
                     </div>
                 </div>
-                
-                <input id="fee-conveyance" type="number" min="0" step="0.01" placeholder="Conveyance Amount">
+
                 <input id="fee-photocopy" type="number" min="0" step="0.01" placeholder="Photocopy / Other charges">
                 <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" placeholder="GST % (18)">
                 <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-due-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Due Date</label><input id="fee-due-date" type="date" title="Due date"></div>
@@ -1818,8 +1850,14 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
         </div>
     </div>
 
+    <!-- Datalists for Insurer Master Autocompletion -->
+    <datalist id="insurer-masters-datalist"></datalist>
+    <datalist id="insurer-gstin-datalist"></datalist>
+    <datalist id="insurer-address-datalist"></datalist>
+
     <script src="{{ url_for('static', filename='script.js') }}?v=1.3.0"></script>
 
 </body>
 </html>
+
 
