@@ -1248,10 +1248,11 @@ def render_report(data, user_data_snapshot, user_id):
     # --- Final Assessed Amount & Signature ---
     sig_block_width = usable_width_page3 * 0.5
     sig_start_x = pdf.w - pdf.r_margin - sig_block_width
-    sig_height_est = line_h_page3 * 4 
-    assessed_amt_height = line_h_page3 if net_liability_final != 0 else 0
+    sig_height_est = line_h_page3 * 7 
+    assessed_amt_height = line_h_page3 * 3 if net_liability_final != 0 else 0
     gap_lines = 2
     total_block_needed = assessed_amt_height + (line_h_page3 * gap_lines) + sig_height_est
+
     
     if pdf.get_y() + total_block_needed > pdf.page_break_trigger: 
         pdf.add_page(orientation='P'); add_pdf_header(pdf); pdf.set_font("Helvetica", '', base_font_size_page3)
@@ -1400,8 +1401,27 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
 
     items = fee_data.get('items', [])
     if not items:
+        items = []
+        prof = float(fee_data.get('professional_fee', 0.0))
+        survey_type = fee_data.get('survey_type') or 'Survey Fee'
         taxable = float(fee_data.get('taxable_amount', 0.0))
-        items = [{"name": "Professional Survey & Loss Assessment Fees", "amount": taxable}]
+        
+        if prof > 0:
+            items.append({"name": f"Professional Fees ({survey_type})", "amount": prof})
+        elif taxable > 0:
+            items.append({"name": f"Professional Fees ({survey_type})", "amount": taxable})
+
+        conv = float(fee_data.get('conveyance_fee', 0.0))
+        if conv > 0:
+            items.append({"name": "Conveyance & Traveling Charges", "amount": conv})
+
+        photo = float(fee_data.get('photocopy_amount', 0.0))
+        if photo > 0:
+            items.append({"name": "Photocopy & Miscellaneous Charges", "amount": photo})
+
+        if not items:
+            items = [{"name": "Professional Survey & Loss Assessment Fees", "amount": taxable}]
+
 
     pdf.set_font("Helvetica", '', 10)
     sl = 1
