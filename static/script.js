@@ -1712,11 +1712,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderPhotos(category);
 
                 if (failures.length > 0) {
-                    const failedNames = failures.map(f => f.filename).join(', ');
-                    showStatus(`Uploaded ${successes.length} photo(s). Failed to upload: ${failedNames}. Check storage quota!`, 'error');
-                    alert(`Failed to upload the following photo(s) to Google Drive:\n${failedNames}\n\nThis is usually caused by the Google Drive storage quota being full. Please contact administrator or run the cleanup script to free up space.`);
+                    const failedDetails = failures.map(f => `• ${f.filename}: ${f.error}`).join('\n');
+                    showStatus(`Uploaded ${successes.length} photo(s). ${failures.length} failed.`, 'error', true);
+                    alert(`Failed to upload ${failures.length} photo(s):\n\n${failedDetails}\n\nPlease verify file size / format or retry.`);
                 } else {
-                    showStatus(`${successes.length} photo(s) uploaded!`, 'success');
+                    showStatus(`${successes.length} photo(s) uploaded successfully!`, 'success', true);
                 }
             }).catch(err => {
                 console.error("Photo processing error:", err);

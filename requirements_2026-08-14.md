@@ -76,6 +76,20 @@
 
 ---
 
+### R6: Diagnosis & Fix for False Google Drive Quota Alert & Photo Upload Throttling
+- **App Area:** Reports / Photo Attachments (`#upload_photo`, `static/script.js`)
+- **Source:** User screenshots (`1.jpeg, 2.jpeg... Failed to upload... Google Drive storage quota being full`)
+- **Root Cause Diagnosis:**
+  1. The `/upload_photo` route was strictly throttled by `@limiter.limit("30 per hour")`. Multi-photo vehicle damage reports (typically 10–30 photos) exhausted this quota after a few uploads, causing subsequent image uploads to fail with HTTP 429.
+  2. The frontend error handler in `handlePhotoSelection` had a legacy hardcoded fallback alert claiming failures were due to "Google Drive storage quota being full", even though image storage was migrated to private asset storage (`modules/assets.py`).
+- **Resolution:**
+  1. Increased the `/upload_photo` rate limit in `app.py` to `@limiter.limit("300 per hour; 60 per minute")` for authorized survey users.
+  2. Updated frontend error handling to report actual server diagnostic errors (e.g. file format/size/network) rather than misleading Google Drive quota alerts.
+- **Ambiguities:** None.
+- **Risk Rating:** Low.
+
+---
+
 ## Requirement Mapping Table
 
 | ID | Title | App Area | Files / Routes Affected | Financial Redaction Impact | Risk Rating |
@@ -85,4 +99,6 @@
 | **R3** | Insurer Master Management Usability | Survey Fee Register | `templates/index.html`, `static/script.js` | None | Low |
 | **R4** | Smart Auto-Prefix & Typing Match for Invoice No | Survey Fee Register | `static/script.js`, `app.py` (`/api/insurers/next-invoice-no`) | Admin only (Fee register remains restricted to Admin) | Medium |
 | **R5** | Professional Fee Input & Live Calculation Box | Survey Fee Register | `templates/index.html`, `static/script.js` | Admin only | Low |
+| **R6** | Photo Upload Rate Limit & Accurate Diagnostics | Reports / Photos | `app.py`, `static/script.js` | None | Low |
+
 

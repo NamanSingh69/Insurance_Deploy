@@ -2735,7 +2735,7 @@ def available_models():
 # --- Photo Upload Route ---
 @app.route('/upload_photo', methods=['POST'])
 @login_required
-@limiter.limit("30 per hour")
+@limiter.limit("300 per hour; 60 per minute")
 def upload_photo():
     if 'photo' not in request.files:
         return jsonify({'error': 'No file part'}), 400
