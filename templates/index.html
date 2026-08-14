@@ -118,6 +118,38 @@
             </div>
             <div id="dashboard-cards" class="dashboard-grid"></div>
             <div id="financial-dashboard" class="dashboard-grid hidden" style="margin-top: 0.75rem;"></div>
+
+            <!-- In-Place Dashboard Claim Drilldown Section -->
+            <div id="dashboard-drilldown-section" class="card hidden" style="margin-top: 1.25rem; border: 1px solid var(--border-color); background: var(--card-bg, rgba(255,255,255,0.02));">
+                <div class="workspace-heading" style="margin-bottom: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                        <h3 id="drilldown-title" style="margin: 0; font-size: 1.05rem; color: var(--text-primary);"><i class="fas fa-filter"></i> <span id="drilldown-status-name">Filtered Claims</span> (<span id="drilldown-count">0</span>)</h3>
+                        <span id="drilldown-badge" class="status-badge" style="font-size: 0.75rem;"></span>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <input id="dashboard-drilldown-search" type="text" placeholder="Quick search claims…" style="padding: 0.35rem 0.7rem; font-size: 0.85rem; max-width: 220px; border-radius: 4px; border: 1px solid var(--border-color); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                        <button type="button" id="close-drilldown-btn" class="btn btn-secondary btn-sm" title="Close drilldown table view"><i class="fas fa-times"></i> Close</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table compact-table">
+                        <thead>
+                            <tr>
+                                <th>Claim No.</th>
+                                <th>Vehicle</th>
+                                <th>Insured</th>
+                                <th>Insurer</th>
+                                <th>Status</th>
+                                <th>Type</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboard-drilldown-tbody">
+                            <tr><td colspan="7">Click on any metric card above to view filtered claims.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </section>
 
         <!-- Gmail Appointment Import Review Section -->
@@ -237,17 +269,24 @@
                 </div>
                 <select id="fee-survey-type" style="display: none;"><option value="Survey Fee">Survey Fee</option></select>
 
-                <div style="display: flex; gap: 0.3rem;">
-                    <select id="fee-insurer-master-select" style="flex: 1;"><option value="">Select Insurer Master...</option></select>
-                    <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" title="Manage Insurer Masters"><i class="fas fa-building"></i> Master</button>
+                <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; background: rgba(59, 130, 246, 0.06); padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.25);">
+                    <div>
+                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-building"></i> Insurer Master Auto-Fill &amp; Setup</strong>
+                        <p style="font-size: 0.75rem; color: #aaa; margin: 0;">Select a saved master insurer or type company name to auto-fill GSTIN, Address, Rate &amp; sequential Invoice Prefix (e.g. NIC-0001, OGI-0001).</p>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" title="Add / Edit Master Insurer Records">
+                        <i class="fas fa-sliders-h"></i> Manage Insurer Masters
+                    </button>
                 </div>
+
+                <select id="fee-insurer-master-select" title="Choose from configured Insurer Masters"><option value="">Select Insurer Master...</option></select>
                 <input id="fee-insurer" type="text" placeholder="Insurer *" list="insurer-masters-datalist" required>
                 <input id="fee-insurer-gst" type="text" placeholder="Insurer GSTIN" list="insurer-gstin-datalist">
                 <input id="fee-insurer-address" type="text" placeholder="Insurer Branch Address" list="insurer-address-datalist">
                 <input id="fee-insured" type="text" placeholder="Insured name *" required>
-                <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice No (Auto-Prefix)</label><input id="fee-invoice-no" type="text" placeholder="e.g. NIA-1, IGI-2376"></div>
+                <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice No (Auto-Prefix)</label><input id="fee-invoice-no" type="text" placeholder="e.g. NIC-0001, OGI-0001"></div>
                 <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice Date</label><input id="fee-invoice-date" type="date" title="Invoice date"></div>
-                <input id="fee-professional" type="number" min="0" step="0.01" placeholder="Professional Fee *">
+                <input id="fee-professional" type="number" min="0" step="1" placeholder="Professional Fee (Rs.) *">
                 
                 <!-- Conveyance Mode & Combined Calculator (Flat + Distance) -->
                 <div style="grid-column: 1 / -1; background: rgba(255,255,255,0.03); padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
@@ -255,7 +294,7 @@
                         <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-car"></i> Conveyance Charges (Flat Rate &amp; Distance Km Formula)</strong>
                     </div>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
-                        <input id="fee-conveyance-flat" type="number" min="0" step="0.01" placeholder="Flat Rate Conveyance (Rs.)" style="flex: 1; min-width: 150px;">
+                        <input id="fee-conveyance-flat" type="number" min="0" step="1" placeholder="Flat Rate Conveyance (Rs.)" style="flex: 1; min-width: 150px;">
                         <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; flex: 2; background: rgba(0,0,0,0.2); padding: 0.4rem; border-radius: 4px; border: 1px dashed var(--border-color);">
                             <span style="font-size: 0.75rem; color: #aaa;">Km Formula:</span>
                             <input id="fee-dist-oneway-km" type="number" min="0" step="0.1" placeholder="One-Way Km" style="width: 110px;">
@@ -270,15 +309,31 @@
                     </div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <label for="fee-conveyance" style="font-size: 0.8rem; color: #aaa; margin: 0;">Total Conveyance (Flat + Dist):</label>
-                        <input id="fee-conveyance" type="number" min="0" step="0.01" placeholder="Conveyance Total" style="flex: 1; font-weight: bold; color: #4CAF50;">
+                        <input id="fee-conveyance" type="number" min="0" step="1" placeholder="Conveyance Total" style="flex: 1; font-weight: bold; color: #4CAF50;">
                     </div>
                 </div>
 
-                <input id="fee-photocopy" type="number" min="0" step="0.01" placeholder="Photocopy / Other charges">
+                <input id="fee-photocopy" type="number" min="0" step="1" placeholder="Photocopy / Other charges">
                 <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" placeholder="GST % (18)">
                 <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-due-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Due Date</label><input id="fee-due-date" type="date" title="Due date"></div>
                 <select id="fee-payment-status"><option value="unpaid">Unpaid</option><option value="partially_paid">Partially paid</option><option value="paid">Paid</option></select>
                 <select id="fee-invoice-status"><option value="draft">Draft</option><option value="issued">Issued</option><option value="cancelled">Cancelled</option></select>
+
+                <!-- Live Invoice Breakdown Preview -->
+                <div id="fee-live-calc-box" style="grid-column: 1 / -1; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.35rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                        <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);"><i class="fas fa-calculator"></i> Live Invoice Breakdown:</span>
+                        <div style="font-size: 0.85rem; display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center;">
+                            <span>Prof: <strong id="preview-prof-fee">Rs. 0</strong></span>
+                            <span>+ Conv: <strong id="preview-conv-fee">Rs. 0</strong></span>
+                            <span>+ Photo: <strong id="preview-photo-fee">Rs. 0</strong></span>
+                            <span>= Taxable: <strong id="preview-taxable-fee" style="color: #60a5fa;">Rs. 0</strong></span>
+                            <span>+ GST (<span id="preview-gst-pc">18</span>%): <strong id="preview-gst-fee" style="color: #f59e0b;">Rs. 0</strong></span>
+                            <span style="font-size: 0.95rem; font-weight: bold; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 0.2rem 0.6rem; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">Gross Total: <span id="preview-gross-fee">Rs. 0</span></span>
+                        </div>
+                    </div>
+                </div>
+
                 <button type="submit" class="btn btn-primary btn-sm">Save Fee Bill</button>
             </form>
             <div class="table-container"><table class="register-table"><thead><tr><th>Invoice</th><th>Claim</th><th>Type</th><th>Insurer & GSTIN</th><th>Professional</th><th>Conveyance</th><th>Photo</th><th>GST</th><th>Gross Total</th><th>Status</th></tr></thead><tbody id="fee-register-tbody"><tr><td colspan="10">Loading fee register…</td></tr></tbody></table></div>

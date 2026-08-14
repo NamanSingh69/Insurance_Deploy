@@ -4609,6 +4609,8 @@ def get_or_delete_insurer(insurer_id):
 @app.route('/api/insurers/next-invoice-no', methods=['GET'])
 @login_required
 def get_next_insurer_invoice_no():
+    if not is_admin_user(current_user):
+        return jsonify({'error': 'Admin permission required.'}), 403
     workspace_admin_id = workspace_admin_id_for(current_user)
     if not workspace_admin_id:
         return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403

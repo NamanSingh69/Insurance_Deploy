@@ -2472,14 +2472,103 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    let currentDrilldownStatusKey = null;
+    let currentDrilldownLabel = '';
+
+    function renderDashboardDrilldown(statusKey, label) {
+        const section = document.getElementById('dashboard-drilldown-section');
+        const tbody = document.getElementById('dashboard-drilldown-tbody');
+        const titleStatus = document.getElementById('drilldown-status-name');
+        const countSpan = document.getElementById('drilldown-count');
+        const badge = document.getElementById('drilldown-badge');
+        const searchInput = document.getElementById('dashboard-drilldown-search');
+        if (!section || !tbody) return;
+
+        if (statusKey !== undefined) currentDrilldownStatusKey = statusKey;
+        if (label !== undefined) currentDrilldownLabel = label;
+
+        if (titleStatus) titleStatus.textContent = currentDrilldownLabel || 'Filtered Claims';
+        section.classList.remove('hidden');
+
+        // Filter claims
+        let list = workspaceState.claims || [];
+        const key = currentDrilldownStatusKey;
+
+        if (key === '' || key === 'total') {
+            // All claims
+        } else if (key === 'pending') {
+            list = list.filter(c => c.status !== 'closed' && c.status !== 'report_submitted');
+        } else if (key === 'report_submitted' || key === 'completed') {
+            list = list.filter(c => c.status === 'report_submitted');
+        } else if (key) {
+            list = list.filter(c => c.status === key);
+        }
+
+        const searchTerm = (searchInput?.value || '').toLowerCase().trim();
+        if (searchTerm) {
+            list = list.filter(c => 
+                (c.claim_no || '').toLowerCase().includes(searchTerm) ||
+                (c.vehicle_no || '').toLowerCase().includes(searchTerm) ||
+                (c.insured_name || '').toLowerCase().includes(searchTerm) ||
+                (c.insurer_name || '').toLowerCase().includes(searchTerm)
+            );
+        }
+
+        if (countSpan) countSpan.textContent = String(list.length);
+        if (badge) {
+            badge.textContent = currentDrilldownLabel || 'All Claims';
+            badge.className = `status-badge badge-${(key || 'default').replace(/_/g, '-')}`;
+        }
+
+        if (!list.length) {
+            tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 1.5rem;">No claims found for ${escapeHtml(currentDrilldownLabel || 'selected filter')}.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = list.map(item => {
+            const statusLabel = formatStatus(item.status);
+            const statusClass = `badge-${(item.status || 'default').replace(/_/g, '-')}`;
+            return `
+                <tr>
+                    <td><strong>${escapeHtml(item.claim_no || '—')}</strong></td>
+                    <td>${escapeHtml(item.vehicle_no || '—')}</td>
+                    <td>${escapeHtml(item.insured_name || '—')}</td>
+                    <td>${escapeHtml(item.insurer_name || '—')}</td>
+                    <td><span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span></td>
+                    <td>${escapeHtml(item.survey_type || 'Final')}</td>
+                    <td>
+                        <div style="display: flex; gap: 0.35rem; align-items: center;">
+                            <button type="button" class="btn btn-primary btn-sm drilldown-open-btn" data-id="${item.id}" title="Open Claim Report"><i class="fas fa-folder-open"></i> Open</button>
+                            <button type="button" class="btn btn-secondary btn-sm drilldown-docs-btn" data-id="${item.id}" title="Manage Missing Documents Checklist"><i class="fas fa-file-invoice"></i> Docs</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        tbody.querySelectorAll('.drilldown-open-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                loadWorkspaceReport(id);
+            });
+        });
+
+        tbody.querySelectorAll('.drilldown-docs-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                openPendingDocsModal(id);
+            });
+        });
+    }
+
     async function fetchDashboard() {
         const range = document.getElementById('dashboard-range-select')?.value || '1m';
         const res = await fetch(`/api/dashboard?range=${encodeURIComponent(range)}`);
         if (!res.ok) return;
         const data = await res.json();
         const operational = [
-            ['Total claims', data.total_claims, ''],
-            ['Pending claims', data.pending_claims, ''],
+            ['Total claims', data.total_claims, 'total'],
+            ['Pending claims', data.pending_claims, 'pending'],
             ['Completed claims', data.completed_claims, 'report_submitted'],
             ['New appointment', data.new_appointment, 'new_appointment'],
             ['Inspection pending', data.inspection_pending, 'inspection_pending'],
@@ -2490,26 +2579,35 @@ document.addEventListener('DOMContentLoaded', () => {
         ];
         const cards = document.getElementById('dashboard-cards');
         if (cards) {
-            cards.innerHTML = operational.map(([label, value, statusKey]) => 
-                `<div class="metric-card clickable-metric" data-status-key="${escapeHtml(statusKey)}" style="cursor: pointer;" title="Click to view ${escapeHtml(label)} in Claim Register">
+            cards.innerHTML = operational.map(([label, value, statusKey]) => {
+                const isActive = currentDrilldownStatusKey === statusKey;
+                return `<div class="metric-card clickable-metric ${isActive ? 'active-metric-card' : ''}" data-status-key="${escapeHtml(statusKey)}" data-label="${escapeHtml(label)}" style="cursor: pointer;" title="Click to view ${escapeHtml(label)} directly below">
                     <span class="metric-label">${escapeHtml(label)}</span>
                     <span class="metric-value">${Number(value || 0)}</span>
-                </div>`
-            ).join('');
+                </div>`;
+            }).join('');
 
             cards.querySelectorAll('.clickable-metric').forEach(card => {
                 card.addEventListener('click', () => {
                     const statusKey = card.getAttribute('data-status-key');
-                    const tabBtn = document.getElementById('tab-btn-claims');
-                    if (tabBtn) tabBtn.click();
-                    const statusFilter = document.getElementById('claim-status-filter');
-                    if (statusFilter) {
-                        statusFilter.value = statusKey || '';
-                        fetchClaims();
+                    const label = card.getAttribute('data-label') || 'Claims';
+
+                    cards.querySelectorAll('.clickable-metric').forEach(c => c.classList.remove('active-metric-card'));
+                    card.classList.add('active-metric-card');
+
+                    renderDashboardDrilldown(statusKey, label);
+                    const section = document.getElementById('dashboard-drilldown-section');
+                    if (section) {
+                        section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     }
                 });
             });
         }
+
+        if (currentDrilldownStatusKey !== null) {
+            renderDashboardDrilldown();
+        }
+
         const financial = document.getElementById('financial-dashboard');
         if (financial && workspaceState.profile?.role === 'admin') {
             financial.classList.remove('hidden');
@@ -2638,6 +2736,33 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) { showStatus(err.message, 'error', true); }
     }
 
+    function updateLiveFeeSummary() {
+        const prof = parseFloat(document.getElementById('fee-professional')?.value || 0) || 0;
+        const conv = parseFloat(document.getElementById('fee-conveyance')?.value || 0) || 0;
+        const photo = parseFloat(document.getElementById('fee-photocopy')?.value || 0) || 0;
+        const gstPc = parseFloat(document.getElementById('fee-gst-pc')?.value || 18) || 0;
+
+        const taxable = prof + conv + photo;
+        const gstAmount = taxable * gstPc / 100;
+        const grossTotal = taxable + gstAmount;
+
+        const elProf = document.getElementById('preview-prof-fee');
+        const elConv = document.getElementById('preview-conv-fee');
+        const elPhoto = document.getElementById('preview-photo-fee');
+        const elTaxable = document.getElementById('preview-taxable-fee');
+        const elGstPc = document.getElementById('preview-gst-pc');
+        const elGstFee = document.getElementById('preview-gst-fee');
+        const elGross = document.getElementById('preview-gross-fee');
+
+        if (elProf) elProf.textContent = `Rs. ${prof.toFixed(2)}`;
+        if (elConv) elConv.textContent = `Rs. ${conv.toFixed(2)}`;
+        if (elPhoto) elPhoto.textContent = `Rs. ${photo.toFixed(2)}`;
+        if (elTaxable) elTaxable.textContent = `Rs. ${taxable.toFixed(2)}`;
+        if (elGstPc) elGstPc.textContent = String(gstPc);
+        if (elGstFee) elGstFee.textContent = `Rs. ${gstAmount.toFixed(2)}`;
+        if (elGross) elGross.textContent = `Rs. ${grossTotal.toFixed(2)}`;
+    }
+
     function updateDistanceConveyanceCalc() {
         const flatAmt = parseFloat(document.getElementById('fee-conveyance-flat')?.value || 0);
         const onewayKm = parseFloat(document.getElementById('fee-dist-oneway-km')?.value || 0);
@@ -2651,6 +2776,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const combinedTotal = flatAmt + distTotal;
         const conveyanceInput = document.getElementById('fee-conveyance');
         if (conveyanceInput) conveyanceInput.value = combinedTotal.toFixed(2);
+        updateLiveFeeSummary();
     }
 
 
@@ -2770,12 +2896,12 @@ document.addEventListener('DOMContentLoaded', () => {
             currentPendingDocs = data.pending_documents || [];
             const reminderInfo = data.reminder_info || {};
             
-            const count = reminder_info.reminder_count || 0;
+            const count = reminderInfo.reminder_count || 0;
             const statusText = count > 0 ? `Reminders sent: ${count}/3. Last sent: ${reminderInfo.last_sent_at ? new Date(reminderInfo.last_sent_at).toLocaleDateString() : 'None'}` : 'No reminders sent yet. (Every 7 days, 3 times limit)';
             document.getElementById('pending-docs-reminder-status').textContent = statusText;
 
-            if (reminder_info.claim_manager_email) document.getElementById('claim-manager-email-input').value = reminder_info.claim_manager_email;
-            if (reminder_info.claim_manager_phone) document.getElementById('claim-manager-phone-input').value = reminder_info.claim_manager_phone;
+            if (reminderInfo.claim_manager_email) document.getElementById('claim-manager-email-input').value = reminderInfo.claim_manager_email;
+            if (reminderInfo.claim_manager_phone) document.getElementById('claim-manager-phone-input').value = reminderInfo.claim_manager_phone;
 
             renderPendingDocsList();
             document.getElementById('pending-documents-modal').classList.remove('hidden');
@@ -2951,11 +3077,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok || !result.success) throw new Error(result.error || 'Failed to extract PDF');
             
             const ext = result.extracted || {};
-            if (ext.insurer) document.getElementById('fee-insurer').value = ext.insurer;
+            if (ext.insurer) {
+                document.getElementById('fee-insurer').value = ext.insurer;
+                handleFeeInsurerInput(ext.insurer);
+            }
             if (ext.insured) document.getElementById('fee-insured').value = ext.insured;
             if (ext.invoice_no || ext.report_no) document.getElementById('fee-invoice-no').value = ext.invoice_no || ext.report_no;
             if (ext.invoice_date) document.getElementById('fee-invoice-date').value = ext.invoice_date;
             
+            updateLiveFeeSummary();
             showStatus('Extracted billing details successfully into form!', 'success', true);
         } catch (error) {
             showStatus(error.message || 'Error extracting PDF', 'error', true);
@@ -3024,6 +3154,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (invDateElem) invDateElem.value = new Date().toISOString().split('T')[0];
             const fileNameSpan = document.getElementById('fee-pdf-file-name');
             if (fileNameSpan) fileNameSpan.textContent = '';
+            updateLiveFeeSummary();
             showStatus('Fee register saved.', 'success', true);
             await Promise.all([fetchFees(), fetchDashboard()]);
         } catch (error) { showStatus(error.message, 'error', true); }
@@ -3315,6 +3446,108 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (err) { console.error('Error fetching next invoice number:', err); }
             }
             updateDistanceConveyanceCalc();
+            updateLiveFeeSummary();
+        });
+
+        // Helper to derive insurer acronym prefix from company name
+        function deriveInsurerAcronym(name) {
+            if (!name || typeof name !== 'string') return 'BILL';
+            const trimmed = name.trim();
+            if (!trimmed) return 'BILL';
+
+            const lower = trimmed.toLowerCase();
+            if (lower.includes('national insurance') || lower.includes('national ins') || lower === 'nic') return 'NIC';
+            if (lower.includes('oriental general') || lower.includes('oriental insurance') || lower === 'ogi' || lower === 'oic') return 'OGI';
+            if (lower.includes('new india') || lower === 'nia' || lower === 'niacl') return 'NIA';
+            if (lower.includes('united india') || lower === 'uii' || lower === 'uiic') return 'UII';
+            if (lower.includes('liberty general') || lower.includes('liberty')) return 'LGI';
+            if (lower.includes('tata aig') || lower.includes('tata-aig')) return 'TATA-AIG';
+            if (lower.includes('hdfc ergo') || lower.includes('hdfc')) return 'HDFC-ERGO';
+            if (lower.includes('icici lombard') || lower.includes('icici')) return 'ICICI';
+            if (lower.includes('bajaj allianz') || lower.includes('bajaj')) return 'BAJAJ';
+            if (lower.includes('sbi general') || lower.includes('sbi')) return 'SBIG';
+            if (lower.includes('shriram general') || lower.includes('shriram')) return 'SGI';
+            if (lower.includes('reliance general') || lower.includes('reliance')) return 'RGI';
+            if (lower.includes('royal sundaram')) return 'RSGI';
+            if (lower.includes('cholamandalam') || lower.includes('chola')) return 'CHOLA';
+            if (lower.includes('universal sompo')) return 'USGI';
+            if (lower.includes('go digit') || lower.includes('digit')) return 'DIGIT';
+            if (lower.includes('acko')) return 'ACKO';
+            if (lower.includes('iffco tokio')) return 'ITGI';
+            if (lower.includes('future generali')) return 'FGII';
+            if (lower.includes('magma hdi') || lower.includes('magma')) return 'MAGMA';
+            if (lower.includes('zuno')) return 'ZUNO';
+            if (lower.includes('navi')) return 'NAVI';
+
+            const words = trimmed.replace(/[^a-zA-Z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+            if (!words.length) return 'BILL';
+
+            const stopWords = new Set(['the', 'and', '&', 'of', 'co', 'ltd', 'limited', 'company', 'services', 'corp', 'corporation', 'divisional', 'division', 'branch', 'office', 'bo', 'do']);
+            const meaningfulWords = words.filter(w => !stopWords.has(w.toLowerCase()));
+
+            if (meaningfulWords.length >= 2) {
+                return meaningfulWords.map(w => w[0].toUpperCase()).join('');
+            } else if (words.length >= 2) {
+                return words.slice(0, 4).map(w => w[0].toUpperCase()).join('');
+            } else {
+                const single = words[0].toUpperCase();
+                return single.length <= 4 ? single : single.substring(0, 4);
+            }
+        }
+
+        // Live Insurer Name Typing Listener (auto-prefix & master matching)
+        let feeInsurerTypingTimeout = null;
+        function handleFeeInsurerInput(insurerName) {
+            clearTimeout(feeInsurerTypingTimeout);
+            feeInsurerTypingTimeout = setTimeout(async () => {
+                const trimmed = (insurerName || '').trim();
+                if (!trimmed) return;
+                const lower = trimmed.toLowerCase();
+                
+                // 1. Check matching master
+                const matchedMaster = globalInsurerMasters.find(m => 
+                    (m.insurer_name && m.insurer_name.toLowerCase() === lower) ||
+                    (m.insurer_name && lower.includes(m.insurer_name.toLowerCase())) ||
+                    (m.insurer_name && m.insurer_name.toLowerCase().includes(lower))
+                );
+
+                let prefix = matchedMaster?.invoice_prefix;
+                if (matchedMaster) {
+                    const gstinInput = document.getElementById('fee-insurer-gst');
+                    const addressInput = document.getElementById('fee-insurer-address');
+                    const rateInput = document.getElementById('fee-dist-rate-per-km');
+                    if (gstinInput && !gstinInput.value && matchedMaster.gstin) gstinInput.value = matchedMaster.gstin;
+                    if (addressInput && !addressInput.value && matchedMaster.branch_address) addressInput.value = matchedMaster.branch_address;
+                    if (rateInput && matchedMaster.default_conveyance_rate) {
+                        rateInput.value = matchedMaster.default_conveyance_rate;
+                        updateDistanceConveyanceCalc();
+                    }
+                }
+
+                if (!prefix) {
+                    prefix = deriveInsurerAcronym(trimmed);
+                }
+
+                if (prefix) {
+                    try {
+                        const res = await fetch(`/api/insurers/next-invoice-no?prefix=${encodeURIComponent(prefix)}`);
+                        const data = await res.json();
+                        if (data.success && data.next_invoice_no) {
+                            const invInput = document.getElementById('fee-invoice-no');
+                            if (invInput) invInput.value = data.next_invoice_no;
+                        }
+                    } catch (err) {
+                        console.error('Error fetching next invoice number on typing:', err);
+                    }
+                }
+            }, 300);
+        }
+
+        document.getElementById('fee-insurer')?.addEventListener('input', (e) => {
+            handleFeeInsurerInput(e.target.value);
+        });
+        document.getElementById('fee-insurer')?.addEventListener('change', (e) => {
+            handleFeeInsurerInput(e.target.value);
         });
 
         document.getElementById('claim-input-insurer-select')?.addEventListener('change', (e) => {
@@ -3359,12 +3592,27 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // Conveyance Combined Calculator Listeners
+        // Conveyance Combined Calculator Listeners & Live Fee Calculation Listeners
         document.getElementById('fee-conveyance-flat')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-oneway-km')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-rate-per-km')?.addEventListener('input', updateDistanceConveyanceCalc);
         document.getElementById('fee-dist-visits')?.addEventListener('change', updateDistanceConveyanceCalc);
+        document.getElementById('fee-conveyance')?.addEventListener('input', updateLiveFeeSummary);
+        document.getElementById('fee-professional')?.addEventListener('input', updateLiveFeeSummary);
+        document.getElementById('fee-photocopy')?.addEventListener('input', updateLiveFeeSummary);
+        document.getElementById('fee-gst-pc')?.addEventListener('input', updateLiveFeeSummary);
 
+        // Dashboard In-Place Drilldown Listeners
+        document.getElementById('dashboard-drilldown-search')?.addEventListener('input', () => {
+            renderDashboardDrilldown();
+        });
+        document.getElementById('close-drilldown-btn')?.addEventListener('click', () => {
+            const section = document.getElementById('dashboard-drilldown-section');
+            if (section) section.classList.add('hidden');
+            currentDrilldownStatusKey = null;
+            currentDrilldownLabel = '';
+            document.querySelectorAll('.clickable-metric').forEach(c => c.classList.remove('active-metric-card'));
+        });
 
         // Insurer Master Form Submit & Modal Controls
         document.getElementById('insurer-master-form')?.addEventListener('submit', async (e) => {

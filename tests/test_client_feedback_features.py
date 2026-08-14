@@ -184,3 +184,31 @@ def test_gmail_staged_not_found_handling(client, mock_sheets_db):
     assert res.get_json()['error'] == 'Staged intimation not found.'
 
 
+def test_dynamic_insurer_prefix_invoice_numbers(client, mock_sheets_db):
+    """Test next invoice number generation with dynamic prefixes (e.g. NIC, OGI)."""
+    _auth(client, mock_sheets_db, role='admin')
+
+    def side_effect(workspace_admin_id, prefix):
+        return f"{prefix}-1"
+
+    mock_sheets_db.get_next_insurer_invoice_number.side_effect = side_effect
+
+    res_nic = client.get('/api/insurers/next-invoice-no?prefix=NIC')
+    assert res_nic.status_code == 200
+    assert res_nic.get_json()['next_invoice_no'] == 'NIC-1'
+
+    res_ogi = client.get('/api/insurers/next-invoice-no?prefix=OGI')
+    assert res_ogi.status_code == 200
+    assert res_ogi.get_json()['next_invoice_no'] == 'OGI-1'
+
+
+def test_employee_cannot_access_invoice_numbering(client, mock_sheets_db):
+    """Test employee cannot access financial invoice numbering endpoint."""
+    _auth(client, mock_sheets_db, role='employee')
+
+    res = client.get('/api/insurers/next-invoice-no?prefix=NIC')
+    assert res.status_code == 403
+    assert res.get_json()['error'] == 'Admin permission required.'
+
+
+
