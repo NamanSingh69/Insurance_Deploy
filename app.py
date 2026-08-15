@@ -4,6 +4,7 @@ import csv
 import json
 import secrets
 import hmac
+import hashlib
 import requests
 import uuid
 import threading
@@ -151,6 +152,19 @@ app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
 
+def get_app_version():
+    try:
+        import subprocess as _sub
+        commit = _sub.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=_sub.DEVNULL, timeout=1).strip().decode('utf-8')
+        if commit:
+            return commit
+    except Exception:
+        pass
+    return '1.3.0'
+
+APP_VERSION = get_app_version()
+
+
 def _csrf_token():
     token = session.get('_csrf_token')
     if not token:
@@ -161,8 +175,12 @@ def _csrf_token():
 
 @app.context_processor
 def inject_request_security_values():
-    """Expose only a per-session CSRF token and a per-response CSP nonce to templates."""
-    return {'csrf_token': _csrf_token, 'csp_nonce': getattr(g, 'csp_nonce', '')}
+    """Expose per-session CSRF token, CSP nonce, and dynamic Git commit version to templates."""
+    return {
+        'csrf_token': _csrf_token,
+        'csp_nonce': getattr(g, 'csp_nonce', ''),
+        'app_version': APP_VERSION
+    }
 
 
 @app.before_request
@@ -170,6 +188,8 @@ def enforce_request_security():
     g.csp_nonce = secrets.token_urlsafe(18)
     if request.method in {'GET', 'HEAD', 'OPTIONS', 'TRACE'}:
         return None
+    if request.path.startswith('/api/deploy-webhook'):
+        return None  # Exempt webhook: verified via HMAC SHA-256 signature
     if current_app.config.get('TESTING') or not current_app.config.get('WTF_CSRF_ENABLED', True):
         return None
     expected = session.get('_csrf_token')
@@ -193,6 +213,31 @@ def request_entity_too_large(error):
 def healthz():
     """Minimal liveness health check route. Returns status OK without exposing diagnostics or secrets."""
     return jsonify({'status': 'ok'}), 200
+
+
+@app.route('/api/deploy-webhook', methods=['POST'])
+@limiter.exempt
+def deploy_webhook():
+    """Secure GitHub Webhook endpoint for automated deployment."""
+    secret = os.getenv("DEPLOY_WEBHOOK_SECRET", "surveyorportal-deploy-2026")
+    signature = request.headers.get('X-Hub-Signature-256')
+    if not signature:
+        return jsonify({'error': 'Missing signature'}), 403
+
+    payload_data = request.get_data()
+    computed_hash = "sha256=" + hmac.new(secret.encode('utf-8'), payload_data, hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(signature, computed_hash):
+        return jsonify({'error': 'Invalid signature'}), 403
+
+    deploy_script = "/var/www/insurance-app/vps_setup/auto_deploy.sh"
+    import subprocess as _sub
+    if os.path.exists(deploy_script):
+        _sub.Popen(['/bin/bash', deploy_script], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
+    else:
+        _sub.Popen(['echo', 'Deploy triggered'], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
+
+    return jsonify({'status': 'Deployment triggered successfully'}), 200
 
 bcrypt = Bcrypt()
 login_manager = LoginManager()

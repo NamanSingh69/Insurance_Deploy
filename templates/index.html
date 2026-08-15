@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.2.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ app_version }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Inter font -->
@@ -1910,7 +1910,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
     <datalist id="insurer-gstin-datalist"></datalist>
     <datalist id="insurer-address-datalist"></datalist>
 
-    <script src="{{ url_for('static', filename='script.js') }}?v=1.3.0"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v={{ app_version }}"></script>
 
 </body>
 </html>
