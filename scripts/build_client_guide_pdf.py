@@ -382,6 +382,7 @@ def build_pdf():
     )
     
     output_path = os.path.abspath(os.path.join('downloads', 'Motor_Survey_Software_User_Guide.pdf'))
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     pdf.output(output_path)
     print(f"PDF generated successfully at: {output_path}")
 

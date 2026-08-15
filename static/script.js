@@ -2376,7 +2376,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function switchWorkspaceView(viewName) {
         const dashboardSec = document.getElementById('operations-workspace');
         const claimsSec = document.getElementById('claim-register-section');
-        const feesSec = document.getElementById('fee-register-section');
+        const feesSec = document.getElementById('fee-register-section') || document.getElementById('fees-workspace');
         const activeNav = document.getElementById('workspace-active-nav');
         if (!dashboardSec || !claimsSec || !feesSec) return;
 
@@ -2462,6 +2462,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('operations-workspace')?.classList.add('hidden');
                 document.getElementById('claim-register-section')?.classList.add('hidden');
                 document.getElementById('fee-register-section')?.classList.add('hidden');
+                document.getElementById('fees-workspace')?.classList.add('hidden');
                 document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
 
