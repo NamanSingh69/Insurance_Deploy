@@ -1525,41 +1525,42 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
     vehicle_no = str(fee_data.get('vehicle_no') or '').strip()
     date_of_accident = str(fee_data.get('date_of_accident') or '').strip()
 
+    lbl_w = 28
     # Row 1: Policy No | Claim No
     pdf.set_x(claim_box_x)
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Policy No. :", border='LT')
+    pdf.cell(lbl_w, row_h, "Policy No. :", border='LT')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(policy_no), border='T')
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(policy_no), border='T')
     
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Claim No. :", border='LT')
+    pdf.cell(lbl_w, row_h, "Claim No. :", border='LT')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(claim_no), border='TR', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(claim_no), border='TR', new_x="LMARGIN", new_y="NEXT")
 
     # Row 2: Insurer | Vehicle No
     pdf.set_x(claim_box_x)
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Insurer :", border='L')
+    pdf.cell(lbl_w, row_h, "Insurer :", border='L')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(insurer_name[:40]), border=0)
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(insurer_name[:40]), border=0)
     
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Vehicle No. :", border='L')
+    pdf.cell(lbl_w, row_h, "Vehicle No. :", border='L')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(vehicle_no), border='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(vehicle_no), border='R', new_x="LMARGIN", new_y="NEXT")
 
     # Row 3: Insured | Date of Accident
     pdf.set_x(claim_box_x)
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Insured :", border='LB')
+    pdf.cell(lbl_w, row_h, "Insured :", border='LB')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(insured_name), border='B')
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(insured_name), border='B')
     
     pdf.set_font("Helvetica", 'B', 8.5)
-    pdf.cell(25, row_h, "Date of Accident :", border='LB')
+    pdf.cell(lbl_w, row_h, "Date of Accident :", border='LB')
     pdf.set_font("Helvetica", '', 8.5)
-    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(date_of_accident), border='BR', new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(col_w - lbl_w, row_h, normalize_pdf_text_for_fpdf(date_of_accident), border='BR', new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(3)
 
