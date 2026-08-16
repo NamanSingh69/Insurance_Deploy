@@ -27,8 +27,15 @@ git reset --hard origin/main
 NEW_COMMIT=$(git rev-parse --short HEAD)
 log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
 
-# 2. Make scripts executable
+# 2. Make scripts executable and configure daily backup cron
 chmod +x "$APP_DIR/vps_setup/"*.sh 2>/dev/null || true
+if [ -d "/etc/cron.daily" ] && [ -f "$APP_DIR/vps_setup/backup_cron.sh" ]; then
+    ln -sf "$APP_DIR/vps_setup/backup_cron.sh" /etc/cron.daily/backup_insurance_db
+    log "Configured daily database backup cron (/etc/cron.daily/backup_insurance_db)."
+fi
+
+# Ensure Certbot SSL renewal timer is enabled
+systemctl enable --now certbot.timer 2>/dev/null || true
 
 # 3. Update Python dependencies if requirements.txt exists
 if [ -f "$APP_DIR/venv/bin/activate" ]; then

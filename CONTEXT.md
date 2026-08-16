@@ -91,7 +91,9 @@ git push origin main
   Command: `python worker.py`
 - **Nginx Configuration:** `/etc/nginx/sites-available/skinsurance` (symlinked to `/etc/nginx/sites-enabled/`)
 - **Environment File:** `/var/www/insurance-app/.env` (mode `600`, outside version control)
-- **Client User Manual (PDF):** `downloads/Motor_Survey_Software_User_Guide.pdf` (10.3 KB)
+- **Automated Backup Cron:** `/etc/cron.daily/backup_insurance_db` (Runs `/var/www/insurance-app/vps_setup/backup_cron.sh`, 14-day rotation)
+- **Client Manual & Release Notes (Markdown):** [docs/CLIENT_USER_MANUAL_AND_CHANGELOG.md](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/docs/CLIENT_USER_MANUAL_AND_CHANGELOG.md)
+- **Client User Manual (PDF):** [downloads/Motor_Survey_Software_User_Guide.pdf](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/downloads/Motor_Survey_Software_User_Guide.pdf) (9.4 KB)
 - **Evidence Screenshots:** `docs/` (`evidence_r1_...` through `evidence_r6_...`, `evidence_employee_financial_redaction.png`, `webhook_...png`)
 
 ---
