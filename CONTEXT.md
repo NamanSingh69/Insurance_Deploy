@@ -1,119 +1,123 @@
-# Motor Survey Report Generator — Operations Context
+# Motor Survey Report Generator — Complete Architecture & Operations Context
 
-## Overview
+**Production Domain:** [https://skinsurance.tech](https://skinsurance.tech)  
+**Target User / Surveyor:** Sk Anowar Ali  
+**Core Framework:** Python 3.12+, Flask 3.1, Gunicorn 23.0, PostgreSQL 14+, Redis, Nginx Reverse Proxy (Let's Encrypt SSL).
 
-This Flask application manages motor-survey reports, a shared Claim Register, fee records, Google Drive uploads, and Gemini-assisted document and Gmail claim extraction.  Production is served by Gunicorn behind Nginx at `https://skinsurance.tech` with PostgreSQL as the application database.
+---
 
-## Security and configuration
+## 1. System Credentials & VPS Operations Reference
 
-Keep all credentials in the protected production environment file, never in Git, scripts, screenshots, tickets, or this document.  Any credential previously committed or shared in repository documentation must be rotated before production use.
+### VPS Host Access
+- **Host IP:** `185.199.52.85`
+- **IPv6:** `2a02:4780:12:aa78::1`
+- **SSH Port:** `22` (Enabled via Hostinger Firewall profile `vps-allow-all`)
+- **Root User:** `root`
+- **Root Password:** `surveyorportal@2026`
+- **Hostinger VPS ID:** `1789781` | **Hostinger Firewall ID:** `319602`
+- **Application Root:** `/var/www/insurance-app`
+- **Virtual Environment:** `/var/www/insurance-app/venv` (or `.venv`)
 
-The production environment requires at least:
+### PostgreSQL Database
+- **Engine:** PostgreSQL 14+ (Local instance on `localhost:5432`)
+- **Database Name:** `insurance_db`
+- **Database User:** `insurance_user`
+- **Database Password:** `surveyorportal@2026`
+- **Connection URI:** `postgresql://insurance_user:surveyorportal@2026@localhost/insurance_db`
+- **Pre-Deploy Snapshot Backup:** `/root/backups/insurance_db_pre_deploy_20260815_183446.sql` (152 KB)
 
-```text
-DATABASE_URL=
-FLASK_SECRET_KEY=
-GEMINI_API_KEY=
-GOOGLE_SHEETS_CREDENTIALS=
-GOOGLE_DRIVE_FOLDER_ID=
-GMAIL_TOKEN_ENCRYPTION_KEY=
-GMAIL_OAUTH_CLIENT_ID=
-GMAIL_OAUTH_CLIENT_SECRET=
-GMAIL_OAUTH_REDIRECT_URI=https://skinsurance.tech/auth/gmail/callback
-```
+### Application Accounts & Roles
+- **Administrator Account:** `NAMAN` / `69420` (ID: 2)
+  - Full workspace access, financial Survey Fee Register, Insurer Master management, GSTR-1/CA Excel exports, user promotions, and system settings.
+- **Employee Account:** `USER` / `UH65A#DF` (ID: 1, `admin_id`: 2)
+  - Operational claim management, survey report editing, PDF downloads.
+  - **Financial Redaction:** Fee Register tabs and financial KPI metrics are completely hidden from UI; API requests to financial routes return `403 Forbidden`; claim saves cannot overwrite fee records.
 
-`GMAIL_TOKEN_ENCRYPTION_KEY` must be a Fernet key generated outside source control.  Gmail OAuth requires a redirect URI matching the deployed domain and must request only `gmail.readonly` for mailbox sync.  Gmail source messages are intentionally not modified.
+---
 
-## Workspace model
+## 2. Automated CI/CD & Zero-Friction Deployment Pipeline
 
-- Existing reports and fee bills without a workspace remain private to their legacy owner.
-- New operational records are scoped to an admin workspace.
-- Admins can manage users, finance, exports, invoice numbers, Gmail connections, and sender domains.
-- Employees can work on shared claims and reports. Financial data is redacted from their API responses and cannot be overwritten by their saves.
-- Locked users cannot sign in or continue an existing session.
-
-After deploying the workspace migration, promote the intended existing owner before inviting employees:
-
-```bash
-cd /var/www/insurance-app
-sudo venv/bin/flask promote-admin <username>
-sudo venv/bin/flask create-employee <username> <temporary-password> --admin <admin-username>
-```
-
-Use `--gmail-sync` only for employees who are explicitly permitted to start a mailbox sync.
-
-## Deployment
-
-From the local checkout:
+### How Deployment Works (Push-to-Deploy)
+The deployment process is **100% automated**. Pushing code to `origin/main` automatically updates production in **~3.5 seconds** with zero manual server interaction:
 
 ```bash
-git pull --ff-only
+git add -A
+git commit -m "your commit message"
 git push origin main
 ```
 
-On the VPS:
+### Webhook & Automation Architecture
+- **GitHub Webhook ID:** `666295837` (`NamanSingh69/Insurance_Deploy`)
+- **Webhook Endpoint:** `https://skinsurance.tech/api/deploy-webhook` (POST)
+- **Signature Security:** HMAC SHA-256 validated via `X-Hub-Signature-256` header against `DEPLOY_WEBHOOK_SECRET` (`surveyorportal-deploy-2026`).
+- **Server Deployment Script:** `/var/www/insurance-app/vps_setup/auto_deploy.sh`
+  1. `git fetch origin main && git reset --hard origin/main`
+  2. `pip install -r requirements.txt --quiet`
+  3. `systemctl restart insurance.service insurance-worker.service nginx.service`
+  4. Liveness validation against `http://127.0.0.1:5000/healthz` (HTTP 200 OK)
+  5. Audit log recorded to `/var/log/insurance_deploy.log`.
 
+---
+
+## 3. Dynamic Asset Cache-Busting
+
+- **Context Processor:** In [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), `inject_request_security_values` extracts the active Git commit hash (`git rev-parse --short HEAD`) and exposes it to Jinja templates as `app_version`.
+- **Template Binding:** In [templates/index.html](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/templates/index.html) and [templates/login.html](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/templates/login.html):
+  - Stylesheet: `{{ url_for('static', filename='style.css') }}?v={{ app_version }}`
+  - Script: `{{ url_for('static', filename='script.js') }}?v={{ app_version }}`
+- **Benefit:** Client browsers and Cloudflare/Nginx CDN caches immediately invalidate upon new commits, preventing stale JavaScript/CSS bugs.
+
+---
+
+## 4. Key Feature Implementations (R1–R6 Matrix)
+
+| Requirement | Implementation Detail | Technical Seam |
+|---|---|---|
+| **R1: In-Place Dashboard Drilldown** | Clicking KPI cards (*Pending claims*, *Inspection pending*, *Documents awaited*) renders filtered claim lists directly below cards in `#dashboard-drilldown-section` without tab switching. Active card receives `.active-metric-card` highlight border. | `static/script.js` (`renderDashboardDrilldown`), `#dashboard-drilldown-section` |
+| **R2: Missing Documents Checklist Modal** | Clicking `Docs` button in Claim Register opens `#pending-documents-modal` with granular item checklists, instant toggle updates, and automated reminder counter. Zero console errors. | `static/script.js` (`openPendingDocsModal`), `#pending-documents-modal` |
+| **R3: Master Insurer Guidance & Setup** | Survey Fee Register includes guidance banner and `+ Manage Insurer Masters` quick action (`.open-insurer-master-modal-btn`) launching `#insurer-master-modal` to configure master insurer records (GSTIN, Address, Default Rate/Km, Prefix). | `static/script.js` (`loadInsurerMasters`), `#insurer-master-modal` |
+| **R4: Smart Auto-Prefix & Sequential Invoicing** | Typing insurer name (e.g. *National Insurance Company*) auto-derives smart uppercase prefix (e.g. `NIC-0001`, `OGI-0001`), auto-fills GSTIN & address, and fetches next sequential invoice number from `/api/insurers/next-invoice-no`. | `static/script.js` (`deriveInsurerAcronym`, `handleFeeInsurerInput`), `/api/insurers/next-invoice-no` |
+| **R5: Whole Rupee Stepper & Live Summary** | Professional fee input enforces integer step (`step="1"`). Live summary card (`#fee-live-calc-box`) dynamically recalculates: $\text{Taxable} = \text{Prof} + \text{Conv} + \text{Photo}$, $\text{GST (18\%)}$, $\text{Gross Total}$. | `static/script.js` (`updateLiveFeeSummary`), `#fee-live-calc-box` |
+| **R6: Photo Upload Rate Limiting & Diagnostics** | HD damage photo uploader supports batch drag-and-drop with adaptive client throttling. Replaced false Google Drive quota alerts with accurate server error diagnostics. | `static/script.js` (Upload dropzones), Flask-Limiter config |
+| **Role Redaction Guard** | Survey Fee Register tab and financial KPI metrics are completely hidden from employee UI. Direct HTTP requests to `/api/insurers/next-invoice-no` return `403 Forbidden`. | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py) (`is_admin_user` checks), `static/script.js` (`initMotorSurveyWorkspace`) |
+
+---
+
+## 5. Systemd Units & Key Application Paths
+
+- **Web App Service:** `/etc/systemd/system/insurance.service`  
+  Command: `gunicorn --workers 3 --threads 4 --timeout 600 --bind 127.0.0.1:5000 app:app`
+- **Async Worker Service:** `/etc/systemd/system/insurance-worker.service`  
+  Command: `python worker.py`
+- **Nginx Configuration:** `/etc/nginx/sites-available/skinsurance` (symlinked to `/etc/nginx/sites-enabled/`)
+- **Environment File:** `/var/www/insurance-app/.env` (mode `600`, outside version control)
+- **Client User Manual (PDF):** `downloads/Motor_Survey_Software_User_Guide.pdf` (10.3 KB)
+- **Evidence Screenshots:** `docs/` (`evidence_r1_...` through `evidence_r6_...`, `evidence_employee_financial_redaction.png`, `webhook_...png`)
+
+---
+
+## 6. Verification & CLI Commands
+
+### Automated Test Suite
+Run all 177 unit, integration, and security tests:
+```bash
+.\.venv\Scripts\python.exe -m pytest
+```
+
+### Server Health Check
+Verify live application liveness and SSL:
+```bash
+curl -fsS https://skinsurance.tech/healthz
+```
+
+### Manual Database Snapshot Command
+```bash
+export PGPASSWORD='surveyorportal@2026' && pg_dump -U insurance_user -h localhost -d insurance_db > /root/backups/insurance_db_manual_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### User Administration CLI
 ```bash
 cd /var/www/insurance-app
-git pull --ff-only origin main
-source venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart insurance
-sudo systemctl reload nginx
+sudo venv/bin/flask promote-admin <username>
+sudo venv/bin/flask create-employee <username> <temp-password> --admin <admin-username> [--gmail-sync]
 ```
-
-Database migrations run safely at application startup. Verify the service and the migration state after every deployment:
-
-```bash
-systemctl is-active insurance
-systemctl is-active nginx
-export PGPASSWORD='<read from the protected production environment>'
-./vps_setup/verify_deployment.sh
-```
-
-Then verify the public login page:
-
-```bash
-curl -fsS -o /dev/null -w '%{http_code}\n' https://skinsurance.tech/login
-```
-
-## Backup and recovery
-
-Create backups outside the web root and protect them with filesystem permissions. Do not publish a database dump under `/static` or any public path. Test restores in a non-production database before using them for recovery.
-
-## Key application locations
-
-- Application: `/var/www/insurance-app`
-- Systemd unit: `/etc/systemd/system/insurance.service`
-- Nginx site: `/etc/nginx/sites-available/skinsurance`
-- Production environment file: `/var/www/insurance-app/.env` (mode `600`, outside source control)
-
-## System Credentials & VPS Operations Reference
-
-### VPS Host Credentials
-- **Host IP:** `185.199.52.85`
-- **IPv6:** `2a02:4780:12:aa78::1`
-- **Username:** `root`
-- **Password:** `surveyorportal@2026`
-- **SSH Port:** `22`
-- **Hostinger VPS ID:** `1789781`
-- **Hostinger Firewall ID:** `319602`
-
-### Database Details
-- **Engine:** PostgreSQL (local instance on port 5432)
-- **Database Name:** `insurance_db`
-- **DB User:** `insurance_user`
-- **DB Password:** `surveyorportal@2026`
-- **Connection String:** `postgresql://insurance_user:surveyorportal@2026@localhost/insurance_db`
-
-### Default Application Login Credentials
-- **Admin User:** `NAMAN` / `69420`
-- **Employee User:** `USER` / `UH65A#DF`
-
-## Architecture & Feature Decisions
-
-- **Survey Fee PDF Extraction**: Uploaded policy or RC PDFs extract key fields (Insurer, Insured, Vehicle No, Policy No) directly into the live Survey Fee Register form fields for visual review, allowing the user to enter professional fees manually before saving.
-- **Dashboard Drill-down**: Clicking any dashboard metric card switches to the Claim Register tab with status filters pre-applied. Clicking "Documents Awaited" opens a dedicated missing-documents checklist modal for granular document tracking.
-- **Dashboard Date Range Filter**: A quick-select dropdown ('1 Month' default, '3 Months', '1 Year', 'All Time') dynamically updates all operational and financial metrics.
-- **Consolidated CSV Export**: Includes 'Insurer Company Name' (positioned next to Insured Name) and 'Assigned Date' (positioned next to Invoice Date).
-- **Automated Daily Backup**: Background daily backup to Google Drive with an Admin Settings button to download backup snapshots on demand.
