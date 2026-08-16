@@ -1882,12 +1882,18 @@ class PostgresDB:
         amount_received = float(bill_data.get('amount_received', 0.0) or 0)
         outstanding_amount = float(bill_data.get('outstanding_amount', 0.0) or 0)
         due_date = bill_data.get('due_date') or None
-        payment_status = bill_data.get('payment_status', 'unpaid') or 'unpaid'
-        invoice_status = bill_data.get('invoice_status', 'draft') or 'draft'
         report_id = bill_data.get('report_id') or None
+        report_no = bill_data.get('report_no') or bill_data.get('report_number') or ''
+        date_of_accident = bill_data.get('date_of_accident') or ''
+        include_signature = bool(bill_data.get('include_signature', True))
+        fee_items = bill_data.get('fee_items') or bill_data.get('items') or []
         created_at = datetime.now().isoformat()
         fee_breakdown = {
             'survey_type': survey_type,
+            'report_no': report_no,
+            'date_of_accident': date_of_accident,
+            'include_signature': include_signature,
+            'fee_items': fee_items,
             'insurer_gst': insurer_gst,
             'insurer_state': insurer_state,
             'insurer_address': insurer_address,
@@ -1917,7 +1923,9 @@ class PostgresDB:
         merged_data['report_id'] = report_id
         record = {
             'id': bill_id, 'user_id': str(user_id), 'workspace_admin_id': workspace_admin_id,
-            'report_id': report_id, 'invoice_no': invoice_no, 'invoice_date': invoice_date,
+            'report_id': report_id, 'report_no': report_no, 'date_of_accident': date_of_accident,
+            'include_signature': include_signature, 'fee_items': fee_items,
+            'invoice_no': invoice_no, 'invoice_date': invoice_date,
             'survey_type': survey_type, 'insurer_gst': insurer_gst, 'insurer_state': insurer_state,
             'insurer_address': insurer_address,
             'insurer_name': insurer_name, 'insured_name': insured_name, 'policy_no': policy_no,
@@ -1961,35 +1969,71 @@ class PostgresDB:
                     report_data = linked_report.get('report_data_json') or {}
                     if isinstance(report_data, str):
                         report_data = json.loads(report_data or '{}')
-                cur.execute("""
-                    INSERT INTO fee_bills (
-                        id, user_id, workspace_admin_id, report_id, invoice_no, invoice_date,
-                        insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
-                        professional_fee, gst_pc, gst_amount, total_amount, gross_invoice_value,
-                        tds_amount, amount_received, outstanding_amount, due_date, payment_status,
-                        invoice_status, fee_updated_at, bill_data_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
-                    ON CONFLICT (id) DO UPDATE SET
-                        workspace_admin_id = EXCLUDED.workspace_admin_id, report_id = EXCLUDED.report_id,
-                        invoice_no = EXCLUDED.invoice_no, invoice_date = EXCLUDED.invoice_date,
-                        insurer_name = EXCLUDED.insurer_name, insured_name = EXCLUDED.insured_name,
-                        policy_no = EXCLUDED.policy_no, claim_no = EXCLUDED.claim_no, vehicle_no = EXCLUDED.vehicle_no,
-                        taxable_amount = EXCLUDED.taxable_amount, professional_fee = EXCLUDED.professional_fee,
-                        gst_pc = EXCLUDED.gst_pc, gst_amount = EXCLUDED.gst_amount,
-                        total_amount = EXCLUDED.total_amount, gross_invoice_value = EXCLUDED.gross_invoice_value,
-                        tds_amount = EXCLUDED.tds_amount, amount_received = EXCLUDED.amount_received,
-                        outstanding_amount = EXCLUDED.outstanding_amount, due_date = EXCLUDED.due_date,
-                        payment_status = EXCLUDED.payment_status, invoice_status = EXCLUDED.invoice_status,
-                        fee_updated_at = CURRENT_TIMESTAMP, bill_data_json = EXCLUDED.bill_data_json
-                    WHERE fee_bills.workspace_admin_id = EXCLUDED.workspace_admin_id
-                       OR (fee_bills.workspace_admin_id IS NULL AND EXCLUDED.workspace_admin_id IS NULL
-                           AND fee_bills.user_id = EXCLUDED.user_id)
-                    RETURNING id;
-                """, (bill_id, u_id, workspace_admin_id, report_id, invoice_no, invoice_date,
-                      insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
-                      professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
-                      tds_amount, amount_received, outstanding_amount, due_date, payment_status,
-                      invoice_status, json.dumps(merged_data)))
+                try:
+                    cur.execute("""
+                        INSERT INTO fee_bills (
+                            id, user_id, workspace_admin_id, report_id, report_no, date_of_accident,
+                            include_signature, invoice_no, invoice_date,
+                            insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
+                            professional_fee, gst_pc, gst_amount, total_amount, gross_invoice_value,
+                            tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                            invoice_status, fee_updated_at, bill_data_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
+                        ON CONFLICT (id) DO UPDATE SET
+                            workspace_admin_id = EXCLUDED.workspace_admin_id, report_id = EXCLUDED.report_id,
+                            report_no = EXCLUDED.report_no, date_of_accident = EXCLUDED.date_of_accident,
+                            include_signature = EXCLUDED.include_signature,
+                            invoice_no = EXCLUDED.invoice_no, invoice_date = EXCLUDED.invoice_date,
+                            insurer_name = EXCLUDED.insurer_name, insured_name = EXCLUDED.insured_name,
+                            policy_no = EXCLUDED.policy_no, claim_no = EXCLUDED.claim_no, vehicle_no = EXCLUDED.vehicle_no,
+                            taxable_amount = EXCLUDED.taxable_amount, professional_fee = EXCLUDED.professional_fee,
+                            gst_pc = EXCLUDED.gst_pc, gst_amount = EXCLUDED.gst_amount,
+                            total_amount = EXCLUDED.total_amount, gross_invoice_value = EXCLUDED.gross_invoice_value,
+                            tds_amount = EXCLUDED.tds_amount, amount_received = EXCLUDED.amount_received,
+                            outstanding_amount = EXCLUDED.outstanding_amount, due_date = EXCLUDED.due_date,
+                            payment_status = EXCLUDED.payment_status, invoice_status = EXCLUDED.invoice_status,
+                            fee_updated_at = CURRENT_TIMESTAMP, bill_data_json = EXCLUDED.bill_data_json
+                        WHERE fee_bills.workspace_admin_id = EXCLUDED.workspace_admin_id
+                           OR (fee_bills.workspace_admin_id IS NULL AND EXCLUDED.workspace_admin_id IS NULL
+                               AND fee_bills.user_id = EXCLUDED.user_id)
+                        RETURNING id;
+                    """, (bill_id, u_id, workspace_admin_id, report_id, report_no, date_of_accident,
+                          include_signature, invoice_no, invoice_date,
+                          insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
+                          professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
+                          tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                          invoice_status, json.dumps(merged_data)))
+                except Exception:
+                    # Fallback for unmigrated schema
+                    cur.execute("""
+                        INSERT INTO fee_bills (
+                            id, user_id, workspace_admin_id, report_id, invoice_no, invoice_date,
+                            insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
+                            professional_fee, gst_pc, gst_amount, total_amount, gross_invoice_value,
+                            tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                            invoice_status, fee_updated_at, bill_data_json
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
+                        ON CONFLICT (id) DO UPDATE SET
+                            workspace_admin_id = EXCLUDED.workspace_admin_id, report_id = EXCLUDED.report_id,
+                            invoice_no = EXCLUDED.invoice_no, invoice_date = EXCLUDED.invoice_date,
+                            insurer_name = EXCLUDED.insurer_name, insured_name = EXCLUDED.insured_name,
+                            policy_no = EXCLUDED.policy_no, claim_no = EXCLUDED.claim_no, vehicle_no = EXCLUDED.vehicle_no,
+                            taxable_amount = EXCLUDED.taxable_amount, professional_fee = EXCLUDED.professional_fee,
+                            gst_pc = EXCLUDED.gst_pc, gst_amount = EXCLUDED.gst_amount,
+                            total_amount = EXCLUDED.total_amount, gross_invoice_value = EXCLUDED.gross_invoice_value,
+                            tds_amount = EXCLUDED.tds_amount, amount_received = EXCLUDED.amount_received,
+                            outstanding_amount = EXCLUDED.outstanding_amount, due_date = EXCLUDED.due_date,
+                            payment_status = EXCLUDED.payment_status, invoice_status = EXCLUDED.invoice_status,
+                            fee_updated_at = CURRENT_TIMESTAMP, bill_data_json = EXCLUDED.bill_data_json
+                        WHERE fee_bills.workspace_admin_id = EXCLUDED.workspace_admin_id
+                           OR (fee_bills.workspace_admin_id IS NULL AND EXCLUDED.workspace_admin_id IS NULL
+                               AND fee_bills.user_id = EXCLUDED.user_id)
+                        RETURNING id;
+                    """, (bill_id, u_id, workspace_admin_id, report_id, invoice_no, invoice_date,
+                          insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
+                          professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
+                          tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                          invoice_status, json.dumps(merged_data)))
                 if not cur.fetchone():
                     raise ValueError('This fee bill belongs to another workspace.')
                 if report_id and workspace_admin_id:
@@ -2014,6 +2058,37 @@ class PostgresDB:
         self._memory_fee_bills = [b for b in self._memory_fee_bills if b.get('id') != bill_id]
         self._memory_fee_bills.append(record)
         return bill_id
+
+    def get_fee_bill_by_id(self, bill_id, workspace_admin_id=None):
+        if not self.conn: self.connect()
+        if not self.conn:
+            for b in getattr(self, '_memory_fee_bills', []):
+                if str(b.get('id')) == str(bill_id):
+                    if workspace_admin_id is None or b.get('workspace_admin_id') == workspace_admin_id:
+                        return dict(b)
+            return None
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if workspace_admin_id:
+                    cur.execute("SELECT * FROM fee_bills WHERE id = %s AND workspace_admin_id = %s", (bill_id, workspace_admin_id))
+                else:
+                    cur.execute("SELECT * FROM fee_bills WHERE id = %s", (bill_id,))
+                row = cur.fetchone()
+                if not row:
+                    return None
+                item = dict(row)
+                if isinstance(item.get('bill_data_json'), dict):
+                    bd = item['bill_data_json']
+                    for k, v in bd.items():
+                        if k not in item or item[k] is None:
+                            item[k] = v
+                for key in ('created_at', 'fee_updated_at', 'due_date'):
+                    if isinstance(item.get(key), (datetime, date)):
+                        item[key] = item[key].isoformat()
+                return item
+        except Exception as e:
+            print(f"Error fetching fee bill by id: {e}")
+            return None
 
     def get_user_fee_bills(self, user_id):
         results = []

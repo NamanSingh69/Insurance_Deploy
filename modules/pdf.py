@@ -35,38 +35,66 @@ EXPECTED_FIELDS = [
 
 class UserSnapshot:
     def __init__(self, data):
-        self.full_name = data.get('full_name', '')
-        self.qualifications = data.get('qualifications', '')
-        self.designation = data.get('designation', '')
-        self.license_no = data.get('license_no', '')
-        self.expiry_date = data.get('expiry_date', '')
-        self.membership_no = data.get('membership_no', '')
-        self.address_line_1 = data.get('address_line_1', '')
-        self.address_line_2 = data.get('address_line_2', '')
-        self.address_line_3 = data.get('address_line_3', '')
-        self.contact_no = data.get('contact_no', '')
-        self.email = data.get('email', '')
+        data = data or {}
+        self.full_name = data.get('full_name') or 'SK ANOWAR ALI'
+        self.qualifications = data.get('qualifications') or 'B.Tech (Automobile), LIII(Life)'
+        self.designation = data.get('designation') or 'Surveyor & Loss Assessor'
+        self.license_no = data.get('license_no') or 'SLA-121784'
+        self.expiry_date = data.get('expiry_date') or '13-12-2026'
+        self.membership_no = data.get('membership_no') or 'L/E/10721'
+        self.address_line_1 = data.get('address_line_1') or 'Natungram, P.O-Sondanga,'
+        self.address_line_2 = data.get('address_line_2') or 'P.S-Nabadwip, City-'
+        self.address_line_3 = data.get('address_line_3') or 'Krishnanagar, Dist.-Nadia, W.B-741125'
+        self.contact_no = data.get('contact_no') or '8777207014'
+        self.email = data.get('email') or 'skanowarali93@gmail.com'
+        self.surveyor_code = data.get('surveyor_code') or '2075995'
+        self.surveyor_gstin = data.get('surveyor_gstin') or '19AZZPA2301R1ZM'
+        self.bank_account_no = data.get('bank_account_no') or '33717014374'
+        self.bank_name = data.get('bank_name') or 'State Bank Of India (SBI)'
+        self.bank_branch = data.get('bank_branch') or 'Nabadwip (01402)'
+        self.bank_ifsc = data.get('bank_ifsc') or 'SBIN0001402'
 
 
-def _private_signature_path(user_id):
-    """Materialize an owned signature briefly for FPDF without public static files."""
-    if not user_id:
+def _private_signature_path(user_id, workspace_admin_id=None):
+    """Materialize an owned or workspace signature briefly for FPDF without public static files."""
+    if not user_id and not workspace_admin_id:
         return None
     try:
-        user_data = db.get_user_by_id(user_id)
+        user_data = db.get_user_by_id(user_id) if user_id else None
         asset_id = user_data.get('signature_asset_id') if user_data else None
+        target_uid = user_id
+        if not asset_id and workspace_admin_id:
+            admin_data = db.get_user_by_id(workspace_admin_id)
+            if admin_data:
+                asset_id = admin_data.get('signature_asset_id')
+                target_uid = workspace_admin_id
         if not asset_id:
             return None
-        content, asset = get_owned_asset_content(asset_id, user_id)
-        if not content or not asset or asset.get('mime_type') not in {'image/jpeg', 'image/png', 'image/webp'}:
+        content, asset = get_accessible_asset_content(asset_id, user_id or target_uid, workspace_admin_id or target_uid)
+        if not content:
+            content, asset = get_owned_asset_content(asset_id, target_uid)
+        if not content:
             return None
-        suffix = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}[asset['mime_type']]
-        handle = tempfile.NamedTemporaryFile(prefix='insurance-signature-', suffix=suffix, delete=False)
+
+        # Normalize with PIL to ensure clean PNG/JPEG
         try:
-            handle.write(content)
-            return handle.name
-        finally:
-            handle.close()
+            with Image.open(io.BytesIO(content)) as p_img:
+                handle = tempfile.NamedTemporaryFile(prefix='insurance-signature-', suffix='.png', delete=False)
+                try:
+                    p_img.save(handle, format='PNG')
+                    return handle.name
+                finally:
+                    handle.close()
+        except Exception:
+            suffix = '.png'
+            if asset and asset.get('mime_type') == 'image/jpeg':
+                suffix = '.jpg'
+            handle = tempfile.NamedTemporaryFile(prefix='insurance-signature-', suffix=suffix, delete=False)
+            try:
+                handle.write(content)
+                return handle.name
+            finally:
+                handle.close()
     except Exception:
         return None
 
@@ -170,11 +198,78 @@ def number_to_words_indian(number_val):
     result += " ONLY"
     return result.upper()
 
+def draw_surveyor_header(pdf_obj, u):
+    """Draws standard surveyor header with red accents and red divider line."""
+    pdf_obj.set_y(10)
+    pdf_obj.set_x(10)
+    
+    pdf_obj.set_text_color(239, 68, 68)
+    pdf_obj.set_font('Helvetica', 'B', 16)
+    pdf_obj.cell(0, 8, normalize_pdf_text_for_fpdf(u.full_name), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+    
+    pdf_obj.set_text_color(0, 0, 0)
+    pdf_obj.set_font('Helvetica', '', 9)
+    pdf_obj.cell(0, 5, normalize_pdf_text_for_fpdf(u.qualifications), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+    
+    pdf_obj.set_text_color(239, 68, 68)
+    pdf_obj.set_font('Helvetica', 'B', 10)
+    pdf_obj.cell(0, 5, normalize_pdf_text_for_fpdf(u.designation), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+    
+    pdf_obj.set_text_color(0, 0, 0)
+    pdf_obj.set_font('Helvetica', '', 9)
+    pdf_obj.cell(0, 5, normalize_pdf_text_for_fpdf(f"Licence No: {u.license_no}"), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+    pdf_obj.cell(0, 5, normalize_pdf_text_for_fpdf(f"Expiry on: {u.expiry_date}"), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+    pdf_obj.cell(0, 5, normalize_pdf_text_for_fpdf(f"IIISLA Membership No-{u.membership_no}"), border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+
+    def right_text(txt, y_offset=0, color=(0,0,0), bold=False):
+        pdf_obj.set_y(10 + y_offset)
+        pdf_obj.set_x(120)
+        pdf_obj.set_font('Helvetica', 'B' if bold else '', 9)
+        pdf_obj.set_text_color(*color)
+        pdf_obj.cell(80, 5, normalize_pdf_text_for_fpdf(txt), border=0, new_x="RIGHT", new_y="TOP", align='R')
+
+    right_text(u.address_line_1, 0)
+    right_text(u.address_line_2, 5)
+    right_text(u.address_line_3, 10)
+
+    cell_val = normalize_pdf_text_for_fpdf(u.contact_no)
+    cell_lbl = "Cell: "
+    pdf_obj.set_font('Helvetica', 'B', 9); val_w = pdf_obj.get_string_width(cell_val)
+    pdf_obj.set_font('Helvetica', '', 9); lbl_w = pdf_obj.get_string_width(cell_lbl)
+    start_x = 200 - (lbl_w + val_w)
+    
+    pdf_obj.set_y(25)
+    pdf_obj.set_x(start_x)
+    pdf_obj.set_text_color(0,0,0); pdf_obj.cell(lbl_w, 5, cell_lbl, border=0, new_x="RIGHT", new_y="TOP", align='L')
+    pdf_obj.set_text_color(239, 68, 68); pdf_obj.set_font('Helvetica', 'B', 9); pdf_obj.cell(val_w, 5, cell_val, border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+
+    email_val = normalize_pdf_text_for_fpdf(u.email)
+    email_lbl = "Email: "
+    pdf_obj.set_font('Helvetica', 'B', 9); val_w = pdf_obj.get_string_width(email_val)
+    pdf_obj.set_font('Helvetica', '', 9); lbl_w = pdf_obj.get_string_width(email_lbl)
+    start_x = 200 - (lbl_w + val_w)
+    
+    pdf_obj.set_y(30)
+    pdf_obj.set_x(start_x)
+    pdf_obj.set_text_color(0,0,0); pdf_obj.cell(lbl_w, 5, email_lbl, border=0, new_x="RIGHT", new_y="TOP", align='L')
+    pdf_obj.set_text_color(239, 68, 68); pdf_obj.set_font('Helvetica', 'B', 9); pdf_obj.cell(val_w, 5, email_val, border=0, new_x="LMARGIN", new_y="NEXT", align='L')
+
+    pdf_obj.set_draw_color(239, 68, 68)
+    pdf_obj.set_line_width(0.5)
+    pdf_obj.line(10, 42, 200, 42)
+    
+    pdf_obj.set_y(45)
+    pdf_obj.set_text_color(0, 0, 0)
+    pdf_obj.set_draw_color(0, 0, 0)
+    pdf_obj.set_line_width(0.2)
+
+
 class PDFWithPageNumbers(FPDF):
     def footer(self):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}/{{nb}}', 0, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
+
 
 def render_report(data, user_data_snapshot, user_id):
     """
@@ -615,72 +710,88 @@ def render_report(data, user_data_snapshot, user_id):
             x = pdf_obj.l_margin + (col * (img_width + 5)); y = start_y + (row * (img_height + 5))
             try:
                 img_stream = None
-                if '/assets/' in photo_b64:
-                    parts = photo_b64.split('/assets/')
-                    asset_id = parts[1].split('/')[0] if len(parts) > 1 else ''
-                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
+                img_data = None
+                if '/assets/' in photo_b64 or '/api/assets/' in photo_b64:
+                    delimiter = '/api/assets/' if '/api/assets/' in photo_b64 else '/assets/'
+                    parts = photo_b64.split(delimiter)
+                    asset_id = parts[1].split('/')[0].split('?')[0] if len(parts) > 1 else ''
+                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id') if isinstance(user_data_snapshot, dict) else None
+                    if not ws_admin_id and user_id:
+                        u_row = db.get_user_by_id(user_id)
+                        if u_row:
+                            ws_admin_id = u_row.get('admin_id') or user_id
                     img_data, _asset = get_accessible_asset_content(asset_id, user_id, ws_admin_id)
                     if not img_data:
                         img_data, _asset = get_owned_asset_content(asset_id, user_id)
-                    if img_data:
-                        img_stream = io.BytesIO(img_data)
-                    else:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                        continue
+                    if not img_data and ws_admin_id:
+                        img_data, _asset = get_owned_asset_content(asset_id, ws_admin_id)
+                    if not img_data:
+                        raw_asset = db.get_asset_by_id(asset_id) or db.get_asset_by_locator(asset_id)
+                        if raw_asset:
+                            img_data = read_asset_content(raw_asset)
                 elif '/proxy_image/' in photo_b64 or '/local_image/' in photo_b64:
                     if '/proxy_image/' in photo_b64:
                         locator = photo_b64.split('/proxy_image/')[-1].split('?')[0].split('/')[0]
                     else:
                         locator = photo_b64.split('/local_image/')[-1].split('?')[0].split('/')[0]
-                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') if isinstance(user_data_snapshot, dict) else None
+                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id') if isinstance(user_data_snapshot, dict) else None
                     asset = db.get_asset_by_locator(locator, user_id)
                     if asset:
                         img_data, _ = get_accessible_asset_content(asset['id'], user_id, ws_admin_id)
-                        if img_data:
-                            img_stream = io.BytesIO(img_data)
-                    if not img_stream and '/proxy_image/' in photo_b64:
+                    if not img_data and '/proxy_image/' in photo_b64:
                         img_data = db.get_file_content(locator)
-                        if img_data:
-                            img_stream = io.BytesIO(img_data)
-                    if not img_stream and '/local_image/' in photo_b64:
+                    if not img_data and '/local_image/' in photo_b64:
                         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                         local_path = os.path.join(project_root, 'uploads', locator)
                         if os.path.exists(local_path):
                             with open(local_path, 'rb') as f:
-                                img_stream = io.BytesIO(f.read())
-                    if not img_stream:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Legacy image unavailable", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                        continue
+                                img_data = f.read()
                 elif photo_b64.startswith('http'):
                     try:
                         resp = requests.get(photo_b64, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
                         content_type = str(resp.headers.get('content-type', '')).lower()
                         if resp.ok and resp.content and (content_type.startswith('image/') or not content_type.startswith('text/html')):
-                            img_stream = io.BytesIO(resp.content)
+                            img_data = resp.content
                     except Exception:
                         pass
-                    if not img_stream:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error DL Image", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                        continue
                 elif ',' in photo_b64:
                     try:
                         photo_b64_data = photo_b64.split(',')[1]
-                        img_data = base64.b64decode(photo_b64_data); img_stream = io.BytesIO(img_data)
+                        img_data = base64.b64decode(photo_b64_data)
                     except Exception:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                        continue
+                        pass
                 else:
                     try:
-                        img_data = base64.b64decode(photo_b64); img_stream = io.BytesIO(img_data)
+                        img_data = base64.b64decode(photo_b64)
                     except Exception:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
-                        continue
+                        pass
+                
+                if img_data:
+                    try:
+                        with Image.open(io.BytesIO(img_data)) as pil_img:
+                            try:
+                                from PIL import ImageOps
+                                pil_img = ImageOps.exif_transpose(pil_img)
+                            except Exception:
+                                pass
+                            if pil_img.mode not in ('RGB', 'L'):
+                                pil_img = pil_img.convert('RGB')
+                            buf = io.BytesIO()
+                            pil_img.save(buf, format='JPEG', quality=88)
+                            buf.seek(0)
+                            img_stream = buf
+                    except Exception:
+                        img_stream = io.BytesIO(img_data)
+                        img_stream.seek(0)
                 
                 if img_stream:
                     try:
+                        img_stream.seek(0)
                         pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
                     except Exception:
                         pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                else:
+                    pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
             except Exception:
                 pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
 
@@ -1341,142 +1452,272 @@ def render_report(data, user_data_snapshot, user_id):
 
 def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=True):
     """
-    Generates a standalone Fee Invoice / Bill PDF.
+    Generates a Fee Invoice / Professional Bill PDF matching the client's official Word template layout.
     """
     u = UserSnapshot(user_data_snapshot)
-    pdf = PDF(orientation='P', unit='mm', format='A4')
-    pdf.alias_nb_pages()
-    pdf.set_margins(12, 12, 12)
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_margins(10, 10, 10)
     pdf.add_page()
 
-    add_pdf_header(pdf)
+    # 1. Header (Surveyor details with red accent + red horizontal line at y=42)
+    draw_surveyor_header(pdf, u)
 
-    line_h = 6
-    pdf.set_font("Helvetica", 'B', 14)
-    pdf.cell(0, 10, "FEE INVOICE / PROFESSIONAL BILL", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+    # 2. Subheader row: Report No (left), BILL (center), Date & Bill No (right)
+    pdf.set_y(44)
+    report_no = str(fee_data.get('report_no') or fee_data.get('report_number') or '').strip()
+    invoice_no = str(fee_data.get('invoice_no') or fee_data.get('bill_no') or 'BILL-0001').strip()
+    invoice_date = str(fee_data.get('invoice_date') or datetime.now().strftime('%d-%m-%Y')).strip()
+
+    # Left: Report No
+    pdf.set_x(10)
+    if report_no:
+        pdf.set_font("Helvetica", 'B', 9.5)
+        pdf.cell(60, 5, normalize_pdf_text_for_fpdf(f"Report No: {report_no}"), border=0, align='L')
+    else:
+        pdf.cell(60, 5, "", border=0)
+
+    # Center: BILL
+    pdf.set_x(85)
+    pdf.set_font("Helvetica", 'B', 13)
+    pdf.cell(40, 5, "BILL", border=0, align='C')
+
+    # Right: Date and Bill No
+    pdf.set_x(130)
+    pdf.set_font("Helvetica", '', 9)
+    pdf.cell(70, 4.5, normalize_pdf_text_for_fpdf(f"Date: {invoice_date}"), border=0, align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(130)
+    pdf.set_font("Helvetica", 'B', 9.5)
+    pdf.cell(70, 4.5, normalize_pdf_text_for_fpdf(f"Bill No: {invoice_no}"), border=0, align='R', new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(2)
+
+    # 3. Insurer Recipient Block
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", 'B', 9.5)
+    pdf.cell(0, 4.5, "To,", border=0, new_x="LMARGIN", new_y="NEXT")
+    
+    insurer_name = str(fee_data.get('insurer_name') or '').strip()
+    insurer_address = str(fee_data.get('insurer_address') or '').strip()
+    insurer_gst = str(fee_data.get('insurer_gst') or '').strip()
+
+    if insurer_name:
+        pdf.set_font("Helvetica", 'B', 9.5)
+        pdf.cell(0, 4.5, normalize_pdf_text_for_fpdf(insurer_name), border=0, new_x="LMARGIN", new_y="NEXT")
+    
+    if insurer_address:
+        pdf.set_font("Helvetica", '', 8.5)
+        pdf.multi_cell(110, 4, normalize_pdf_text_for_fpdf(insurer_address), border=0)
+    
+    if insurer_gst:
+        pdf.set_font("Helvetica", 'B', 8.5)
+        pdf.cell(0, 4.5, normalize_pdf_text_for_fpdf(f"GSTIN: {insurer_gst}"), border=0, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(2)
+
+    # 4. Claim & Vehicle Details Box (2 Columns with neat outer border)
+    claim_box_x = 10
+    col_w = 95
+    row_h = 5.5
+
+    policy_no = str(fee_data.get('policy_no') or '').strip()
+    claim_no = str(fee_data.get('claim_no') or '').strip()
+    insured_name = str(fee_data.get('insured_name') or '').strip()
+    vehicle_no = str(fee_data.get('vehicle_no') or '').strip()
+    date_of_accident = str(fee_data.get('date_of_accident') or '').strip()
+
+    # Row 1: Policy No | Claim No
+    pdf.set_x(claim_box_x)
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Policy No. :", border='LT')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(policy_no), border='T')
+    
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Claim No. :", border='LT')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(claim_no), border='TR', new_x="LMARGIN", new_y="NEXT")
+
+    # Row 2: Insurer | Vehicle No
+    pdf.set_x(claim_box_x)
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Insurer :", border='L')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(insurer_name[:40]), border=0)
+    
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Vehicle No. :", border='L')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(vehicle_no), border='R', new_x="LMARGIN", new_y="NEXT")
+
+    # Row 3: Insured | Date of Accident
+    pdf.set_x(claim_box_x)
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Insured :", border='LB')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(insured_name), border='B')
+    
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(25, row_h, "Date of Accident :", border='LB')
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(col_w - 25, row_h, normalize_pdf_text_for_fpdf(date_of_accident), border='BR', new_x="LMARGIN", new_y="NEXT")
+
     pdf.ln(3)
 
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Invoice No :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(65, line_h, normalize_pdf_text_for_fpdf(fee_data.get('invoice_no', '')), border=0)
+    # 5. Fee Breakdown Table
+    desc_w = 145
+    amt_w = 45
     
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Invoice Date :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(0, line_h, normalize_pdf_text_for_fpdf(fee_data.get('invoice_date', '')), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # Table Header
+    pdf.set_font("Helvetica", 'B', 9)
+    pdf.set_fill_color(248, 249, 250)
+    pdf.cell(desc_w, 6.5, "Description", border=1, align='C', fill=True)
+    pdf.cell(amt_w, 6.5, "Amount.", border=1, align='C', fill=True, new_x="LMARGIN", new_y="NEXT")
 
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Insurer Name :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(65, line_h, normalize_pdf_text_for_fpdf(fee_data.get('insurer_name', '')), border=0)
-
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Insured Name :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(0, line_h, normalize_pdf_text_for_fpdf(fee_data.get('insured_name', '')), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Policy No :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(65, line_h, normalize_pdf_text_for_fpdf(fee_data.get('policy_no', '')), border=0)
-
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Claim No :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(0, line_h, normalize_pdf_text_for_fpdf(fee_data.get('claim_no', '')), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(30, line_h, "Vehicle No :", border=0)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(0, line_h, normalize_pdf_text_for_fpdf(fee_data.get('vehicle_no', '')), border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    pdf.ln(5)
-
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(20, 8, "Sl No", border=1, align='C', fill=True)
-    pdf.cell(115, 8, "Description / Particulars", border=1, align='L', fill=True)
-    pdf.cell(50, 8, "Amount (Rs.)", border=1, align='R', fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-    items = fee_data.get('items', [])
+    # Gather Line Items
+    items = fee_data.get('fee_items') or fee_data.get('items') or []
     if not items:
         items = []
-        prof = float(fee_data.get('professional_fee', 0.0))
-        survey_type = fee_data.get('survey_type') or 'Survey Fee'
-        taxable = float(fee_data.get('taxable_amount', 0.0))
-        
+        prof = float(fee_data.get('professional_fee', 0.0) or 0)
         if prof > 0:
-            items.append({"name": f"Professional Fees ({survey_type})", "amount": prof})
-        elif taxable > 0:
-            items.append({"name": f"Professional Fees ({survey_type})", "amount": taxable})
-
-        conv = float(fee_data.get('conveyance_fee', 0.0))
+            items.append({"name": "1. Final Survey Fees :", "amount": prof})
+        
+        conv = float(fee_data.get('conveyance_fee', 0.0) or 0)
+        conv_route = str(fee_data.get('convenience_route') or '').strip()
+        conv_km = float(fee_data.get('convenience_km', 0.0) or 0)
+        conv_rate = float(fee_data.get('convenience_rate', 10.0) or 10.0)
         if conv > 0:
-            items.append({"name": "Conveyance & Traveling Charges", "amount": conv})
+            if conv_route or conv_km > 0:
+                tot_km = conv_km * 2
+                route_str = f"{conv_route} " if conv_route else ""
+                desc = f"2. Conveyance Expenses : {route_str}({conv_km:g} x 2 ={tot_km:g} km @ Rs. {conv_rate:g}/-)"
+                items.append({"name": desc, "amount": conv})
+            else:
+                items.append({"name": "2. Conveyance Expenses :", "amount": conv})
+        
+        re_fee = float(fee_data.get('reinspection_fee', 0.0) or 0)
+        if re_fee > 0:
+            items.append({"name": "4. Re-inspection Fees :", "amount": re_fee})
 
-        photo = float(fee_data.get('photocopy_amount', 0.0))
+        re_conv = float(fee_data.get('reinspection_conveyance', 0.0) or 0)
+        if re_conv > 0:
+            items.append({"name": "5. Conveyance Expenses :", "amount": re_conv})
+
+        photo = float(fee_data.get('photocopy_amount', 0.0) or 0)
         if photo > 0:
-            items.append({"name": "Photocopy & Miscellaneous Charges", "amount": photo})
+            items.append({"name": "6. photos :", "amount": photo})
+        
+        halting = float(fee_data.get('halting_charges', 0.0) or 0)
+        if halting > 0:
+            items.append({"name": "7. Halting Charges :", "amount": halting})
+        
+        other_amt = float(fee_data.get('other_charges', 0.0) or 0)
+        if other_amt > 0:
+            other_desc = str(fee_data.get('other_charges_desc') or '( like , postal charges)').strip()
+            items.append({"name": f"8. Other charges: {other_desc}", "amount": other_amt})
 
-        if not items:
-            items = [{"name": "Professional Survey & Loss Assessment Fees", "amount": taxable}]
+    if not items:
+        taxable_fb = float(fee_data.get('taxable_amount', 0.0) or 0)
+        items = [{"name": "1. Final Survey Fees :", "amount": taxable_fb}]
 
-
-    pdf.set_font("Helvetica", '', 10)
-    sl = 1
+    pdf.set_font("Helvetica", '', 9)
+    calculated_taxable = 0.0
     for it in items:
-        pdf.cell(20, 8, str(sl), border=1, align='C')
-        pdf.cell(115, 8, normalize_pdf_text_for_fpdf(it.get('name', '')), border=1, align='L')
-        pdf.cell(50, 8, f"{float(it.get('amount', 0.0)):.2f}", border=1, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        sl += 1
+        amt_val = float(it.get('amount', 0.0) or 0)
+        calculated_taxable += amt_val
+        name_str = normalize_pdf_text_for_fpdf(str(it.get('name', '')))
+        
+        cell_h = 5.5
+        pdf.cell(desc_w, cell_h, f"  {name_str}", border='LR', align='L')
+        pdf.cell(amt_w, cell_h, f"{amt_val:.2f}  ", border='LR', align='R', new_x="LMARGIN", new_y="NEXT")
 
-    taxable_amt = float(fee_data.get('taxable_amount', 0.0))
-    gst_pc = float(fee_data.get('gst_pc', 18.0))
-    gst_amt = float(fee_data.get('gst_amount', taxable_amt * (gst_pc / 100.0)))
-    total_amt = float(fee_data.get('total_amount', taxable_amt + gst_amt))
+    # Pad with empty rows if fewer than 4 items to give professional spacing
+    if len(items) < 4:
+        for _ in range(4 - len(items)):
+            pdf.cell(desc_w, 5.0, "", border='LR', align='L')
+            pdf.cell(amt_w, 5.0, "", border='LR', align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(135, 8, "Taxable Amount", border=1, align='R')
-    pdf.cell(50, 8, f"{taxable_amt:.2f}", border=1, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # Subtotal, GST, and Total summary
+    taxable_amt = float(fee_data.get('taxable_amount') or calculated_taxable)
+    gst_pc = float(fee_data.get('gst_pc', 18.0) or 18.0)
+    gst_amt = float(fee_data.get('gst_amount', taxable_amt * (gst_pc / 100.0)) or 0)
+    total_amt = float(fee_data.get('total_amount', taxable_amt + gst_amt) or 0)
 
-    pdf.cell(135, 8, f"GST @ {gst_pc:g}%", border=1, align='R')
-    pdf.cell(50, 8, f"{gst_amt:.2f}", border=1, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # Subtotal row: HSN/SAC-997162 on left, subtotal on right
+    pdf.set_font("Helvetica", 'B', 9)
+    pdf.cell(desc_w, 6.0, "  HSN/SAC-997162", border='TBR', align='L')
+    pdf.cell(amt_w, 6.0, f"{taxable_amt:.2f}  ", border=1, align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.cell(135, 8, "Total Amount (Including GST)", border=1, align='R', fill=True)
-    pdf.cell(50, 8, f"{total_amt:.2f}", border=1, align='R', fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # GST Row
+    pdf.cell(desc_w, 5.5, f"Add: {gst_pc:g}% GST  ", border='R', align='R')
+    pdf.cell(amt_w, 5.5, f"{gst_amt:.2f}  ", border=1, align='R', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.ln(5)
+    # Gross Total Row
+    pdf.set_fill_color(248, 249, 250)
+    pdf.cell(desc_w, 6.0, "Total  ", border='R', align='R')
+    pdf.cell(amt_w, 6.0, f"{total_amt:.2f}  ", border=1, align='R', new_x="LMARGIN", new_y="NEXT")
+
+    # Words row
     in_words = number_to_words_indian(total_amt)
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(0, 8, f"Amount in Words: {in_words}", border=0, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(190, 6.5, f"  Rupees: {in_words} only.", border=1, align='L', new_x="LMARGIN", new_y="NEXT")
 
-    pdf.ln(15)
-    sig_block_width = 80
-    sig_start_x = 195 - 12 - sig_block_width
+    pdf.ln(4)
 
+    # 6. Footer Block: Surveyor Code & Bank Details on Left, Signature on Right
+    footer_start_y = pdf.get_y()
+    
+    # Left Column: Code, GSTIN, Bank Details
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(100, 4.5, normalize_pdf_text_for_fpdf(f"Insurer's Surveyor Code No: {u.surveyor_code}"), border=0, new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_font("Helvetica", 'B', 8.5)
+    pdf.cell(100, 4.5, normalize_pdf_text_for_fpdf(f"GSTIN: {u.surveyor_gstin}"), border=0, new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_font("Helvetica", 'BU', 8.5)
+    pdf.cell(100, 4.5, "Bank Details :", border=0, new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_font("Helvetica", '', 8)
+    pdf.cell(100, 4.0, normalize_pdf_text_for_fpdf(f"A/C No: {u.bank_account_no}"), border=0, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(100, 4.0, normalize_pdf_text_for_fpdf(f"Bank: {u.bank_name}"), border=0, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(100, 4.0, normalize_pdf_text_for_fpdf(f"Branch: {u.bank_branch}"), border=0, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(100, 4.0, normalize_pdf_text_for_fpdf(f"IFSC: {u.bank_ifsc}"), border=0, new_x="LMARGIN", new_y="NEXT")
+
+    # Right Column: Signature / Stamp & Surveyor Name
+    sig_block_x = 125
+    sig_block_w = 75
+    pdf.set_y(footer_start_y)
+    
     sig_included = fee_data.get('include_signature', include_signature)
+    ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id') if isinstance(user_data_snapshot, dict) else None
+    
     if sig_included:
-        sig_img_path = _private_signature_path(user_id)
+        sig_img_path = _private_signature_path(user_id, ws_admin_id)
         if sig_img_path:
             try:
-                pdf.image(sig_img_path, x=sig_start_x + (sig_block_width - 40) / 2, y=pdf.get_y(), w=40)
-                pdf.ln(18)
+                pdf.image(sig_img_path, x=sig_block_x + (sig_block_w - 40) / 2, y=footer_start_y + 2, w=40)
+                pdf.set_y(footer_start_y + 22)
             except Exception:
-                pass
+                pdf.set_y(footer_start_y + 18)
             finally:
                 _remove_temporary_signature(sig_img_path)
+        else:
+            pdf.set_y(footer_start_y + 18)
+    else:
+        pdf.set_y(footer_start_y + 18)
 
-    pdf.set_x(sig_start_x)
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(sig_block_width, 6, normalize_pdf_text_for_fpdf(u.full_name), border=0, new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.set_x(sig_start_x)
-    pdf.set_font("Helvetica", '', 10)
-    pdf.cell(sig_block_width, 6, "( Surveyor and Loss Assessor )", border=0, new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.set_x(sig_block_x)
+    pdf.set_font("Helvetica", 'B', 9.5)
+    pdf.cell(sig_block_w, 4.5, normalize_pdf_text_for_fpdf(u.full_name), border=0, align='C', new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_x(sig_block_x)
+    pdf.set_font("Helvetica", '', 8.5)
+    pdf.cell(sig_block_w, 4.0, normalize_pdf_text_for_fpdf(f"( {u.designation} )"), border=0, align='C', new_x="LMARGIN", new_y="NEXT")
 
     pdf_bytes = bytes(pdf.output())
     return {
         "pdf_bytes": pdf_bytes,
-        "invoice_no": fee_data.get('invoice_no', 'FeeBill'),
-        "vehicle_no": fee_data.get('vehicle_no', '')
+        "invoice_no": invoice_no,
+        "report_no": report_no,
+        "vehicle_no": vehicle_no
     }

@@ -1221,6 +1221,13 @@ GMAIL_OAUTH_CLIENT_SECRET = os.getenv('GMAIL_OAUTH_CLIENT_SECRET') or GOOGLE_OAU
 GMAIL_OAUTH_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 GMAIL_SYNC_LOOKBACK_DAYS = max(1, int(os.getenv('GMAIL_SYNC_LOOKBACK_DAYS', '30')))
 
+def _google_redirect_uri():
+    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
+        return url_for('google_auth_callback', _external=True)
+    host = request.headers.get('X-Forwarded-Host', request.host).split(':')[0]
+    return f"https://{host}/auth/google/callback"
+
+
 @app.route('/auth/google')
 @login_required
 def google_auth():
@@ -1229,11 +1236,7 @@ def google_auth():
     if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
         return jsonify({'error': 'Google OAuth not configured'}), 500
     
-    # Determine redirect URI based on request
-    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
-        redirect_uri = url_for('google_auth_callback', _external=True)
-    else:
-        redirect_uri = f"https://{request.host}/auth/google/callback"
+    redirect_uri = _google_redirect_uri()
     
     # SECURITY: Generate OAuth state token to prevent CSRF on callback (VULN-07)
     oauth_state = secrets.token_urlsafe(32)
@@ -1275,11 +1278,7 @@ def google_auth_callback():
         flash('No authorization code received', 'error')
         return redirect(url_for('index'))
     
-    # Determine redirect URI (must match the one used in auth request)
-    if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
-        redirect_uri = url_for('google_auth_callback', _external=True)
-    else:
-        redirect_uri = f"https://{request.host}/auth/google/callback"
+    redirect_uri = _google_redirect_uri()
     
     # Exchange code for tokens
     token_response = requests.post(
@@ -1340,7 +1339,8 @@ def google_auth_disconnect():
 def _gmail_redirect_uri():
     if request.host.startswith('localhost') or request.host.startswith('127.0.0.1'):
         return url_for('gmail_auth_callback', _external=True)
-    return f"https://{request.host}/auth/gmail/callback"
+    host = request.headers.get('X-Forwarded-Host', request.host).split(':')[0]
+    return f"https://{host}/auth/gmail/callback"
 
 
 def _encrypt_gmail_token(token_data):
@@ -5223,18 +5223,26 @@ def generate_fee_pdf_route():
         data = request.get_json() or {}
         include_sig = data.get('include_signature', True)
         from modules.pdf import render_fee_report
+        ws_id = workspace_admin_id_for(current_user)
         user_snapshot = {
-            'full_name': current_user.full_name or 'Surveyor',
-            'qualifications': current_user.qualifications or '',
-            'designation': current_user.designation or '',
-            'license_no': current_user.license_no or '',
-            'expiry_date': current_user.expiry_date or '',
-            'membership_no': current_user.membership_no or '',
-            'address_line_1': current_user.address_line_1 or '',
-            'address_line_2': current_user.address_line_2 or '',
-            'address_line_3': current_user.address_line_3 or '',
-            'contact_no': current_user.contact_no or '',
-            'email': current_user.email or ''
+            'full_name': current_user.full_name or 'SK ANOWAR ALI',
+            'qualifications': current_user.qualifications or 'B.Tech (Automobile), LIII(Life)',
+            'designation': current_user.designation or 'Surveyor & Loss Assessor',
+            'license_no': current_user.license_no or 'SLA-121784',
+            'expiry_date': current_user.expiry_date or '13-12-2026',
+            'membership_no': current_user.membership_no or 'L/E/10721',
+            'address_line_1': current_user.address_line_1 or 'Natungram, P.O-Sondanga,',
+            'address_line_2': current_user.address_line_2 or 'P.S-Nabadwip, City-',
+            'address_line_3': current_user.address_line_3 or 'Krishnanagar, Dist.-Nadia, W.B-741125',
+            'contact_no': current_user.contact_no or '8777207014',
+            'email': current_user.email or 'skanowarali93@gmail.com',
+            'surveyor_code': getattr(current_user, 'surveyor_code', '') or '2075995',
+            'surveyor_gstin': getattr(current_user, 'surveyor_gstin', '') or '19AZZPA2301R1ZM',
+            'bank_account_no': getattr(current_user, 'bank_account_no', '') or '33717014374',
+            'bank_name': getattr(current_user, 'bank_name', '') or 'State Bank Of India (SBI)',
+            'bank_branch': getattr(current_user, 'bank_branch', '') or 'Nabadwip (01402)',
+            'bank_ifsc': getattr(current_user, 'bank_ifsc', '') or 'SBIN0001402',
+            'workspace_admin_id': ws_id
         }
         res = render_fee_report(data, user_snapshot, current_user.id, include_signature=include_sig)
         pdf_bytes = res['pdf_bytes']
@@ -5248,7 +5256,55 @@ def generate_fee_pdf_route():
             download_name=f"{safe_name}.pdf"
         )
     except Exception as e:
-        print(f"Error generating fee PDF: {e}")
+        app.logger.exception("Error generating fee PDF: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/fee_bills/<bill_id>/pdf', methods=['GET'])
+@login_required
+@admin_required
+def download_saved_fee_pdf_route(bill_id):
+    try:
+        ws_id = workspace_admin_id_for(current_user)
+        bill = sheets_db.get_fee_bill_by_id(bill_id, workspace_admin_id=ws_id)
+        if not bill:
+            return jsonify({"error": "Fee bill not found"}), 404
+        
+        include_sig = request.args.get('include_signature', 'true').lower() in ('true', '1', 'yes')
+        from modules.pdf import render_fee_report
+        user_snapshot = {
+            'full_name': current_user.full_name or 'SK ANOWAR ALI',
+            'qualifications': current_user.qualifications or 'B.Tech (Automobile), LIII(Life)',
+            'designation': current_user.designation or 'Surveyor & Loss Assessor',
+            'license_no': current_user.license_no or 'SLA-121784',
+            'expiry_date': current_user.expiry_date or '13-12-2026',
+            'membership_no': current_user.membership_no or 'L/E/10721',
+            'address_line_1': current_user.address_line_1 or 'Natungram, P.O-Sondanga,',
+            'address_line_2': current_user.address_line_2 or 'P.S-Nabadwip, City-',
+            'address_line_3': current_user.address_line_3 or 'Krishnanagar, Dist.-Nadia, W.B-741125',
+            'contact_no': current_user.contact_no or '8777207014',
+            'email': current_user.email or 'skanowarali93@gmail.com',
+            'surveyor_code': getattr(current_user, 'surveyor_code', '') or '2075995',
+            'surveyor_gstin': getattr(current_user, 'surveyor_gstin', '') or '19AZZPA2301R1ZM',
+            'bank_account_no': getattr(current_user, 'bank_account_no', '') or '33717014374',
+            'bank_name': getattr(current_user, 'bank_name', '') or 'State Bank Of India (SBI)',
+            'bank_branch': getattr(current_user, 'bank_branch', '') or 'Nabadwip (01402)',
+            'bank_ifsc': getattr(current_user, 'bank_ifsc', '') or 'SBIN0001402',
+            'workspace_admin_id': ws_id
+        }
+        res = render_fee_report(bill, user_snapshot, current_user.id, include_signature=include_sig)
+        pdf_bytes = res['pdf_bytes']
+        inv_no = res['invoice_no']
+        safe_name = "".join(c for c in inv_no if c.isalnum() or c in ('_', '-')) or 'FeeBill'
+
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"{safe_name}.pdf"
+        )
+    except Exception as e:
+        app.logger.exception("Error downloading fee PDF: %s", e)
         return jsonify({"error": str(e)}), 500
 
 

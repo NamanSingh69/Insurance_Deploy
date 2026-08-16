@@ -2738,48 +2738,80 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateLiveFeeSummary() {
-        const prof = parseFloat(document.getElementById('fee-professional')?.value || 0) || 0;
-        const conv = parseFloat(document.getElementById('fee-conveyance')?.value || 0) || 0;
-        const photo = parseFloat(document.getElementById('fee-photocopy')?.value || 0) || 0;
-        const gstPc = parseFloat(document.getElementById('fee-gst-pc')?.value || 18) || 0;
-
-        const taxable = prof + conv + photo;
-        const gstAmount = taxable * gstPc / 100;
+        let taxable = 0;
+        for (let i = 1; i <= 8; i++) {
+            const cb = document.getElementById(`cb-fee-item-${i}`);
+            const valInput = document.getElementById(`val-fee-item-${i}`);
+            if (cb && cb.checked && valInput) {
+                taxable += parseFloat(valInput.value || 0) || 0;
+            }
+        }
+        const gstPc = parseFloat(document.getElementById('fee-gst-pc')?.value || 18) || 18;
+        const gstAmount = taxable * (gstPc / 100);
         const grossTotal = taxable + gstAmount;
 
-        const elProf = document.getElementById('preview-prof-fee');
-        const elConv = document.getElementById('preview-conv-fee');
-        const elPhoto = document.getElementById('preview-photo-fee');
         const elTaxable = document.getElementById('preview-taxable-fee');
-        const elGstPc = document.getElementById('preview-gst-pc');
         const elGstFee = document.getElementById('preview-gst-fee');
         const elGross = document.getElementById('preview-gross-fee');
 
-        if (elProf) elProf.textContent = `Rs. ${prof.toFixed(2)}`;
-        if (elConv) elConv.textContent = `Rs. ${conv.toFixed(2)}`;
-        if (elPhoto) elPhoto.textContent = `Rs. ${photo.toFixed(2)}`;
         if (elTaxable) elTaxable.textContent = `Rs. ${taxable.toFixed(2)}`;
-        if (elGstPc) elGstPc.textContent = String(gstPc);
         if (elGstFee) elGstFee.textContent = `Rs. ${gstAmount.toFixed(2)}`;
         if (elGross) elGross.textContent = `Rs. ${grossTotal.toFixed(2)}`;
     }
 
-    function updateDistanceConveyanceCalc() {
-        const flatAmt = parseFloat(document.getElementById('fee-conveyance-flat')?.value || 0);
-        const onewayKm = parseFloat(document.getElementById('fee-dist-oneway-km')?.value || 0);
-        const ratePerKm = parseFloat(document.getElementById('fee-dist-rate-per-km')?.value || 10);
-        const visits = parseInt(document.getElementById('fee-dist-visits')?.value || 1, 10);
+    function applyKmFormula(itemIdx) {
+        const kmInput = document.getElementById(`km-fee-item-${itemIdx}`);
+        const rateInput = document.getElementById(`rate-fee-item-${itemIdx}`);
+        const totkmSpan = document.getElementById(`totkm-fee-item-${itemIdx}`);
+        const valInput = document.getElementById(`val-fee-item-${itemIdx}`);
+        const cb = document.getElementById(`cb-fee-item-${itemIdx}`);
 
-        const distTotal = onewayKm * 2 * ratePerKm * visits;
-        const preview = document.getElementById('fee-dist-calc-preview');
-        if (preview) preview.textContent = `Dist Total: Rs. ${distTotal.toFixed(2)}`;
+        const km = parseFloat(kmInput?.value || 0) || 0;
+        const rate = parseFloat(rateInput?.value || 10) || 10;
+        const totKm = km * 2;
 
-        const combinedTotal = flatAmt + distTotal;
-        const conveyanceInput = document.getElementById('fee-conveyance');
-        if (conveyanceInput) conveyanceInput.value = combinedTotal.toFixed(2);
+        if (totkmSpan) totkmSpan.textContent = String(totKm);
+        if (valInput) valInput.value = (totKm * rate).toFixed(2);
+        if (cb) cb.checked = true;
         updateLiveFeeSummary();
     }
 
+    function openFeeBillForClaim(claim) {
+        if (!claim) return;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.workspace-view, #fee-register-section, #claim-register-section').forEach(s => s.classList.add('hidden'));
+        const feeSection = document.getElementById('fee-register-section');
+        if (feeSection) feeSection.classList.remove('hidden');
+        document.querySelector('[data-view="fee-register"]')?.classList.add('active');
+
+        const reportSelect = document.getElementById('fee-report-id');
+        if (reportSelect) reportSelect.value = claim.id || '';
+        const reportNoInput = document.getElementById('fee-report-no');
+        if (reportNoInput) reportNoInput.value = claim.report_no || claim.report_number || '';
+        const insurerInput = document.getElementById('fee-insurer');
+        if (insurerInput) {
+            insurerInput.value = claim.insurer || '';
+            handleFeeInsurerInput(claim.insurer || '');
+        }
+        const insuredInput = document.getElementById('fee-insured');
+        if (insuredInput) insuredInput.value = claim.insured_name || '';
+        const policyInput = document.getElementById('fee-policy-no');
+        if (policyInput) policyInput.value = claim.policy_no || '';
+        const claimInput = document.getElementById('fee-claim-no');
+        if (claimInput) claimInput.value = claim.claim_no || '';
+        const vehicleInput = document.getElementById('fee-vehicle-no');
+        if (vehicleInput) vehicleInput.value = claim.vehicle_no || '';
+        const accidentInput = document.getElementById('fee-date-of-accident');
+        if (accidentInput) accidentInput.value = claim.date_of_accident || claim.accident_date || '';
+
+        const invDateInput = document.getElementById('fee-invoice-date');
+        if (invDateInput && !invDateInput.value) {
+            invDateInput.value = new Date().toISOString().split('T')[0];
+        }
+
+        updateLiveFeeSummary();
+        showStatus(`Loaded claim details for ${claim.vehicle_no || claim.claim_no || 'claim'} into Fee Bill form.`, 'info', true);
+    }
 
     function claimFilterQuery() {
         const pairs = new URLSearchParams();
@@ -2835,7 +2867,19 @@ document.addEventListener('DOMContentLoaded', () => {
         tbody.innerHTML = claims.map(claim => {
             const current = claim.status || 'new_appointment';
             const options = Object.entries(claimStatusLabels).map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
-            return `<tr><td>${escapeHtml(claim.claim_no || '—')}</td><td>${escapeHtml(claim.vehicle_no || '—')}</td><td>${escapeHtml(claim.insured_name || '—')}</td><td>${escapeHtml(claim.insurer || '')}</td><td><select class="claim-status-select" data-report-id="${escapeHtml(claim.id)}">${options}</select></td><td>${escapeHtml(claim.survey_type || 'final')}</td><td><button type="button" class="btn btn-primary btn-sm open-workspace-report" data-report-id="${escapeHtml(claim.id)}">Open</button> <button type="button" class="btn btn-secondary btn-sm open-pending-docs-modal" data-report-id="${escapeHtml(claim.id)}"><i class="fas fa-tasks"></i> Docs</button></td></tr>`;
+            return `<tr>
+                <td>${escapeHtml(claim.claim_no || '—')}</td>
+                <td>${escapeHtml(claim.vehicle_no || '—')}</td>
+                <td>${escapeHtml(claim.insured_name || '—')}</td>
+                <td>${escapeHtml(claim.insurer || '')}</td>
+                <td><select class="claim-status-select" data-report-id="${escapeHtml(claim.id)}">${options}</select></td>
+                <td>${escapeHtml(claim.survey_type || 'final')}</td>
+                <td style="white-space: nowrap;">
+                    <button type="button" class="btn btn-primary btn-sm open-workspace-report" data-report-id="${escapeHtml(claim.id)}">Open</button>
+                    <button type="button" class="btn btn-secondary btn-sm open-pending-docs-modal" data-report-id="${escapeHtml(claim.id)}"><i class="fas fa-tasks"></i> Docs</button>
+                    <button type="button" class="btn btn-secondary btn-sm create-claim-fee-bill" data-report-id="${escapeHtml(claim.id)}" title="Generate Fee Bill"><i class="fas fa-file-invoice-dollar"></i> Bill</button>
+                </td>
+            </tr>`;
         }).join('');
         tbody.querySelectorAll('.claim-status-select').forEach(select => select.addEventListener('change', async event => {
             const res = await fetch(`/api/claims/${encodeURIComponent(event.target.dataset.reportId)}`, {
@@ -2850,6 +2894,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
         tbody.querySelectorAll('.open-workspace-report').forEach(button => button.addEventListener('click', () => loadWorkspaceReport(button.dataset.reportId)));
         tbody.querySelectorAll('.open-pending-docs-modal').forEach(button => button.addEventListener('click', () => openPendingDocsModal(button.dataset.reportId)));
+        tbody.querySelectorAll('.create-claim-fee-bill').forEach(button => button.addEventListener('click', () => {
+            const claim = workspaceState.claims.find(c => c.id === button.dataset.reportId);
+            if (claim) openFeeBillForClaim(claim);
+        }));
     }
 
     function generateReminderTextClient(claim, pendingDocs, reminderCount) {
@@ -3044,6 +3092,141 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { showStatus(error.message, 'error', true); }
     }
 
+    function collectFeeBillPayload() {
+        const reportId = document.getElementById('fee-report-id')?.value || null;
+        const reportNo = document.getElementById('fee-report-no')?.value.trim() || '';
+        const invoiceNo = document.getElementById('fee-invoice-no')?.value.trim() || 'BILL-0001';
+        const invoiceDate = document.getElementById('fee-invoice-date')?.value || new Date().toISOString().split('T')[0];
+        const insurerName = document.getElementById('fee-insurer')?.value.trim() || '';
+        const insurerGst = document.getElementById('fee-insurer-gst')?.value.trim() || '';
+        const insurerAddress = document.getElementById('fee-insurer-address')?.value.trim() || '';
+        const insuredName = document.getElementById('fee-insured')?.value.trim() || '';
+        const policyNo = document.getElementById('fee-policy-no')?.value.trim() || '';
+        const claimNo = document.getElementById('fee-claim-no')?.value.trim() || '';
+        const vehicleNo = document.getElementById('fee-vehicle-no')?.value.trim() || '';
+        const dateOfAccident = document.getElementById('fee-date-of-accident')?.value.trim() || '';
+        const includeSignature = document.getElementById('fee-include-signature')?.checked ?? true;
+        const gstPc = parseFloat(document.getElementById('fee-gst-pc')?.value || 18) || 18;
+
+        const feeItems = [];
+        // Item 1: Final Survey Fees
+        if (document.getElementById('cb-fee-item-1')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-1')?.value || 0) || 0;
+            feeItems.push({ name: '1. Final Survey Fees :', amount: amt });
+        }
+        // Item 2: Conveyance Expenses
+        if (document.getElementById('cb-fee-item-2')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-2')?.value || 0) || 0;
+            const route = document.getElementById('route-fee-item-2')?.value.trim() || '';
+            const km = parseFloat(document.getElementById('km-fee-item-2')?.value || 0);
+            const rate = parseFloat(document.getElementById('rate-fee-item-2')?.value || 10);
+            let name = '2. Conveyance Expenses :';
+            if (route || km > 0) {
+                if (km > 0) {
+                    const totKm = km * 2;
+                    name = `2. Conveyance Expenses : ${route ? route + ' ' : ''}(${km} x 2 =${totKm} km @ Rs. ${rate}/-)`;
+                } else {
+                    name = `2. Conveyance Expenses : ${route}`;
+                }
+            }
+            feeItems.push({ name: name, amount: amt });
+        }
+        // Item 3: 2nd Visited Conveyance Expenses
+        if (document.getElementById('cb-fee-item-3')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-3')?.value || 0) || 0;
+            const route = document.getElementById('route-fee-item-3')?.value.trim() || '';
+            const km = parseFloat(document.getElementById('km-fee-item-3')?.value || 0);
+            const rate = parseFloat(document.getElementById('rate-fee-item-3')?.value || 10);
+            let name = '3. 2nd visited Conveyance Expenses :';
+            if (route || km > 0) {
+                if (km > 0) {
+                    const totKm = km * 2;
+                    name = `3. 2nd visited Conveyance Expenses : ${route ? route + ' ' : ''}(${km} x 2 =${totKm} km @ Rs. ${rate}/-)`;
+                } else {
+                    name = `3. 2nd visited Conveyance Expenses : ${route}`;
+                }
+            }
+            feeItems.push({ name: name, amount: amt });
+        }
+        // Item 4: Re-inspection Fees
+        if (document.getElementById('cb-fee-item-4')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-4')?.value || 0) || 0;
+            feeItems.push({ name: '4. Re-inspection Fees :', amount: amt });
+        }
+        // Item 5: Conveyance Expenses
+        if (document.getElementById('cb-fee-item-5')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-5')?.value || 0) || 0;
+            const route = document.getElementById('route-fee-item-5')?.value.trim() || '';
+            const km = parseFloat(document.getElementById('km-fee-item-5')?.value || 0);
+            const rate = parseFloat(document.getElementById('rate-fee-item-5')?.value || 10);
+            let name = '5. Conveyance Expenses :';
+            if (route || km > 0) {
+                if (km > 0) {
+                    const totKm = km * 2;
+                    name = `5. Conveyance Expenses : ${route ? route + ' ' : ''}(${km} x 2 =${totKm} km @ Rs. ${rate}/-)`;
+                } else {
+                    name = `5. Conveyance Expenses : ${route}`;
+                }
+            }
+            feeItems.push({ name: name, amount: amt });
+        }
+        // Item 6: photos
+        if (document.getElementById('cb-fee-item-6')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-6')?.value || 0) || 0;
+            feeItems.push({ name: '6. photos :', amount: amt });
+        }
+        // Item 7: Halting Charges
+        if (document.getElementById('cb-fee-item-7')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-7')?.value || 0) || 0;
+            feeItems.push({ name: '7. Halting Charges :', amount: amt });
+        }
+        // Item 8: Other charges
+        if (document.getElementById('cb-fee-item-8')?.checked) {
+            const amt = parseFloat(document.getElementById('val-fee-item-8')?.value || 0) || 0;
+            const desc = document.getElementById('desc-fee-item-8')?.value.trim() || '( like , postal charges)';
+            feeItems.push({ name: `8. Other charges: ${desc}`, amount: amt });
+        }
+
+        let taxable = 0;
+        feeItems.forEach(it => taxable += (it.amount || 0));
+        const gstAmount = taxable * (gstPc / 100);
+        const totalAmount = taxable + gstAmount;
+
+        const profFee = document.getElementById('cb-fee-item-1')?.checked ? (parseFloat(document.getElementById('val-fee-item-1')?.value || 0) || 0) : 0;
+        const convFee = (document.getElementById('cb-fee-item-2')?.checked ? (parseFloat(document.getElementById('val-fee-item-2')?.value || 0) || 0) : 0) +
+                        (document.getElementById('cb-fee-item-3')?.checked ? (parseFloat(document.getElementById('val-fee-item-3')?.value || 0) || 0) : 0) +
+                        (document.getElementById('cb-fee-item-5')?.checked ? (parseFloat(document.getElementById('val-fee-item-5')?.value || 0) || 0) : 0);
+        const photoFee = document.getElementById('cb-fee-item-6')?.checked ? (parseFloat(document.getElementById('val-fee-item-6')?.value || 0) || 0) : 0;
+
+        return {
+            id: document.getElementById('fee-bill-id')?.value || undefined,
+            report_id: reportId,
+            report_no: reportNo,
+            invoice_no: invoiceNo,
+            invoice_date: invoiceDate,
+            insurer_name: insurerName,
+            insurer_gst: insurerGst,
+            insurer_address: insurerAddress,
+            insured_name: insuredName,
+            policy_no: policyNo,
+            claim_no: claimNo,
+            vehicle_no: vehicleNo,
+            date_of_accident: dateOfAccident,
+            fee_items: feeItems,
+            professional_fee: profFee,
+            conveyance_fee: convFee,
+            photocopy_amount: photoFee,
+            taxable_amount: taxable,
+            gst_pc: gstPc,
+            gst_amount: gstAmount,
+            total_amount: totalAmount,
+            gross_invoice_value: totalAmount,
+            include_signature: includeSignature,
+            payment_status: document.getElementById('fee-payment-status')?.value || 'unpaid',
+            invoice_status: document.getElementById('fee-invoice-status')?.value || 'draft'
+        };
+    }
+
     async function fetchFees() {
         const tbody = document.getElementById('fee-register-tbody');
         if (!tbody || workspaceState.profile?.role !== 'admin') return;
@@ -3053,16 +3236,78 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!res.ok) throw new Error('Could not load fees');
             const bills = await res.json();
             if (!bills.length) {
-                tbody.innerHTML = '<tr><td colspan="12">No fee register rows found.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9">No fee register rows found.</td></tr>';
                 return;
             }
             tbody.innerHTML = bills.map(bill => {
                 const insurerDisplay = bill.insurer_gst ? `${escapeHtml(bill.insurer_name || '')}<br><small style="color:#aaa;">GST: ${escapeHtml(bill.insurer_gst)}</small>` : escapeHtml(bill.insurer_name || '—');
-                const convFee = bill.conveyance_fee ?? bill.convenience_fee ?? (Number(bill.convenience_km || 0) * Number(bill.convenience_rate || 0));
-                const photoAmt = bill.photocopy_amount ?? bill.photocopy ?? 0;
-                return `<tr><td>${escapeHtml(bill.invoice_no || '—')}</td><td>${escapeHtml(bill.claim_no || '—')}</td><td><span class="badge badge-outline">${escapeHtml(bill.survey_type || 'Survey Fee')}</span></td><td>${insurerDisplay}</td><td>${formatMoney(bill.professional_fee ?? 0)}</td><td>${formatMoney(convFee)}</td><td>${formatMoney(photoAmt)}</td><td>${formatMoney(bill.gst_amount ?? 0)}</td><td>${formatMoney(bill.gross_invoice_value ?? bill.total_amount ?? 0)}</td><td>${formatMoney(bill.amount_received ?? 0)}</td><td>${formatMoney(bill.outstanding_amount ?? 0)}</td><td>${escapeHtml(bill.payment_status || 'unpaid')}</td></tr>`;
+                const claimDisplay = `${escapeHtml(bill.claim_no || '—')}<br><small style="color:#aaa;">${escapeHtml(bill.vehicle_no || '')}</small>`;
+                const taxable = bill.taxable_amount ?? (bill.professional_fee || 0);
+                const gst = bill.gst_amount ?? 0;
+                const total = bill.total_amount ?? bill.gross_invoice_value ?? 0;
+                return `<tr>
+                    <td><strong>${escapeHtml(bill.invoice_no || '—')}</strong><br><small style="color:#aaa;">${escapeHtml(bill.invoice_date || '')}</small></td>
+                    <td>${escapeHtml(bill.report_no || '—')}</td>
+                    <td>${claimDisplay}</td>
+                    <td>${insurerDisplay}</td>
+                    <td>${formatMoney(taxable)}</td>
+                    <td>${formatMoney(gst)}</td>
+                    <td><strong style="color:#10b981;">${formatMoney(total)}</strong></td>
+                    <td><span class="badge badge-outline">${escapeHtml(bill.payment_status || 'unpaid')}</span></td>
+                    <td style="white-space: nowrap;">
+                        <button type="button" class="btn btn-secondary btn-sm download-saved-fee-pdf-btn" data-bill-id="${escapeHtml(bill.id)}" title="Download PDF"><i class="fas fa-file-pdf"></i> PDF</button>
+                        <button type="button" class="btn btn-secondary btn-sm delete-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Delete"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>`;
             }).join('');
-        } catch (error) { tbody.innerHTML = '<tr><td colspan="12">Could not load fee register.</td></tr>'; }
+
+            tbody.querySelectorAll('.download-saved-fee-pdf-btn').forEach(btn => btn.addEventListener('click', () => {
+                const billId = btn.dataset.billId;
+                window.open(`/api/fee_bills/${encodeURIComponent(billId)}/pdf`, '_blank');
+            }));
+
+            tbody.querySelectorAll('.delete-fee-bill-btn').forEach(btn => btn.addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to delete this fee bill?')) return;
+                const billId = btn.dataset.billId;
+                try {
+                    const dRes = await fetch(`/api/fee_bills/${encodeURIComponent(billId)}`, { method: 'DELETE' });
+                    if (dRes.ok) {
+                        showStatus('Fee bill deleted.', 'success', true);
+                        fetchFees();
+                    } else {
+                        showStatus('Could not delete fee bill.', 'error', true);
+                    }
+                } catch (e) { showStatus(e.message, 'error', true); }
+            }));
+        } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
+    }
+
+    async function handleDownloadFeePdfPreview() {
+        const payload = collectFeeBillPayload();
+        showStatus('Generating Fee Bill PDF preview...', 'info', true);
+        try {
+            const res = await fetch('/generate_fee_pdf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Failed to generate PDF');
+            }
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${payload.invoice_no || 'FeeBill'}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            showStatus('Fee Bill PDF downloaded successfully.', 'success', true);
+        } catch (error) {
+            showStatus(error.message, 'error', true);
+        }
     }
 
     async function handleFeePdfUpload(file) {
@@ -3083,8 +3328,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleFeeInsurerInput(ext.insurer);
             }
             if (ext.insured) document.getElementById('fee-insured').value = ext.insured;
-            if (ext.invoice_no || ext.report_no) document.getElementById('fee-invoice-no').value = ext.invoice_no || ext.report_no;
+            if (ext.invoice_no || ext.report_no) {
+                if (ext.invoice_no) document.getElementById('fee-invoice-no').value = ext.invoice_no;
+                if (ext.report_no) document.getElementById('fee-report-no').value = ext.report_no;
+            }
             if (ext.invoice_date) document.getElementById('fee-invoice-date').value = ext.invoice_date;
+            if (ext.policy_no) document.getElementById('fee-policy-no').value = ext.policy_no;
+            if (ext.claim_no) document.getElementById('fee-claim-no').value = ext.claim_no;
+            if (ext.vehicle_no) document.getElementById('fee-vehicle-no').value = ext.vehicle_no;
             
             updateLiveFeeSummary();
             showStatus('Extracted billing details successfully into form!', 'success', true);
@@ -3095,68 +3346,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function saveFee(event) {
         event.preventDefault();
-        const reportId = document.getElementById('fee-report-id')?.value;
-        const report = workspaceState.claims.find(item => item.id === reportId) || {};
-        const professional = Number(document.getElementById('fee-professional')?.value || 0);
-        const convType = document.getElementById('fee-convenience-type')?.value || '1st Convenience';
-        const convRoute = document.getElementById('fee-convenience-route')?.value.trim() || '';
-        const convKm = Number(document.getElementById('fee-convenience-km')?.value || 0);
-        const convRate = Number(document.getElementById('fee-convenience-rate')?.value || 0);
-        const conveyanceFee = Number(document.getElementById('fee-conveyance')?.value || (convKm * convRate));
-        const photocopyAmount = Number(document.getElementById('fee-photocopy')?.value || 0);
-        const taxableAmount = professional + conveyanceFee + photocopyAmount;
-        const gstPc = Number(document.getElementById('fee-gst-pc')?.value || 0);
-        const gstAmount = taxableAmount * gstPc / 100;
-        const grossValue = taxableAmount + gstAmount;
-
-        const checkedTypes = Array.from(document.querySelectorAll('.fee-survey-type-cb:checked')).map(cb => cb.value);
-        const surveyTypeVal = checkedTypes.length ? checkedTypes.join(', ') : (document.getElementById('fee-survey-type')?.value || 'Survey Fee');
-
-        const payload = {
-            report_id: reportId || null,
-            survey_type: surveyTypeVal,
-
-            insurer_name: document.getElementById('fee-insurer')?.value.trim(),
-            insurer_gst: document.getElementById('fee-insurer-gst')?.value.trim() || '',
-            insurer_state: document.getElementById('fee-insurer-state')?.value.trim() || '',
-            insurer_address: document.getElementById('fee-insurer-address')?.value.trim() || '',
-            insured_name: document.getElementById('fee-insured')?.value.trim(),
-            invoice_no: document.getElementById('fee-invoice-no')?.value.trim(),
-            invoice_date: document.getElementById('fee-invoice-date')?.value || new Date().toISOString().split('T')[0],
-            professional_fee: professional,
-            convenience_type: convType,
-            convenience_route: convRoute,
-            convenience_km: convKm,
-            convenience_rate: convRate,
-            conveyance_fee: conveyanceFee,
-            photocopy_amount: photocopyAmount,
-            taxable_amount: taxableAmount,
-            gst_pc: gstPc,
-            gst_amount: gstAmount,
-            gross_invoice_value: grossValue,
-            total_amount: grossValue,
-            amount_received: Number(document.getElementById('fee-received')?.value || 0),
-            outstanding_amount: Number(document.getElementById('fee-outstanding')?.value || 0),
-            due_date: document.getElementById('fee-due-date')?.value || null,
-            payment_status: document.getElementById('fee-payment-status')?.value,
-            invoice_status: document.getElementById('fee-invoice-status')?.value,
-            claim_no: report.claim_no || '',
-            vehicle_no: report.vehicle_no || '',
-            policy_no: report.policy_no || ''
-        };
+        const payload = collectFeeBillPayload();
         try {
             const res = await fetch('/api/fee_bills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             const result = await res.json();
-            if (!res.ok) throw new Error(result.error || 'Could not save fee');
-            document.getElementById('fee-register-form')?.reset();
-            const gstElem = document.getElementById('fee-gst-pc');
-            if (gstElem) gstElem.value = '18';
-            const invDateElem = document.getElementById('fee-invoice-date');
-            if (invDateElem) invDateElem.value = new Date().toISOString().split('T')[0];
-            const fileNameSpan = document.getElementById('fee-pdf-file-name');
-            if (fileNameSpan) fileNameSpan.textContent = '';
-            updateLiveFeeSummary();
-            showStatus('Fee register saved.', 'success', true);
+            if (!res.ok) throw new Error(result.error || 'Could not save fee bill');
+            
+            showStatus('Fee bill saved successfully.', 'success', true);
             await Promise.all([fetchFees(), fetchDashboard()]);
         } catch (error) { showStatus(error.message, 'error', true); }
     }
@@ -3593,15 +3789,24 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // Conveyance Combined Calculator Listeners & Live Fee Calculation Listeners
-        document.getElementById('fee-conveyance-flat')?.addEventListener('input', updateDistanceConveyanceCalc);
-        document.getElementById('fee-dist-oneway-km')?.addEventListener('input', updateDistanceConveyanceCalc);
-        document.getElementById('fee-dist-rate-per-km')?.addEventListener('input', updateDistanceConveyanceCalc);
-        document.getElementById('fee-dist-visits')?.addEventListener('change', updateDistanceConveyanceCalc);
-        document.getElementById('fee-conveyance')?.addEventListener('input', updateLiveFeeSummary);
-        document.getElementById('fee-professional')?.addEventListener('input', updateLiveFeeSummary);
-        document.getElementById('fee-photocopy')?.addEventListener('input', updateLiveFeeSummary);
+        // Word Template Fee Bill Listeners (Checkboxes, Amounts, KM Buttons & Preview PDF)
+        for (let i = 1; i <= 8; i++) {
+            document.getElementById(`cb-fee-item-${i}`)?.addEventListener('change', updateLiveFeeSummary);
+            document.getElementById(`val-fee-item-${i}`)?.addEventListener('input', updateLiveFeeSummary);
+        }
+        document.getElementById('calc-km-btn-2')?.addEventListener('click', () => applyKmFormula(2));
+        document.getElementById('calc-km-btn-3')?.addEventListener('click', () => applyKmFormula(3));
+        document.getElementById('calc-km-btn-5')?.addEventListener('click', () => applyKmFormula(5));
+        document.getElementById('km-fee-item-2')?.addEventListener('input', () => applyKmFormula(2));
+        document.getElementById('rate-fee-item-2')?.addEventListener('input', () => applyKmFormula(2));
+        document.getElementById('km-fee-item-3')?.addEventListener('input', () => applyKmFormula(3));
+        document.getElementById('rate-fee-item-3')?.addEventListener('input', () => applyKmFormula(3));
+        document.getElementById('km-fee-item-5')?.addEventListener('input', () => applyKmFormula(5));
+        document.getElementById('rate-fee-item-5')?.addEventListener('input', () => applyKmFormula(5));
+
         document.getElementById('fee-gst-pc')?.addEventListener('input', updateLiveFeeSummary);
+        document.getElementById('fee-include-signature')?.addEventListener('change', updateLiveFeeSummary);
+        document.getElementById('fee-pdf-preview-btn')?.addEventListener('click', handleDownloadFeePdfPreview);
 
         // Dashboard In-Place Drilldown Listeners
         document.getElementById('dashboard-drilldown-search')?.addEventListener('input', () => {

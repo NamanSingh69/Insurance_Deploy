@@ -26,7 +26,14 @@
             {% if current_user.is_authenticated %}
                 <div style="position: absolute; top: 1rem; right: 1rem; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; z-index: 10;">
                     <div style="display: flex; align-items: center; gap: 0.75rem;">
-                        <span style="color: var(--text-secondary); font-size: 0.9rem; margin-right: 0.25rem;">Welcome, <strong>{{ current_user.username }}</strong></span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem; margin-right: 0.25rem;">
+                            Welcome, <strong>{{ current_user.username }}</strong>
+                            {% if current_user.role == 'admin' %}
+                                <span class="badge" style="background:#dc2626; color:#fff; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:600;"><i class="fas fa-shield-alt"></i> Admin</span>
+                            {% else %}
+                                <span class="badge" style="background:#2563eb; color:#fff; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:600;"><i class="fas fa-user"></i> Employee</span>
+                            {% endif %}
+                        </span>
                         <button id="open-profile-modal" class="btn btn-secondary btn-sm" style="min-width: auto; padding: 0.4rem 0.6rem;">
                             <i class="fas fa-user-cog"></i> Settings
                         </button>
@@ -258,85 +265,209 @@
                 </div>
             </div>
 
-            <form id="fee-register-form" class="compact-form fee-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem;">
-                <select id="fee-report-id"><option value="">Linked report (optional)</option></select>
+            <form id="fee-register-form" class="compact-form fee-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem;">
+                <input type="hidden" id="fee-bill-id" value="">
                 
-                <div id="fee-survey-types-container" style="grid-column: 1 / -1; display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.03); padding: 0.4rem 0.6rem; border-radius: 4px; border: 1px solid var(--border-color);">
-                    <span style="font-size: 0.75rem; color: #aaa;"><i class="fas fa-list-check"></i> Fee Types (Select All Applicable):</span>
-                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Survey Fee" checked> Survey Fee</label>
-                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Re-inspection Fee"> Re-Inspection Fee</label>
-                    <label style="font-size: 0.8rem; cursor: pointer;"><input type="checkbox" class="fee-survey-type-cb" value="Spot Survey Fee"> Spot Survey Fee</label>
+                <!-- Link with Claim / Report (Optional / Standalone) -->
+                <div style="grid-column: 1 / -1; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.03); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color);">
+                    <div style="flex: 1; min-width: 220px;">
+                        <label for="fee-report-id" style="font-size: 0.75rem; color: #aaa; margin: 0;">Link with Existing Survey Claim:</label>
+                        <select id="fee-report-id" style="width: 100%;"><option value="">-- Standalone Fee Bill (No Linked Claim) --</option></select>
+                    </div>
+                    <div style="flex: 1; min-width: 160px;">
+                        <label for="fee-report-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Report No:</label>
+                        <input id="fee-report-no" type="text" placeholder="e.g. K08/G4/24/1365">
+                    </div>
+                    <div style="flex: 1; min-width: 160px;">
+                        <label for="fee-invoice-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Bill / Invoice No *:</label>
+                        <input id="fee-invoice-no" type="text" placeholder="e.g. KG-2365, NIC-0001" required>
+                    </div>
+                    <div style="flex: 1; min-width: 140px;">
+                        <label for="fee-invoice-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Bill Date *:</label>
+                        <input id="fee-invoice-date" type="date" required>
+                    </div>
                 </div>
-                <select id="fee-survey-type" style="display: none;"><option value="Survey Fee">Survey Fee</option></select>
 
-                <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; background: rgba(59, 130, 246, 0.06); padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.25);">
+                <!-- Insurer Details -->
+                <div style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.5rem; background: rgba(59, 130, 246, 0.05); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.2);">
+                    <div style="grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-building"></i> Insurer (Recipient) Details</strong>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <select id="fee-insurer-master-select" style="font-size: 0.8rem;"><option value="">Load Insurer Master...</option></select>
+                            <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;"><i class="fas fa-sliders-h"></i> Masters</button>
+                        </div>
+                    </div>
                     <div>
-                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-building"></i> Insurer Master Auto-Fill &amp; Setup</strong>
-                        <p style="font-size: 0.75rem; color: #aaa; margin: 0;">Select a saved master insurer or type company name to auto-fill GSTIN, Address, Rate &amp; sequential Invoice Prefix (e.g. NIC-0001, OGI-0001).</p>
+                        <label for="fee-insurer" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer Name *:</label>
+                        <input id="fee-insurer" type="text" placeholder="e.g. IndusInd General Insurance Co. Ltd." list="insurer-masters-datalist" required>
                     </div>
-                    <button type="button" class="btn btn-secondary btn-sm open-insurer-master-modal-btn" title="Add / Edit Master Insurer Records">
-                        <i class="fas fa-sliders-h"></i> Manage Insurer Masters
-                    </button>
+                    <div>
+                        <label for="fee-insurer-gst" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer GSTIN:</label>
+                        <input id="fee-insurer-gst" type="text" placeholder="e.g. 19AAACB6747B1ZD" list="insurer-gstin-datalist">
+                    </div>
+                    <div style="grid-column: 1 / -1;">
+                        <label for="fee-insurer-address" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer Branch Address:</label>
+                        <input id="fee-insurer-address" type="text" placeholder="e.g. 4th Floor Thapar House, 163 Shyama Prasad Mukherjee Rd, Kolkata-700026" list="insurer-address-datalist">
+                    </div>
                 </div>
 
-                <select id="fee-insurer-master-select" title="Choose from configured Insurer Masters"><option value="">Select Insurer Master...</option></select>
-                <input id="fee-insurer" type="text" placeholder="Insurer *" list="insurer-masters-datalist" required>
-                <input id="fee-insurer-gst" type="text" placeholder="Insurer GSTIN" list="insurer-gstin-datalist">
-                <input id="fee-insurer-address" type="text" placeholder="Insurer Branch Address" list="insurer-address-datalist">
-                <input id="fee-insured" type="text" placeholder="Insured name *" required>
-                <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice No (Auto-Prefix)</label><input id="fee-invoice-no" type="text" placeholder="e.g. NIC-0001, OGI-0001"></div>
-                <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-invoice-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Invoice Date</label><input id="fee-invoice-date" type="date" title="Invoice date"></div>
-                <input id="fee-professional" type="number" min="0" step="1" placeholder="Professional Fee (Rs.) *">
-                
-                <!-- Conveyance Mode & Combined Calculator (Flat + Distance) -->
-                <div style="grid-column: 1 / -1; background: rgba(255,255,255,0.03); padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
-                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-car"></i> Conveyance Charges (Flat Rate &amp; Distance Km Formula)</strong>
+                <!-- Claim Details Table Fields -->
+                <div style="grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem; background: rgba(255,255,255,0.02); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color);">
+                    <strong style="grid-column: 1 / -1; font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-car-crash"></i> Claim &amp; Vehicle Particulars</strong>
+                    <div>
+                        <label for="fee-policy-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Policy No:</label>
+                        <input id="fee-policy-no" type="text" placeholder="Policy Number">
                     </div>
-                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
-                        <input id="fee-conveyance-flat" type="number" min="0" step="1" placeholder="Flat Rate Conveyance (Rs.)" style="flex: 1; min-width: 150px;">
-                        <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; flex: 2; background: rgba(0,0,0,0.2); padding: 0.4rem; border-radius: 4px; border: 1px dashed var(--border-color);">
-                            <span style="font-size: 0.75rem; color: #aaa;">Km Formula:</span>
-                            <input id="fee-dist-oneway-km" type="number" min="0" step="0.1" placeholder="One-Way Km" style="width: 110px;">
-                            <input id="fee-dist-rate-per-km" type="number" min="0" step="0.1" value="10" placeholder="Rate/Km" style="width: 90px;">
-                            <select id="fee-dist-visits" style="width: 90px;">
-                                <option value="1">1 Visit</option>
-                                <option value="2">2 Visits</option>
-                                <option value="3">3 Visits</option>
-                            </select>
-                            <span id="fee-dist-calc-preview" style="font-size: 0.8rem; font-weight: bold; color: #4CAF50;">Dist Total: Rs. 0</span>
+                    <div>
+                        <label for="fee-claim-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Claim No:</label>
+                        <input id="fee-claim-no" type="text" placeholder="Claim Number">
+                    </div>
+                    <div>
+                        <label for="fee-vehicle-no" style="font-size: 0.75rem; color: #aaa; margin: 0;">Vehicle No:</label>
+                        <input id="fee-vehicle-no" type="text" placeholder="e.g. WB-01-AB-1234">
+                    </div>
+                    <div>
+                        <label for="fee-insured" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insured Name *:</label>
+                        <input id="fee-insured" type="text" placeholder="Insured Person / Company" required>
+                    </div>
+                    <div>
+                        <label for="fee-date-of-accident" style="font-size: 0.75rem; color: #aaa; margin: 0;">Date of Accident:</label>
+                        <input id="fee-date-of-accident" type="text" placeholder="e.g. 04/07/2026">
+                    </div>
+                </div>
+
+                <!-- 8 Itemized Fee Breakdown Checkbox Grid -->
+                <div style="grid-column: 1 / -1; background: rgba(255,255,255,0.03); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.6rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-size: 0.85rem; color: var(--text-primary);"><i class="fas fa-list-ol"></i> Itemized Fee Breakdown (Word Template)</strong>
+                        <span style="font-size: 0.75rem; color: #aaa;">Check items to include on the Bill</span>
+                    </div>
+
+                    <!-- Item 1: Final Survey Fees -->
+                    <div class="fee-item-row" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <input type="checkbox" id="cb-fee-item-1" checked style="margin-right: 4px;">
+                        <label for="cb-fee-item-1" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">1. Final Survey Fees :</label>
+                        <input type="number" id="val-fee-item-1" min="0" step="1" placeholder="Amount (Rs.)" value="2000" style="width: 140px; margin-left: auto;">
+                    </div>
+
+                    <!-- Item 2: Conveyance Expenses -->
+                    <div class="fee-item-row" style="display: flex; flex-direction: column; gap: 0.4rem; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="checkbox" id="cb-fee-item-2" checked style="margin-right: 4px;">
+                            <label for="cb-fee-item-2" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">2. Conveyance Expenses :</label>
+                            <input type="text" id="route-fee-item-2" placeholder="Route (e.g. Local or Kolkata to Nabadwip)" style="flex: 1; min-width: 160px;">
+                            <input type="number" id="val-fee-item-2" min="0" step="1" placeholder="Amount (Rs.)" value="750" style="width: 140px;">
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
+                            <span>KM Formula: (</span>
+                            <input type="number" id="km-fee-item-2" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <span>x 2 = <strong id="totkm-fee-item-2">0</strong> km @ Rs.</span>
+                            <input type="number" id="rate-fee-item-2" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <span>/-)</span>
+                            <button type="button" id="calc-km-btn-2" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
                         </div>
                     </div>
+
+                    <!-- Item 3: 2nd Visited Conveyance Expenses -->
+                    <div class="fee-item-row" style="display: flex; flex-direction: column; gap: 0.4rem; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="checkbox" id="cb-fee-item-3" style="margin-right: 4px;">
+                            <label for="cb-fee-item-3" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">3. 2nd visited Conveyance Expenses :</label>
+                            <input type="text" id="route-fee-item-3" placeholder="Route (e.g. Kolkata to Mumbai)" style="flex: 1; min-width: 160px;">
+                            <input type="number" id="val-fee-item-3" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px;">
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
+                            <span>KM Formula: (</span>
+                            <input type="number" id="km-fee-item-3" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <span>x 2 = <strong id="totkm-fee-item-3">0</strong> km @ Rs.</span>
+                            <input type="number" id="rate-fee-item-3" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <span>/-)</span>
+                            <button type="button" id="calc-km-btn-3" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
+                        </div>
+                    </div>
+
+                    <!-- Item 4: Re-inspection Fees -->
+                    <div class="fee-item-row" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <input type="checkbox" id="cb-fee-item-4" style="margin-right: 4px;">
+                        <label for="cb-fee-item-4" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">4. Re-inspection Fees :</label>
+                        <input type="number" id="val-fee-item-4" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px; margin-left: auto;">
+                    </div>
+
+                    <!-- Item 5: Conveyance Expenses -->
+                    <div class="fee-item-row" style="display: flex; flex-direction: column; gap: 0.4rem; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="checkbox" id="cb-fee-item-5" style="margin-right: 4px;">
+                            <label for="cb-fee-item-5" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">5. Conveyance Expenses :</label>
+                            <input type="text" id="route-fee-item-5" placeholder="Route description" style="flex: 1; min-width: 160px;">
+                            <input type="number" id="val-fee-item-5" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px;">
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
+                            <span>KM Formula: (</span>
+                            <input type="number" id="km-fee-item-5" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <span>x 2 = <strong id="totkm-fee-item-5">0</strong> km @ Rs.</span>
+                            <input type="number" id="rate-fee-item-5" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <span>/-)</span>
+                            <button type="button" id="calc-km-btn-5" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
+                        </div>
+                    </div>
+
+                    <!-- Item 6: photos -->
+                    <div class="fee-item-row" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <input type="checkbox" id="cb-fee-item-6" style="margin-right: 4px;">
+                        <label for="cb-fee-item-6" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">6. photos :</label>
+                        <input type="number" id="val-fee-item-6" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px; margin-left: auto;">
+                    </div>
+
+                    <!-- Item 7: Halting Charges -->
+                    <div class="fee-item-row" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px;">
+                        <input type="checkbox" id="cb-fee-item-7" style="margin-right: 4px;">
+                        <label for="cb-fee-item-7" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">7. Halting Charges :</label>
+                        <input type="number" id="val-fee-item-7" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px; margin-left: auto;">
+                    </div>
+
+                    <!-- Item 8: Other Charges -->
+                    <div class="fee-item-row" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px; flex-wrap: wrap;">
+                        <input type="checkbox" id="cb-fee-item-8" style="margin-right: 4px;">
+                        <label for="cb-fee-item-8" style="font-size: 0.85rem; min-width: 220px; margin: 0; font-weight: 500;">8. Other charges :</label>
+                        <input type="text" id="desc-fee-item-8" value="( like , postal charges)" placeholder="Description" style="flex: 1; min-width: 160px;">
+                        <input type="number" id="val-fee-item-8" min="0" step="1" placeholder="Amount (Rs.)" style="width: 140px;">
+                    </div>
+                </div>
+
+                <!-- GST & Signature Settings -->
+                <div style="grid-column: 1 / -1; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,0.02); padding: 0.5rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-color);">
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <label for="fee-conveyance" style="font-size: 0.8rem; color: #aaa; margin: 0;">Total Conveyance (Flat + Dist):</label>
-                        <input id="fee-conveyance" type="number" min="0" step="1" placeholder="Conveyance Total" style="flex: 1; font-weight: bold; color: #4CAF50;">
+                        <label for="fee-gst-pc" style="font-size: 0.8rem; color: #aaa; margin: 0;">Add GST %:</label>
+                        <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" style="width: 80px;">
+                    </div>
+                    <label style="display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; cursor: pointer; margin: 0;">
+                        <input type="checkbox" id="fee-include-signature" checked>
+                        <span><i class="fas fa-signature"></i> Include Digital Signature &amp; Stamp</span>
+                    </label>
+                    <div style="margin-left: auto; display: flex; gap: 0.5rem; align-items: center;">
+                        <label for="fee-payment-status" style="font-size: 0.8rem; color: #aaa; margin: 0;">Payment:</label>
+                        <select id="fee-payment-status" style="font-size: 0.8rem;"><option value="unpaid">Unpaid</option><option value="partially_paid">Partially paid</option><option value="paid">Paid</option></select>
+                        <select id="fee-invoice-status" style="font-size: 0.8rem;"><option value="draft">Draft</option><option value="issued">Issued</option><option value="cancelled">Cancelled</option></select>
                     </div>
                 </div>
 
-                <input id="fee-photocopy" type="number" min="0" step="1" placeholder="Photocopy / Other charges">
-                <input id="fee-gst-pc" type="number" min="0" step="0.01" value="18" placeholder="GST % (18)">
-                <div style="display: flex; flex-direction: column; gap: 0.2rem;"><label for="fee-due-date" style="font-size: 0.75rem; color: #aaa; margin: 0;">Due Date</label><input id="fee-due-date" type="date" title="Due date"></div>
-                <select id="fee-payment-status"><option value="unpaid">Unpaid</option><option value="partially_paid">Partially paid</option><option value="paid">Paid</option></select>
-                <select id="fee-invoice-status"><option value="draft">Draft</option><option value="issued">Issued</option><option value="cancelled">Cancelled</option></select>
-
-                <!-- Live Invoice Breakdown Preview -->
-                <div id="fee-live-calc-box" style="grid-column: 1 / -1; background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.35rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
-                        <span style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);"><i class="fas fa-calculator"></i> Live Invoice Breakdown:</span>
-                        <div style="font-size: 0.85rem; display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center;">
-                            <span>Prof: <strong id="preview-prof-fee">Rs. 0</strong></span>
-                            <span>+ Conv: <strong id="preview-conv-fee">Rs. 0</strong></span>
-                            <span>+ Photo: <strong id="preview-photo-fee">Rs. 0</strong></span>
-                            <span>= Taxable: <strong id="preview-taxable-fee" style="color: #60a5fa;">Rs. 0</strong></span>
-                            <span>+ GST (<span id="preview-gst-pc">18</span>%): <strong id="preview-gst-fee" style="color: #f59e0b;">Rs. 0</strong></span>
-                            <span style="font-size: 0.95rem; font-weight: bold; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 0.2rem 0.6rem; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">Gross Total: <span id="preview-gross-fee">Rs. 0</span></span>
-                        </div>
+                <!-- Live Summary Preview -->
+                <div id="fee-live-calc-box" style="grid-column: 1 / -1; background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 0.6rem 0.8rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                    <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);"><i class="fas fa-calculator"></i> SAC-997162 Summary:</span>
+                    <div style="font-size: 0.85rem; display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center;">
+                        <span>Subtotal: <strong id="preview-taxable-fee" style="color: #60a5fa;">Rs. 0</strong></span>
+                        <span>+ 18% GST: <strong id="preview-gst-fee" style="color: #f59e0b;">Rs. 0</strong></span>
+                        <span style="font-size: 0.95rem; font-weight: bold; color: #10b981; background: rgba(16, 185, 129, 0.15); padding: 0.2rem 0.6rem; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">Total: <span id="preview-gross-fee">Rs. 0</span></span>
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-primary btn-sm">Save Fee Bill</button>
+                <!-- Action Buttons -->
+                <div style="grid-column: 1 / -1; display: flex; gap: 0.75rem; justify-content: flex-end; align-items: center; flex-wrap: wrap;">
+                    <button type="button" id="fee-pdf-preview-btn" class="btn btn-secondary"><i class="fas fa-file-pdf"></i> Download Preview PDF</button>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Fee Bill</button>
+                </div>
             </form>
-            <div class="table-container"><table class="register-table"><thead><tr><th>Invoice</th><th>Claim</th><th>Type</th><th>Insurer & GSTIN</th><th>Professional</th><th>Conveyance</th><th>Photo</th><th>GST</th><th>Gross Total</th><th>Status</th></tr></thead><tbody id="fee-register-tbody"><tr><td colspan="10">Loading fee register…</td></tr></tbody></table></div>
+            <div class="table-container"><table class="register-table"><thead><tr><th>Invoice</th><th>Report No</th><th>Claim</th><th>Insurer &amp; GSTIN</th><th>Subtotal</th><th>GST</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead><tbody id="fee-register-tbody"><tr><td colspan="9">Loading fee register…</td></tr></tbody></table></div>
         </section>
 
 
