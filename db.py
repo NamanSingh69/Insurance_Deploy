@@ -1886,6 +1886,8 @@ class PostgresDB:
         report_no = bill_data.get('report_no') or bill_data.get('report_number') or ''
         date_of_accident = bill_data.get('date_of_accident') or ''
         include_signature = bool(bill_data.get('include_signature', True))
+        payment_status = bill_data.get('payment_status', 'Pending')
+        invoice_status = bill_data.get('invoice_status', 'Draft')
         fee_items = bill_data.get('fee_items') or bill_data.get('items') or []
         created_at = datetime.now().isoformat()
         fee_breakdown = {
