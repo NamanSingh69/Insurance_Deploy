@@ -360,11 +360,11 @@
                         </div>
                         <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
                             <span>KM Formula: (</span>
-                            <input type="number" id="km-fee-item-2" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="km-fee-item-2" min="0" step="0.5" placeholder="One-Way KM" oninput="if(window.applyKmFormula) window.applyKmFormula(2);" style="width: 90px; height: 24px; font-size: 0.75rem;">
                             <span>x 2 = <strong id="totkm-fee-item-2">0</strong> km @ Rs.</span>
-                            <input type="number" id="rate-fee-item-2" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="rate-fee-item-2" min="0" step="0.5" value="10" placeholder="Rate/km" oninput="if(window.applyKmFormula) window.applyKmFormula(2);" style="width: 70px; height: 24px; font-size: 0.75rem;">
                             <span>/-)</span>
-                            <button type="button" id="calc-km-btn-2" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
+                            <button type="button" id="calc-km-btn-2" class="btn btn-secondary btn-sm" onclick="if(window.applyKmFormula) window.applyKmFormula(2);" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
                         </div>
                     </div>
 
@@ -378,11 +378,11 @@
                         </div>
                         <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
                             <span>KM Formula: (</span>
-                            <input type="number" id="km-fee-item-3" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="km-fee-item-3" min="0" step="0.5" placeholder="One-Way KM" oninput="if(window.applyKmFormula) window.applyKmFormula(3);" style="width: 90px; height: 24px; font-size: 0.75rem;">
                             <span>x 2 = <strong id="totkm-fee-item-3">0</strong> km @ Rs.</span>
-                            <input type="number" id="rate-fee-item-3" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="rate-fee-item-3" min="0" step="0.5" value="10" placeholder="Rate/km" oninput="if(window.applyKmFormula) window.applyKmFormula(3);" style="width: 70px; height: 24px; font-size: 0.75rem;">
                             <span>/-)</span>
-                            <button type="button" id="calc-km-btn-3" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
+                            <button type="button" id="calc-km-btn-3" class="btn btn-secondary btn-sm" onclick="if(window.applyKmFormula) window.applyKmFormula(3);" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
                         </div>
                     </div>
 
@@ -403,11 +403,11 @@
                         </div>
                         <div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.75rem; color: #aaa; margin-left: 24px; flex-wrap: wrap;">
                             <span>KM Formula: (</span>
-                            <input type="number" id="km-fee-item-5" min="0" step="0.5" placeholder="One-Way KM" style="width: 90px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="km-fee-item-5" min="0" step="0.5" placeholder="One-Way KM" oninput="if(window.applyKmFormula) window.applyKmFormula(5);" style="width: 90px; height: 24px; font-size: 0.75rem;">
                             <span>x 2 = <strong id="totkm-fee-item-5">0</strong> km @ Rs.</span>
-                            <input type="number" id="rate-fee-item-5" min="0" step="0.5" value="10" placeholder="Rate/km" style="width: 70px; height: 24px; font-size: 0.75rem;">
+                            <input type="number" id="rate-fee-item-5" min="0" step="0.5" value="10" placeholder="Rate/km" oninput="if(window.applyKmFormula) window.applyKmFormula(5);" style="width: 70px; height: 24px; font-size: 0.75rem;">
                             <span>/-)</span>
-                            <button type="button" id="calc-km-btn-5" class="btn btn-secondary btn-sm" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
+                            <button type="button" id="calc-km-btn-5" class="btn btn-secondary btn-sm" onclick="if(window.applyKmFormula) window.applyKmFormula(5);" style="padding: 0.1rem 0.4rem; font-size: 0.7rem;">Apply KM</button>
                         </div>
                     </div>
 

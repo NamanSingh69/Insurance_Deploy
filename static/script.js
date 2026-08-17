@@ -2789,6 +2789,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     document.getElementById('fee-gst-pc')?.addEventListener('input', updateLiveFeeSummary);
 
+    window.applyKmFormula = applyKmFormula;
+    window.updateLiveFeeSummary = updateLiveFeeSummary;
+
     function openFeeBillForClaim(claim) {
         if (!claim) return;
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
