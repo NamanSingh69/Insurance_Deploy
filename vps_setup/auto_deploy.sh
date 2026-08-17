@@ -21,6 +21,8 @@ cd "$APP_DIR"
 
 # 1. Pull latest code from GitHub with safe.directory override
 log "Fetching latest changes from origin/main..."
+git config --system --add safe.directory "$APP_DIR" 2>/dev/null || true
+git -c safe.directory="$APP_DIR" remote set-url origin https://github.com/NamanSingh69/Insurance_Deploy.git 2>/dev/null || true
 git -c safe.directory="$APP_DIR" fetch origin main
 PREV_COMMIT=$(git -c safe.directory="$APP_DIR" rev-parse --short HEAD || echo "unknown")
 git -c safe.directory="$APP_DIR" reset --hard origin/main
