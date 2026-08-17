@@ -11,8 +11,11 @@ def _database():
     """Use the injected database in request tests; workers use the real store."""
     try:
         from flask import current_app
-        return current_app.config.get('DB_ADAPTER', db)
-    except RuntimeError:
+        if 'DB_ADAPTER' in current_app.config:
+            return current_app.config['DB_ADAPTER']
+        from app import sheets_db
+        return sheets_db
+    except (RuntimeError, ImportError):
         return db
 
 def create_job(user_id, kind, input_data=None):

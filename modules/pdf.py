@@ -760,6 +760,12 @@ def render_report(data, user_data_snapshot, user_id):
                         img_data = base64.b64decode(photo_b64_data)
                     except Exception:
                         pass
+                elif os.path.exists(photo_b64):
+                    try:
+                        with open(photo_b64, 'rb') as f:
+                            img_data = f.read()
+                    except Exception:
+                        pass
                 else:
                     try:
                         img_data = base64.b64decode(photo_b64)

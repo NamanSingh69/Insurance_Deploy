@@ -47,17 +47,40 @@ from modules.drive import (
 from modules.assets import get_accessible_asset_content, get_asset_for_access, read_asset_content, store_uploaded_image, store_uploaded_pdf
 from modules.jobs import create_job as create_durable_job, get_job_for_user as get_durable_job_for_user
 
+from modules.local_adapter import LocalDBAdapter
+_fallback_local_db = None
+
 class DatabaseAdapterProxy:
     def __getattr__(self, name):
+        global _fallback_local_db
         adapter = default_db
         try:
             if current_app and 'DB_ADAPTER' in current_app.config:
                 adapter = current_app.config['DB_ADAPTER']
+            elif getattr(default_db, 'pool', None) is None:
+                if _fallback_local_db is None:
+                    _fallback_local_db = LocalDBAdapter()
+                adapter = _fallback_local_db
         except RuntimeError:
-            pass # Outside application context
+            if getattr(default_db, 'pool', None) is None:
+                if _fallback_local_db is None:
+                    _fallback_local_db = LocalDBAdapter()
+                adapter = _fallback_local_db
         return getattr(adapter, name)
 
 sheets_db = DatabaseAdapterProxy()
+
+def _parse_bool(val, default=False):
+    if val is None or val == '':
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        return val.strip().lower() in ('true', '1', 'yes', 't')
+    return bool(val)
+
 
 def is_number(s):
     try:
@@ -135,19 +158,21 @@ if not _secret_key:
     else:
         raise ValueError("CRITICAL: FLASK_SECRET_KEY environment variable is not set. Refusing to start in production without it.")
 app.config['SECRET_KEY'] = _secret_key
+app.config['RATELIMIT_ENABLED'] = os.getenv('RATELIMIT_ENABLED', 'true').lower() == 'true'
 
 # --- SECURITY: Limit upload size to 100MB (user requested revert) ---
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 # --- SECURITY: Secure session cookies ---
-app.config['SESSION_COOKIE_SECURE'] = True       # Only send over HTTPS
+_cookie_secure = os.getenv('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
+app.config['SESSION_COOKIE_SECURE'] = _cookie_secure       # Only send over HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True      # JavaScript cannot access cookie
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'    # Prevent CSRF via cross-site requests
 app.config['SESSION_COOKIE_NAME'] = 'insurance_session'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 app.config['SESSION_REFRESH_EACH_REQUEST'] = False
 app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=7)
-app.config['REMEMBER_COOKIE_SECURE'] = True
+app.config['REMEMBER_COOKIE_SECURE'] = _cookie_secure
 app.config['REMEMBER_COOKIE_HTTPONLY'] = True
 app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
@@ -270,8 +295,8 @@ class User(UserMixin):
         self.signature_asset_id = user_data.get('signature_asset_id')
         self.role = user_data.get('role') or 'employee'
         self.admin_id = user_data.get('admin_id')
-        self.is_locked = bool(user_data.get('is_locked', False))
-        self.must_change_password = bool(user_data.get('must_change_password', False))
+        self.is_locked = _parse_bool(user_data.get('is_locked'), False)
+        self.must_change_password = _parse_bool(user_data.get('must_change_password'), False)
         permissions = user_data.get('permissions') or {}
         if isinstance(permissions, str):
             try:
@@ -1183,7 +1208,7 @@ def login():
         
         user_data = sheets_db.get_user_by_username(username)
         
-        if user_data and user_data.get('is_locked', False):
+        if user_data and _parse_bool(user_data.get('is_locked'), False):
             flash('This account is locked. Please contact your administrator.', 'danger')
         elif user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
             user = User(user_data)

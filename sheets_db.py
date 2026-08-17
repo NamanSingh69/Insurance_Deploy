@@ -541,4 +541,7 @@ class SheetsDB:
             print(f"Error deleting report: {e}")
             return False
 
+    def close_scoped_connection(self):
+        pass
+
 db = SheetsDB()
