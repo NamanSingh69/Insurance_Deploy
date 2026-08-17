@@ -1899,6 +1899,10 @@ def get_user_upload_url():
         'error': 'Direct uploads have been retired. Upload the PDF through the secure form instead.'
     }), 410
 
+@app.context_processor
+def inject_app_version():
+    return {'app_version': int(time.time())}
+
 # --- Main Application Routes ---
 @app.route('/')
 @login_required
