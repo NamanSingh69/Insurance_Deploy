@@ -1901,7 +1901,7 @@ def get_user_upload_url():
 
 @app.context_processor
 def inject_app_version():
-    return {'app_version': int(time.time())}
+    return {'app_version': int(_time.time())}
 
 # --- Main Application Routes ---
 @app.route('/')
