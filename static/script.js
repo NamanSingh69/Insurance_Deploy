@@ -2776,6 +2776,19 @@ document.addEventListener('DOMContentLoaded', () => {
         updateLiveFeeSummary();
     }
 
+    // Attach KM and Fee summary listeners
+    [2, 3, 5].forEach(idx => {
+        document.getElementById(`calc-km-btn-${idx}`)?.addEventListener('click', () => applyKmFormula(idx));
+        document.getElementById(`km-fee-item-${idx}`)?.addEventListener('input', () => applyKmFormula(idx));
+        document.getElementById(`rate-fee-item-${idx}`)?.addEventListener('input', () => applyKmFormula(idx));
+    });
+
+    for (let i = 1; i <= 8; i++) {
+        document.getElementById(`cb-fee-item-${i}`)?.addEventListener('change', updateLiveFeeSummary);
+        document.getElementById(`val-fee-item-${i}`)?.addEventListener('input', updateLiveFeeSummary);
+    }
+    document.getElementById('fee-gst-pc')?.addEventListener('input', updateLiveFeeSummary);
+
     function openFeeBillForClaim(claim) {
         if (!claim) return;
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
