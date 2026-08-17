@@ -2039,8 +2039,47 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
     <!-- Datalists for Insurer Master Autocompletion -->
     <datalist id="insurer-masters-datalist"></datalist>
     <datalist id="insurer-gstin-datalist"></datalist>
-    <datalist id="insurer-address-datalist"></datalist>
+    <script>
+    window.applyKmFormula = function(itemIdx) {
+        var kmInput = document.getElementById('km-fee-item-' + itemIdx);
+        var rateInput = document.getElementById('rate-fee-item-' + itemIdx);
+        var totkmSpan = document.getElementById('totkm-fee-item-' + itemIdx);
+        var valInput = document.getElementById('val-fee-item-' + itemIdx);
+        var cb = document.getElementById('cb-fee-item-' + itemIdx);
 
+        var km = parseFloat((kmInput && kmInput.value) || 0) || 0;
+        var rate = parseFloat((rateInput && rateInput.value) || 10) || 10;
+        var totKm = km * 2;
+
+        if (totkmSpan) totkmSpan.textContent = String(totKm);
+        if (valInput) valInput.value = (totKm * rate).toFixed(2);
+        if (cb) cb.checked = true;
+        if (typeof window.updateLiveFeeSummary === 'function') window.updateLiveFeeSummary();
+    };
+
+    window.updateLiveFeeSummary = function() {
+        var taxable = 0;
+        for (var i = 1; i <= 8; i++) {
+            var cb = document.getElementById('cb-fee-item-' + i);
+            var valInput = document.getElementById('val-fee-item-' + i);
+            if (cb && cb.checked && valInput) {
+                taxable += parseFloat(valInput.value || 0) || 0;
+            }
+        }
+        var gstPcInput = document.getElementById('fee-gst-pc');
+        var gstPc = parseFloat((gstPcInput && gstPcInput.value) || 18) || 18;
+        var gstAmount = taxable * (gstPc / 100);
+        var grossTotal = taxable + gstAmount;
+
+        var elTaxable = document.getElementById('preview-taxable-fee');
+        var elGstFee = document.getElementById('preview-gst-fee');
+        var elGross = document.getElementById('preview-gross-fee');
+
+        if (elTaxable) elTaxable.textContent = 'Rs. ' + taxable.toFixed(2);
+        if (elGstFee) elGstFee.textContent = 'Rs. ' + gstAmount.toFixed(2);
+        if (elGross) elGross.textContent = 'Rs. ' + grossTotal.toFixed(2);
+    };
+    </script>
     <script src="{{ url_for('static', filename='script.js') }}?v={{ app_version }}"></script>
 
 </body>
