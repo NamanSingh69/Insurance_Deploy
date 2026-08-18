@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 # local .env file.  ``override=True`` made the test suite talk to production
 # resources whenever a local .env happened to be present.
 load_dotenv()
+if os.path.exists('/etc/insurance/insurance.env'):
+    load_dotenv('/etc/insurance/insurance.env')
 import json
 import uuid
 from datetime import date, datetime, timedelta

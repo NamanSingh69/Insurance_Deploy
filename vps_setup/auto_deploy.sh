@@ -19,6 +19,12 @@ log "=== Starting Automated Deployment ==="
 
 cd "$APP_DIR"
 
+if [ -f "/etc/insurance/insurance.env" ]; then
+    set -a
+    source "/etc/insurance/insurance.env"
+    set +a
+fi
+
 # 1. Pull latest code from GitHub with safe.directory override
 log "Fetching latest changes from origin/main..."
 git config --system --add safe.directory "$APP_DIR" 2>/dev/null || true

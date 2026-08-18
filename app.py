@@ -17,6 +17,9 @@ from werkzeug.utils import secure_filename
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
+load_dotenv()
+if os.path.exists('/etc/insurance/insurance.env'):
+    load_dotenv('/etc/insurance/insurance.env')
 import google.generativeai as genai
 from google.api_core.exceptions import ResourceExhausted
 from fpdf import FPDF
