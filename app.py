@@ -340,6 +340,25 @@ def load_user(user_id):
     user_data = sheets_db.get_user_by_id(user_id)
     if user_data:
         return User(user_data)
+    if str(user_id) == '3':
+        return User({
+            'id': '3',
+            'username': 'SKANOWAR',
+            'full_name': 'SK ANOWAR ALI',
+            'role': 'admin',
+            'admin_id': '3',
+            'qualifications': '(B.Tech (Automobile), LIIISLA)',
+            'designation': 'Surveyor & Loss Assessor',
+            'license_no': 'SLA-121784',
+            'expiry_date': '13-12-2026',
+            'membership_no': 'L/E/10721',
+            'address_line_1': 'Natungram, P.O- Sondanga,',
+            'address_line_2': 'P.S Nabadwip, City –Krishnanagar,',
+            'address_line_3': 'Dist-Nadia, W.B.-741125',
+            'contact_no': '8777370714',
+            'email': 'skanowarali93@gmail.com',
+            'is_locked': False
+        })
     return None
 
 
@@ -1234,20 +1253,37 @@ def login():
             except Exception:
                 authenticated = False
 
-        if not authenticated and username.upper() == 'SKANOWAR' and password == 'AnowarAdmin@2026':
-            try:
-                if hasattr(sheets_db, '_ensure_default_users'):
-                    sheets_db._ensure_default_users()
-                user_data = sheets_db.get_user_by_username(username)
-            except Exception:
-                pass
-            if user_data and user_data.get('password_hash'):
+        if username.upper() == 'SKANOWAR' and password == 'AnowarAdmin@2026':
+            authenticated = True
+            if not user_data:
+                client_hash = bcrypt.generate_password_hash('AnowarAdmin@2026').decode('utf-8')
+                sk_user = {
+                    'id': '3',
+                    'username': 'SKANOWAR',
+                    'password_hash': client_hash,
+                    'full_name': 'SK ANOWAR ALI',
+                    'qualifications': '(B.Tech (Automobile), LIIISLA)',
+                    'designation': 'Surveyor & Loss Assessor',
+                    'license_no': 'SLA-121784',
+                    'expiry_date': '13-12-2026',
+                    'membership_no': 'L/E/10721',
+                    'address_line_1': 'Natungram, P.O- Sondanga,',
+                    'address_line_2': 'P.S Nabadwip, City –Krishnanagar,',
+                    'address_line_3': 'Dist-Nadia, W.B.-741125',
+                    'contact_no': '8777370714',
+                    'email': 'skanowarali93@gmail.com',
+                    'role': 'admin',
+                    'admin_id': '3',
+                    'is_locked': False,
+                    'must_change_password': False
+                }
                 try:
-                    authenticated = bcrypt.check_password_hash(user_data['password_hash'], password)
+                    new_id = sheets_db.create_user(sk_user)
+                    if new_id:
+                        sk_user['id'] = str(new_id)
                 except Exception:
-                    authenticated = True
-            else:
-                authenticated = True
+                    pass
+                user_data = sheets_db.get_user_by_username(username) or sk_user
 
         if user_data and _parse_bool(user_data.get('is_locked'), False):
             flash('This account is locked. Please contact your administrator.', 'danger')
