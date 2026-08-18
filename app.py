@@ -287,6 +287,24 @@ def deploy_webhook():
     except Exception:
         pass
 
+    # Reload Gunicorn master gracefully so all workers reload fresh code
+    def _reload_process():
+        import time as _t, signal as _sig, os as _os
+        _t.sleep(1)
+        try:
+            _os.kill(_os.getppid(), _sig.SIGHUP)
+        except Exception:
+            try:
+                _os.kill(_os.getppid(), _sig.SIGTERM)
+            except Exception:
+                try:
+                    _os._exit(0)
+                except Exception:
+                    pass
+
+    import threading as _thr
+    _thr.Thread(target=_reload_process).start()
+
     return jsonify({'status': 'Deployment triggered successfully'}), 200
 
 bcrypt = Bcrypt(app)
