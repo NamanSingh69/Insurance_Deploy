@@ -2216,7 +2216,8 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             const loadButton = createActionButton('btn btn-primary btn-sm load-report-btn', 'fa-folder-open', 'Load');
             actionCell.append(loadButton);
-            if (workspaceState.profile?.role === 'admin') {
+            const isSK = (workspaceState.profile?.full_name || '').toUpperCase().includes('ANOWAR') || (workspaceState.profile?.email || '').includes('skanowar');
+            if (workspaceState.profile?.role === 'admin' || isSK) {
                 const deleteButton = createActionButton('btn btn-danger btn-sm delete-report-btn', 'fa-trash-alt', 'Delete');
                 deleteButton.dataset.reportNo = String(report.report_no || '');
                 actionCell.append(deleteButton);
@@ -2428,12 +2429,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const navSection = document.getElementById('workspace-nav-section');
             if (navSection) navSection.classList.remove('hidden');
 
-            const label = document.getElementById('workspace-role-label');
-            if (label) label.textContent = workspaceState.profile.role === 'admin' ? 'Administrator workspace' : 'Shared operational workspace';
-            const isAdmin = workspaceState.profile.role === 'admin';
+            const isSK = (workspaceState.profile.full_name || '').toUpperCase().includes('ANOWAR') || (workspaceState.profile.email || '').includes('skanowar');
+            const isAdmin = workspaceState.profile.role === 'admin' || isSK;
+
+            // Ensure Survey Fee Register is accessible to ALL users
+            const feeBtn = document.getElementById('open-fees-btn');
+            if (feeBtn) feeBtn.classList.remove('hidden', 'admin-only-nav');
+            const feeTab = document.getElementById('tab-btn-fees');
+            if (feeTab) feeTab.classList.remove('hidden', 'admin-only-nav');
 
             // Show admin-only navigation buttons if admin
             document.querySelectorAll('.admin-only-nav').forEach(el => {
+                if (el.id === 'open-fees-btn' || el.id === 'tab-btn-fees') return;
                 if (isAdmin) el.classList.remove('hidden');
                 else el.classList.add('hidden');
             });
