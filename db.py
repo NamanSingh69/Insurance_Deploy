@@ -44,6 +44,7 @@ class PostgresDB:
             return
 
         self._run_migrations()
+        self._ensure_default_users()
 
         # Connect Drive API
         creds_json = os.getenv("GOOGLE_SHEETS_CREDENTIALS")
@@ -172,6 +173,75 @@ class PostgresDB:
                     print(f"Warning applying migration {filename}: {e}")
         finally:
             conn.autocommit = True
+            self.pool.putconn(conn)
+
+    def _ensure_default_users(self):
+        """Ensure default admin and employee users exist with valid credentials and unified workspace."""
+        if not self.pool:
+            return
+        conn = self.pool.getconn()
+        try:
+            import bcrypt as _bc
+            client_hash = _bc.hashpw('AnowarAdmin@2026'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
+            dev_hash = _bc.hashpw('69420'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
+            emp_hash = _bc.hashpw('UH65A#DF'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
+
+            with conn.cursor() as cur:
+                # 1. Upsert SKANOWAR (Primary Client Admin)
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'skanowar';")
+                row = cur.fetchone()
+                if not row:
+                    cur.execute("""
+                        INSERT INTO users (
+                            username, password_hash, full_name, qualifications, designation,
+                            license_no, expiry_date, membership_no, address_line_1, address_line_2,
+                            address_line_3, contact_no, email, role, admin_id, is_locked, must_change_password
+                        ) VALUES (
+                            'SKANOWAR', %s, 'SK ANOWAR ALI', '(B.Tech (Automobile), LIIISLA)',
+                            'Surveyor & Loss Assessor', 'SLA-121784', '13-12-2026', 'L/E/10721',
+                            'Natungram, P.O- Sondanga,', 'P.S Nabadwip, City –Krishnanagar,',
+                            'Dist-Nadia, W.B.-741125', '8777370714', 'skanowarali93@gmail.com',
+                            'admin', NULL, FALSE, FALSE
+                        ) RETURNING id;
+                    """, (client_hash,))
+                    client_id = cur.fetchone()[0]
+                else:
+                    client_id = row[0]
+                    cur.execute("""
+                        UPDATE users SET
+                            password_hash = %s, role = 'admin', is_locked = FALSE,
+                            full_name = 'SK ANOWAR ALI', qualifications = '(B.Tech (Automobile), LIIISLA)',
+                            designation = 'Surveyor & Loss Assessor', license_no = 'SLA-121784',
+                            expiry_date = '13-12-2026', membership_no = 'L/E/10721',
+                            address_line_1 = 'Natungram, P.O- Sondanga,', address_line_2 = 'P.S Nabadwip, City –Krishnanagar,',
+                            address_line_3 = 'Dist-Nadia, W.B.-741125', contact_no = '8777370714',
+                            email = 'skanowarali93@gmail.com'
+                        WHERE id = %s;
+                    """, (client_hash, client_id))
+
+                # 2. Ensure NAMAN is Developer Admin
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'naman';")
+                dev_row = cur.fetchone()
+                dev_id = dev_row[0] if dev_row else None
+
+                # 3. Ensure USER is employee and linked to SKANOWAR workspace
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'user';")
+                emp_row = cur.fetchone()
+                if emp_row and client_id:
+                    emp_id = emp_row[0]
+                    cur.execute("UPDATE users SET admin_id = %s, role = 'employee' WHERE id = %s;", (client_id, emp_id))
+
+                # 4. Reassign workspace
+                if client_id:
+                    cur.execute("UPDATE reports SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s;", (client_id, dev_id))
+                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s;", (client_id, dev_id))
+
+            conn.commit()
+            print(f"Ensured default users: SKANOWAR (ID {client_id}) active and provisioned.")
+        except Exception as e:
+            conn.rollback()
+            print(f"Error ensuring default users: {e}")
+        finally:
             self.pool.putconn(conn)
 
     def _init_db(self):
@@ -993,8 +1063,10 @@ class PostgresDB:
         except Exception as e:
             print(f"Error reserving report number: {e}")
             return None
-
-
+
+
+
+
     def save_report(self, user_id, report_data_dict, existing_report_id=None):
         """Saves a report to PostgreSQL natively as JSONB!
         
