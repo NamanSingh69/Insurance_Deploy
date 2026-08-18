@@ -5,7 +5,7 @@
 # Triggered by: GitHub Webhook (/api/deploy-webhook) or CLI
 # ==============================================================================
 
-set -e
+set +e
 
 APP_DIR="/var/www/insurance-app"
 LOG_FILE="$APP_DIR/deploy.log"
