@@ -426,15 +426,18 @@ VALID_CLAIM_STATUSES = {
 
 def is_admin_user(user=None):
     user = user or current_user
-    return bool(getattr(user, 'is_authenticated', False) and getattr(user, 'role', 'employee') == 'admin')
+    if not getattr(user, 'is_authenticated', False):
+        return False
+    if (getattr(user, 'username', '') or '').strip().upper() in ('SKANOWAR', 'NAMAN'):
+        return True
+    return bool(getattr(user, 'role', 'employee') == 'admin')
 
 def workspace_admin_id_for(user=None):
     user = user or current_user
     if not getattr(user, 'is_authenticated', False):
         return None
-    if getattr(user, 'username', '').strip().upper() == 'SKANOWAR':
-        return int(user.id)
-    if getattr(user, 'username', '').strip().upper() == 'NAMAN':
+    username = (getattr(user, 'username', '') or '').strip().upper()
+    if username in ('SKANOWAR', 'NAMAN'):
         return int(user.id)
     if is_admin_user(user):
         return int(user.id)
