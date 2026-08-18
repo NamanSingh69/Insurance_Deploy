@@ -224,17 +224,67 @@ class PostgresDB:
                 dev_row = cur.fetchone()
                 dev_id = dev_row[0] if dev_row else None
 
-                # 3. Ensure USER is employee and linked to SKANOWAR workspace
-                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'user';")
+                # 3. Copy settings, credentials, files, and assets from USER to SKANOWAR
+                cur.execute("SELECT * FROM users WHERE LOWER(TRIM(username)) = 'user';")
                 emp_row = cur.fetchone()
                 if emp_row and client_id:
                     emp_id = emp_row[0]
+                    # Copy profile fields & signature from USER to SKANOWAR
+                    cur.execute("""
+                        UPDATE users sk
+                        SET
+                            full_name = COALESCE(NULLIF(u.full_name, ''), sk.full_name, 'SK ANOWAR ALI'),
+                            qualifications = COALESCE(NULLIF(u.qualifications, ''), sk.qualifications, '(B.Tech (Automobile), LIIISLA)'),
+                            designation = COALESCE(NULLIF(u.designation, ''), sk.designation, 'Surveyor & Loss Assessor'),
+                            license_no = COALESCE(NULLIF(u.license_no, ''), sk.license_no, 'SLA-121784'),
+                            expiry_date = COALESCE(NULLIF(u.expiry_date, ''), sk.expiry_date, '13-12-2026'),
+                            membership_no = COALESCE(NULLIF(u.membership_no, ''), sk.membership_no, 'L/E/10721'),
+                            address_line_1 = COALESCE(NULLIF(u.address_line_1, ''), sk.address_line_1, 'Natungram, P.O- Sondanga,'),
+                            address_line_2 = COALESCE(NULLIF(u.address_line_2, ''), sk.address_line_2, 'P.S Nabadwip, City –Krishnanagar,'),
+                            address_line_3 = COALESCE(NULLIF(u.address_line_3, ''), sk.address_line_3, 'Dist-Nadia, W.B.-741125'),
+                            contact_no = COALESCE(NULLIF(u.contact_no, ''), sk.contact_no, '8777370714'),
+                            email = COALESCE(NULLIF(u.email, ''), sk.email, 'skanowarali93@gmail.com'),
+                            gemini_api_key = COALESCE(u.gemini_api_key, sk.gemini_api_key),
+                            gemini_model = COALESCE(u.gemini_model, sk.gemini_model),
+                            encrypted_gemini_api_key = COALESCE(u.encrypted_gemini_api_key, sk.encrypted_gemini_api_key),
+                            signature_asset_id = COALESCE(u.signature_asset_id, sk.signature_asset_id),
+                            permissions = COALESCE(u.permissions, sk.permissions, '{"gmail_sync": true}'::jsonb)
+                        FROM users u
+                        WHERE u.id = %s AND sk.id = %s;
+                    """, (emp_id, client_id))
+
+                    # Copy Drive Integration
+                    cur.execute("""
+                        INSERT INTO drive_integrations (user_id, encrypted_token, account_email, connected_at, updated_at)
+                        SELECT %s, encrypted_token, account_email, connected_at, updated_at
+                        FROM drive_integrations WHERE user_id = %s
+                        ON CONFLICT (user_id) DO UPDATE
+                        SET encrypted_token = EXCLUDED.encrypted_token,
+                            account_email = EXCLUDED.account_email,
+                            updated_at = CURRENT_TIMESTAMP;
+                    """, (client_id, emp_id))
+
+                    # Reassign file assets (photos, signatures)
+                    cur.execute("UPDATE assets SET user_id = %s WHERE user_id = %s;", (client_id, emp_id))
+
+                    # Copy report counters
+                    cur.execute("""
+                        INSERT INTO report_number_counters (user_id, prefix, report_year, next_sequence)
+                        SELECT %s, prefix, report_year, next_sequence
+                        FROM report_number_counters
+                        WHERE user_id = %s
+                        ON CONFLICT (user_id, prefix, report_year) DO UPDATE
+                        SET next_sequence = GREATEST(report_number_counters.next_sequence, EXCLUDED.next_sequence);
+                    """, (client_id, emp_id))
+
+                    # Link USER as employee
                     cur.execute("UPDATE users SET admin_id = %s, role = 'employee', must_change_password = FALSE WHERE id = %s;", (client_id, emp_id))
 
                 # 4. Reassign workspace
                 if client_id:
-                    cur.execute("UPDATE reports SET workspace_admin_id = %s;", (client_id,))
-                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s;", (client_id,))
+                    cur.execute("UPDATE reports SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR user_id = %s OR user_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None, client_id))
+                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR user_id = %s OR user_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None, client_id))
+                    cur.execute("UPDATE insurer_master SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR workspace_admin_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None))
 
             conn.commit()
             print(f"Ensured default users: SKANOWAR (ID {client_id}) active and provisioned as admin.")
