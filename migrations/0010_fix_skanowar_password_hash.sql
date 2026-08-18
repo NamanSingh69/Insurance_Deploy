@@ -1,4 +1,4 @@
--- Migration 0009: Primary Client Admin Provisioning & Workspace Reassignment
+-- Migration 0010: Fix SKANOWAR password hash and ensure valid credentials
 
 DO $$
 DECLARE
@@ -6,7 +6,6 @@ DECLARE
     dev_admin_id INTEGER;
     emp_user_id INTEGER;
 BEGIN
-    -- 1. Insert or update SKANOWAR (Primary Client Admin)
     IF NOT EXISTS (SELECT 1 FROM users WHERE LOWER(TRIM(username)) = 'skanowar') THEN
         INSERT INTO users (
             username, password_hash, full_name, qualifications, designation,
@@ -33,7 +32,8 @@ BEGIN
         ) RETURNING id INTO client_admin_id;
     ELSE
         UPDATE users
-        SET role = 'admin',
+        SET password_hash = '$2b$12$8Airc4KcKtll/a.ySWe2n.TEH.k3AdLm4P0bWkCIQ2TDH1dYDNmeu',
+            role = 'admin',
             full_name = 'SK ANOWAR ALI',
             qualifications = '(B.Tech (Automobile), LIIISLA)',
             designation = 'Surveyor & Loss Assessor',
@@ -50,18 +50,10 @@ BEGIN
         RETURNING id INTO client_admin_id;
     END IF;
 
-    -- 2. Preserve NAMAN as Developer Admin
-    UPDATE users
-    SET role = 'admin',
-        full_name = 'Naman Singh',
-        designation = 'Developer & Administrator',
-        email = 'naman@skinsurance.tech',
-        is_locked = FALSE
-    WHERE LOWER(TRIM(username)) = 'naman'
-    RETURNING id INTO dev_admin_id;
-
-    -- 3. Link USER employee account to SKANOWAR admin workspace
+    -- Also link USER employee and reassign workspace
+    SELECT id INTO dev_admin_id FROM users WHERE LOWER(TRIM(username)) = 'naman';
     SELECT id INTO emp_user_id FROM users WHERE LOWER(TRIM(username)) = 'user';
+
     IF emp_user_id IS NOT NULL AND client_admin_id IS NOT NULL THEN
         UPDATE users
         SET admin_id = client_admin_id,
@@ -69,7 +61,6 @@ BEGIN
         WHERE id = emp_user_id;
     END IF;
 
-    -- 4. Reassign workspace ownership of reports & fee bills to SKANOWAR
     IF client_admin_id IS NOT NULL THEN
         UPDATE reports
         SET workspace_admin_id = client_admin_id
