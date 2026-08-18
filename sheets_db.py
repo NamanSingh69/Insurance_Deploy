@@ -479,25 +479,22 @@ class SheetsDB:
             self.reports_worksheet.append_row(row_data)
             return new_id
 
-    def get_user_reports(self, user_id):
-        """Fetches full reports for a user, reassembling JSON chunks."""
+    def get_user_reports(self, user_id=None):
+        """Fetches full reports for the workspace, reassembling JSON chunks."""
         if not self.reports_worksheet: self.connect()
         try:
             records = self.reports_worksheet.get_all_records()
             user_reports = []
             for record in records:
-                if str(record.get('user_id')) == str(user_id):
-                    json_chunks = []
-                    json_chunks.append(record.get('report_data_json', ''))
-                    for i in range(2, MAX_JSON_CHUNKS + 1):
-                        key = f"report_data_json_{i}"
-                        json_chunks.append(record.get(key, ''))
-                        
-                    full_json = self._reassemble_json_chunks(json_chunks)
-                    if full_json:
-                        pass
-                    record['report_data_json'] = full_json
-                    user_reports.append(record)
+                json_chunks = []
+                json_chunks.append(record.get('report_data_json', ''))
+                for i in range(2, MAX_JSON_CHUNKS + 1):
+                    key = f"report_data_json_{i}"
+                    json_chunks.append(record.get(key, ''))
+                    
+                full_json = self._reassemble_json_chunks(json_chunks)
+                record['report_data_json'] = full_json
+                user_reports.append(record)
             return user_reports
         except Exception as e:
             print(f"Error getting reports: {e}")
