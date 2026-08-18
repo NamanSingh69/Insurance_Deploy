@@ -27,12 +27,11 @@ fi
 
 # 1. Pull latest code from GitHub with safe.directory override
 log "Fetching latest changes from origin/main..."
-git config --system --add safe.directory "$APP_DIR" 2>/dev/null || true
-export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"
-git -c safe.directory="$APP_DIR" fetch origin main
-PREV_COMMIT=$(git -c safe.directory="$APP_DIR" rev-parse --short HEAD || echo "unknown")
-git -c safe.directory="$APP_DIR" reset --hard origin/main
-NEW_COMMIT=$(git -c safe.directory="$APP_DIR" rev-parse --short HEAD || echo "unknown")
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+git -c safe.directory="*" fetch origin main || git fetch origin main
+PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+git -c safe.directory="*" reset --hard origin/main || git reset --hard origin/main
+NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
 
 # 2. Make scripts executable and configure daily backup cron
