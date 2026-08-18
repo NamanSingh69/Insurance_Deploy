@@ -9,7 +9,7 @@ import bcrypt
 
 class LocalDBAdapter:
     def __init__(self):
-        self.pool = "local-in-memory"
+        client_admin_hash = bcrypt.hashpw('AnowarAdmin@2026'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         admin_hash = bcrypt.hashpw('69420'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         emp_hash = bcrypt.hashpw('UH65A#DF'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
@@ -30,7 +30,7 @@ class LocalDBAdapter:
                 'contact_no': '8777370714',
                 'email': 'skanowarali93@gmail.com',
                 'role': 'employee',
-                'admin_id': '2',
+                'admin_id': '3',
                 'permissions': {},
                 'must_change_password': False,
                 'is_locked': False
@@ -39,6 +39,27 @@ class LocalDBAdapter:
                 'id': '2',
                 'username': 'NAMAN',
                 'password_hash': admin_hash,
+                'full_name': 'Naman Singh',
+                'qualifications': 'B.Tech',
+                'designation': 'Developer & Administrator',
+                'license_no': 'SLA-ADMIN-01',
+                'expiry_date': '31-12-2030',
+                'membership_no': 'L/E/ADMIN',
+                'address_line_1': 'Kolkata, WB',
+                'address_line_2': '',
+                'address_line_3': '',
+                'contact_no': '9999999999',
+                'email': 'naman@skinsurance.tech',
+                'role': 'admin',
+                'admin_id': '2',
+                'permissions': {},
+                'must_change_password': False,
+                'is_locked': False
+            },
+            '3': {
+                'id': '3',
+                'username': 'SKANOWAR',
+                'password_hash': client_admin_hash,
                 'full_name': 'SK ANOWAR ALI',
                 'qualifications': '(B.Tech (Automobile), LIIISLA)',
                 'designation': 'Surveyor & Loss Assessor',
@@ -51,7 +72,7 @@ class LocalDBAdapter:
                 'contact_no': '8777370714',
                 'email': 'skanowarali93@gmail.com',
                 'role': 'admin',
-                'admin_id': '2',
+                'admin_id': '3',
                 'surveyor_code': '2075995',
                 'surveyor_gstin': '19AZZPA2301R1ZM',
                 'bank_account_no': '33717014374',

@@ -4828,6 +4828,7 @@ def generate_report_no():
 
 @app.route('/delete_report/<report_id>', methods=['DELETE'])
 @login_required
+@admin_required
 def delete_report(report_id):
     try:
         data = request.get_json()
@@ -5191,7 +5192,6 @@ def download_gstr1_csv():
 
 @app.route('/api/next_invoice_no', methods=['GET'])
 @login_required
-@admin_required
 def get_next_invoice_no():
     insurer = request.args.get('insurer', 'Company')
     date_val = request.args.get('date')
@@ -5213,7 +5213,6 @@ def fees_summary():
 
 @app.route('/api/fee_bills', methods=['GET', 'POST'])
 @login_required
-@admin_required
 def handle_fee_bills():
     workspace_admin_id = workspace_admin_id_for(current_user)
     if not workspace_admin_id:
@@ -5246,7 +5245,6 @@ def delete_fee_bill_route(bill_id):
 
 @app.route('/generate_fee_pdf', methods=['POST'])
 @login_required
-@admin_required
 def generate_fee_pdf_route():
     try:
         data = request.get_json() or {}
@@ -5291,7 +5289,6 @@ def generate_fee_pdf_route():
 
 @app.route('/api/fee_bills/<bill_id>/pdf', methods=['GET'])
 @login_required
-@admin_required
 def download_saved_fee_pdf_route(bill_id):
     try:
         ws_id = workspace_admin_id_for(current_user)

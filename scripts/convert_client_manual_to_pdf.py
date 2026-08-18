@@ -1,9 +1,18 @@
 """
-Convert docs/CLIENT_USER_MANUAL_AND_CHANGELOG.md to a highly detailed, professional PDF
+Convert docs/CLIENT_USER_MANUAL_AND_CHANGELOG.md to a comprehensive, professional PDF
 with embedded high-resolution screenshots, formatted tables, mathematical formulas, and branding.
 """
 import os
 import sys
+
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+try:
+    import fpdf
+    import PIL
+except ImportError:
+    sys.path.insert(0, os.path.join(base_dir, 'test_deps'))
+    sys.path.insert(0, os.path.join(base_dir, 'venv', 'lib', 'site-packages'))
+
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
@@ -68,7 +77,6 @@ class ClientManualPDF(FPDF):
         lines = self.multi_cell(180, 4.2, f"{title}\n{text}", dry_run=True, output="LINES")
         box_height = max(16, len(lines) * 4.4 + 6)
         
-        # Check if box exceeds page
         if self.get_y() + box_height > 280:
             self.add_page()
             
@@ -88,8 +96,7 @@ class ClientManualPDF(FPDF):
         if not os.path.exists(image_path):
             return
         
-        # Estimated height for 175mm width (typically 16:9 or 16:10 -> ~90-100mm)
-        img_height = 82
+        img_height = 80
         if self.get_y() + img_height + 12 > 280:
             self.add_page()
             
@@ -134,7 +141,7 @@ def generate_pdf():
     pdf.set_font('Helvetica', '', 8.5)
     pdf.set_text_color(203, 213, 225)
     pdf.set_x(14)
-    pdf.cell(0, 5, 'Production Platform: https://skinsurance.tech  |  Release Version: v2.2.0 (August 2026)', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, 'Production Platform: https://skinsurance.tech  |  Release Version: v2.3.0 (August 2026 Production Build)', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     
     pdf.set_y(52)
     
@@ -147,7 +154,7 @@ def generate_pdf():
     pdf.set_text_color(30, 41, 59)
     pdf.cell(35, 4.5, 'Client / Surveyor:', new_x=XPos.RIGHT, new_y=YPos.TOP)
     pdf.set_font('Helvetica', '', 8.5)
-    pdf.cell(140, 4.5, 'Sk Anowar Ali (Motor Surveyor & Loss Assessor)', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(140, 4.5, 'Sk Anowar Ali (Licensed Motor Surveyor & Loss Assessor)', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     
     pdf.set_x(18)
     pdf.set_font('Helvetica', 'B', 8.5)
@@ -159,107 +166,81 @@ def generate_pdf():
     pdf.set_font('Helvetica', 'B', 8.5)
     pdf.cell(35, 4.5, 'Scope of Release:', new_x=XPos.RIGHT, new_y=YPos.TOP)
     pdf.set_font('Helvetica', '', 8.5)
-    pdf.cell(140, 4.5, 'Requirements R1-R6, Role Partitioning, GST Fee Calculations & Zero-Friction CI/CD', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(140, 4.5, 'Word Fee Bill Generator, Dual Invoicing, Document Reminders, Photo Fixes, Role Security & CI/CD', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     
     pdf.ln(5)
     
     # Section 1
     pdf.section_heading('1. Executive Summary & Enhancements Overview')
     pdf.paragraph(
-        "This release delivers major upgrades to the Motor Survey Management platform at skinsurance.tech. "
+        "This production release (v2.3.0) delivers a complete operational upgrade to the Motor Survey Management platform at skinsurance.tech. "
         "The system provides complete operational automation for survey job tracking, document collection reminders, "
-        "master insurer directory setup, whole-rupee professional fee calculations, and vehicle damage photo uploads."
+        "master insurer directory setup, official Word-replica professional fee billing, and vehicle damage photo attachments."
     )
     
-    pdf.sub_heading('Summary of Core Enhancements (R1 - R6)')
-    pdf.bullet_point("R1 - In-Place Dashboard Drilldown", "Clicking any KPI card filters claims immediately below the cards without losing context.")
-    pdf.bullet_point("R2 - Missing Documents Checklist Modal", "Granular document tracking with dynamic custom items and multi-cycle reminder notices.")
-    pdf.bullet_point("R3 - Insurer Master Management", "Centralized directory for Insurer addresses, GSTINs, default rates, and billing prefixes.")
-    pdf.bullet_point("R4 - Smart Auto-Prefix & Invoicing", "Auto-derives standard acronyms (NIC, OGI, UIIC) and fetches sequential invoice numbers.")
-    pdf.bullet_point("R5 - Fee Stepper & Live Summary", "Whole-rupee precision (step=1) and real-time live card showing Taxable, 18% GST, and Gross Total.")
-    pdf.bullet_point("R6 - Photo Upload Diagnostics", "Batch drag-and-drop HD vehicle photo uploader with client-side throttling to prevent false quota errors.")
-    pdf.bullet_point("Role Security & Redaction", "Employee role (USER) is completely restricted from fee registers, billing routes, and financial KPIs.")
-    pdf.bullet_point("Automated Push-to-Deploy", "Direct GitHub webhook pipeline deploying code updates in ~3 seconds with dynamic cache-busting.")
+    pdf.sub_heading('Summary of Core Enhancements')
+    pdf.bullet_point("1. Word Template Fee Bill Generator", "Pixel-perfect replica of the official Word template (rgi fees with signature.docx) with checkbox line items, automatic conveyance formulas, 18% GST, and digital seal/signature toggles.")
+    pdf.bullet_point("2. Dual Fee Invoicing Workflow", "Seamlessly generate fee bills linked to claim survey reports (Report No. auto-linked) or standalone fee bills with sequential numbers (NIC-0001, OGI-0001).")
+    pdf.bullet_point("3. In-Place Dashboard Drilldown", "Clicking any KPI card filters claims immediately below the cards without losing workspace context.")
+    pdf.bullet_point("4. Missing Documents Checklist Modal", "Granular document tracking with dynamic custom items and 3-cycle automated reminder notices.")
+    pdf.bullet_point("5. Insurer Master Management", "Centralized directory for Insurer addresses, GSTINs, default rates, and billing prefixes.")
+    pdf.bullet_point("6. Damage Photo Upload & PDF Fix", "Drag-and-drop HD photo uploader with normalized PDF embedding, eliminating 'Error loading image' issues.")
+    pdf.bullet_point("7. Role Security & Financial Redaction", "Employee role (USER) is completely restricted from fee registers, billing routes, and financial revenue KPIs.")
+    pdf.bullet_point("8. Automated 1-Click CI/CD", "Direct push-to-deploy pipeline running over authenticated HTTPS webhooks with automated asset cache-busting.")
     
-    # ==================== PAGE 2: R1 & R2 ====================
+    # ==================== PAGE 2: FEE BILL GENERATOR & WORKFLOW ====================
     pdf.add_page()
-    pdf.section_heading('2. Feature Walkthrough & Visual Proof')
+    pdf.section_heading('2. Feature Walkthrough & Operating Guide')
     
-    pdf.sub_heading('Feature 1: Operational Dashboard & In-Place Drilldown (Requirement R1)')
-    pdf.bullet_point("Where to Find", "Click the 'Dashboard' navigation tab on the top menu.")
-    pdf.bullet_point("How it Works", "Clicking any KPI metric card (e.g. Documents Awaited) highlights the card with a blue border (.active-metric-card) and opens the filtered claims table directly below the KPI grid in #dashboard-drilldown-section.")
+    pdf.sub_heading('Feature 1: Official Motor Survey Fee Bill Generator (Word Template Replica)')
+    pdf.bullet_point("Where to Find", "In the top navigation bar, open the 'Survey Fee Register' tab (#tab-fees).")
+    pdf.bullet_point("How it Works", "Select dynamic line-item checkboxes for Final Survey Fees, Local/KM Conveyance, 2nd Visit Conveyance, Re-inspection, Photos, Halting charges, and Other charges. Calculates Taxable Subtotal, SAC Code 997162, 18% GST, and Gross Total.")
     
-    r1_img = os.path.join(docs_dir, 'evidence_r1_dashboard_drilldown.png')
-    pdf.embed_screenshot(r1_img, 'Requirement R1: In-place claim drilldown rendered directly below dashboard KPI cards')
-    
-    pdf.ln(1)
-    pdf.sub_heading('Feature 2: Missing Documents Checklist & Reminders Modal (Requirement R2)')
-    pdf.bullet_point("Where to Find", "In the Claim Register, click the 'Docs' button on any active claim row.")
-    pdf.bullet_point("How it Works", "Opens a checklist modal showing required documents (RC, DL, Policy, Claim Form, FIR, Estimate). Allows adding custom documents and tracks 7-day 3-cycle reminder notices.")
-    
-    r2_img = os.path.join(docs_dir, 'evidence_r2_docs_modal.png')
-    pdf.embed_screenshot(r2_img, 'Requirement R2: Pending documents checklist modal with instant status toggles and reminder tracking')
-    
-    # ==================== PAGE 3: R3 & R4 ====================
-    pdf.add_page()
-    pdf.sub_heading('Feature 3: Master Insurer Directory & Setup (Requirement R3)')
-    pdf.bullet_point("Where to Find", "In the Survey Fee Register, click '+ Manage Insurer Masters' (.open-insurer-master-modal-btn).")
-    pdf.bullet_point("How it Works", "Allows storing Insurer Name, Branch Address, GSTIN, Default Rate/Km, and Invoice Prefix. Selecting an insurer auto-fills all billing and address fields.")
-    
-    r3_img = os.path.join(docs_dir, 'evidence_r3_insurer_master_btn.png')
-    pdf.embed_screenshot(r3_img, 'Requirement R3: Master insurer configuration modal for managing branch offices, GSTINs, and default rates')
-    
-    pdf.ln(1)
-    pdf.sub_heading('Feature 4: Smart Auto-Prefix & Sequential Invoice Numbering (Requirement R4)')
-    pdf.bullet_point("Where to Find", "In the Survey Fee Register form under the Insurer input field.")
-    pdf.bullet_point("How it Works", "Typing 'National Insurance Company' auto-derives 'NIC' prefix and auto-fills the next sequential invoice number (e.g. NIC-0001).")
-    
-    r4_img = os.path.join(docs_dir, 'evidence_r4_auto_invoice_prefix.png')
-    pdf.embed_screenshot(r4_img, 'Requirement R4: Smart uppercase acronym auto-prefixing (NIC-0001, OGI-0001) and sequential numbering')
-    
-    # ==================== PAGE 4: R5 & R6 ====================
-    pdf.add_page()
-    pdf.sub_heading('Feature 5: Professional Fee Stepper & Live Calculation Summary (Requirement R5)')
-    pdf.bullet_point("Where to Find", "In the Survey Fee Register form under professional fee and conveyance inputs.")
-    pdf.bullet_point("How it Works", "Enforces whole-rupee increments (step=1). Real-time summary card dynamically computes Taxable Amount, 18% GST, and Gross Total.")
+    fee_form_img = os.path.join(docs_dir, 'admin_02_fee_register_form.png')
+    pdf.embed_screenshot(fee_form_img, 'Survey Fee Register Form with Checkbox Line Items & Live Calculations')
     
     pdf.callout_box(
-        "Live Calculation Mathematical Formula",
-        "Taxable Amount = Professional Fee + Total Conveyance + Photocopy Charges\n"
-        "GST (18%) = Taxable Amount x 0.18\n"
-        "Gross Total = Taxable Amount + GST (18%)\n"
-        "Example: Rs. 1,500 (Prof) + Rs. 500 (Conv) + Rs. 200 (Photo) = Rs. 2,200 Taxable | Rs. 396 GST | Rs. 2,596 Gross Total"
+        "Official Conveyance & GST Calculation Formula",
+        "Conveyance Formula: <From> to <To> (<One-Way KM> x 2 = <Total KM> km @ Rs. <Rate>/-)\n"
+        "Taxable Amount = Selected Fee Items (Survey + Conveyance + Photos + Halting + Misc)\n"
+        "GST Amount (18%) = Taxable Amount x 0.18\n"
+        "Gross Bill Total = Taxable Amount + GST Amount (18%)\n"
+        "Example: Rs. 1,500 (Survey) + Rs. 500 (Conv) + Rs. 200 (Photo) = Rs. 2,200 Taxable | Rs. 396 GST | Rs. 2,596 Gross Total"
     )
     
-    r5_img = os.path.join(docs_dir, 'evidence_r5_live_fee_calculation.png')
-    pdf.embed_screenshot(r5_img, 'Requirement R5: Integer rupee fee inputs and live calculation summary card with 18% GST computation')
+    # ==================== PAGE 3: PREVIEW BILL & DUAL INVOICING ====================
+    pdf.add_page()
+    pdf.sub_heading('Feature 2: Word Template Replica PDF Output & Dual Invoicing')
+    pdf.bullet_point("Word Template Replica", "Generates pixel-perfect fee bills matching rgi fees with signature.docx including Surveyor Header, Insurer GSTIN, 2-Column Claim info, and Bank Account Footer.")
+    pdf.bullet_point("Dual Invoicing Workflow", "Supports Claim-linked bills (Report No. auto-linked) and Standalone bills with sequential Bill No. (e.g. NIC-0001).")
+    
+    fee_preview_img = os.path.join(docs_dir, 'admin_03_preview_fee_bill_page_1.png')
+    pdf.embed_screenshot(fee_preview_img, 'Official Word-Replica Fee Bill Generated PDF Output with Stamp & Bank Details')
+    
+    # ==================== PAGE 4: DASHBOARD, MASTERS & PHOTOS ====================
+    pdf.add_page()
+    pdf.sub_heading('Feature 3: Operational Dashboard & Role-Based Permissions')
+    pdf.bullet_point("Dashboard Drilldown", "Clicking any KPI card highlights it and renders the filtered claims table directly below without reloading.")
+    pdf.bullet_point("Role Security", "Admin (NAMAN) has full access to financial tools, while Employee (USER) has financial fee registers redacted for business privacy.")
+    
+    navbar_img = os.path.join(docs_dir, 'admin_01_navbar_badge.png')
+    pdf.embed_screenshot(navbar_img, 'Top Navigation Bar with Admin Role Badge and Tab Access')
     
     pdf.ln(1)
-    pdf.sub_heading('Feature 6: Damage Photo Upload Diagnostics & Throttling (Requirement R6)')
-    pdf.bullet_point("Where to Find", "In the Upload & Documents section under Vehicle Damage Photos.")
-    pdf.bullet_point("How it Works", "Supports drag-and-drop batch upload of HD photos with client-side rate limit throttling to eliminate false storage quota errors.")
-    
-    r6_img = os.path.join(docs_dir, 'evidence_r6_photo_upload.png')
-    pdf.embed_screenshot(r6_img, 'Requirement R6: Vehicle damage photo upload dropzone with real-time thumbnail previews and throttling')
-    
-    # ==================== PAGE 5: ROLE REDACTION & SYSTEM DEPLOYMENT ====================
-    pdf.add_page()
-    pdf.sub_heading('Feature 7: Dual-Role Team Permissions & Financial Redaction')
-    pdf.bullet_point("Administrator Role (NAMAN)", "Full unrestricted access to operational claims, fee registers, GST exports, user accounts, and billing masters.")
-    pdf.bullet_point("Employee Role (USER)", "Operational access for claim registrations and report drafting. Survey Fee Register tab and revenue metrics are completely hidden and API blocked (403 Forbidden).")
-    
-    role_img = os.path.join(docs_dir, 'evidence_employee_financial_redaction.png')
-    pdf.embed_screenshot(role_img, 'Role Partitioning: Complete financial fee register redaction and revenue KPI hiding for employee accounts')
+    pdf.sub_heading('Feature 4: Insurer Masters, Documents Checklist & Photo Fixes')
+    pdf.bullet_point("Master Insurer Directory", "Stores company GSTINs, branch addresses, default rates, and auto-prefix rules.")
+    pdf.bullet_point("Documents Checklist", "Granular checklist with 7-day automated client reminder notices.")
+    pdf.bullet_point("Photo Embedding Fix", "Stream normalization in background workers guarantees clean rendering in survey reports.")
     
     pdf.section_heading('3. Automated Backups & System Maintenance')
-    pdf.bullet_point("Daily Nightly Backup Cron", "Automatically executes pg_dump to /root/backups/ every night and purges backups older than 14 days.")
+    pdf.bullet_point("Daily Nightly Backup Cron", "Automatically dumps and compresses the PostgreSQL database every night to /root/backups/ with 14-day rotation.")
     pdf.bullet_point("Automated SSL Renewal", "Let's Encrypt SSL certificates renew automatically via certbot.timer on Nginx.")
-    pdf.bullet_point("Push-to-Deploy Webhook", "Every GitHub commit automatically triggers /api/deploy-webhook, updating the site in ~3 seconds.")
+    pdf.bullet_point("1-Click Push-to-Deploy", "Running 'python scripts/deploy.py' triggers the authenticated webhook on the VPS in ~3 seconds.")
     
     webhook_img = os.path.join(docs_dir, 'webhook_delivery_1_1786828833808.png')
     pdf.embed_screenshot(webhook_img, 'Automated CI/CD: Verified GitHub Webhook push-to-deploy pipeline (HTTP 200 OK in 0.75s)')
     
-    # ==================== PAGE 6: USER CREDENTIALS & SUMMARY ====================
+    # ==================== PAGE 6: CREDENTIALS & CLIENT ADVICE ====================
     pdf.add_page()
     pdf.section_heading('4. User Credentials & Access Summary')
     pdf.paragraph("The table below details default login credentials and permission scopes configured on https://skinsurance.tech:")
@@ -284,13 +265,15 @@ def generate_pdf():
     
     pdf.ln(5)
     pdf.callout_box(
-        "Client Operational Advice",
+        "Client Operational Advice & Google OAuth Setup",
+        "- Google OAuth Redirect URIs: Set Web application URIs to:\n"
+        "  * Google Drive: https://skinsurance.tech/auth/google/callback\n"
+        "  * Gmail Sync: https://skinsurance.tech/auth/gmail/callback\n"
         "- Password Customization: Passwords can be changed anytime via Settings -> User Profile.\n"
-        "- Browser Caching: Asset cache-busting (?v=commit_sha) ensures updates reflect immediately without clearing browser cache.\n"
-        "- Client Support: For assistance or custom report template modifications, contact the developer."
+        "- Cache-Busting: All updates reflect immediately without needing to clear browser cache.\n"
+        "- Developer Contact: For support or custom report adjustments, reach out directly."
     )
     
-    # Save outputs
     output_pdf_docs = os.path.join(docs_dir, 'CLIENT_USER_MANUAL_AND_CHANGELOG.pdf')
     output_pdf_downloads = os.path.join(downloads_dir, 'CLIENT_USER_MANUAL_AND_CHANGELOG.pdf')
     

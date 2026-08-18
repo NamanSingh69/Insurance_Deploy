@@ -2215,9 +2215,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 return button;
             };
             const loadButton = createActionButton('btn btn-primary btn-sm load-report-btn', 'fa-folder-open', 'Load');
-            const deleteButton = createActionButton('btn btn-danger btn-sm delete-report-btn', 'fa-trash-alt', 'Delete');
-            deleteButton.dataset.reportNo = String(report.report_no || '');
-            actionCell.append(loadButton, deleteButton);
+            actionCell.append(loadButton);
+            if (workspaceState.profile?.role === 'admin') {
+                const deleteButton = createActionButton('btn btn-danger btn-sm delete-report-btn', 'fa-trash-alt', 'Delete');
+                deleteButton.dataset.reportNo = String(report.report_no || '');
+                actionCell.append(deleteButton);
+            }
         });
         addSavedReportActionListeners();
     }
@@ -2404,13 +2407,9 @@ document.addEventListener('DOMContentLoaded', () => {
             claimsSec.classList.remove('hidden');
             tabClaims?.classList.add('active');
         } else if (viewName === 'fees') {
-            if (workspaceState.profile?.role === 'admin') {
-                feesSec.classList.remove('hidden');
-                tabFees?.classList.add('active');
-            } else {
-                claimsSec.classList.remove('hidden');
-                tabClaims?.classList.add('active');
-            }
+            feesSec.classList.remove('hidden');
+            tabFees?.classList.add('active');
+            fetchFees();
         }
 
         // Scroll smoothly to top of workspace active navigation bar
@@ -2466,7 +2465,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
 
-            await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), workspaceState.profile.role === 'admin' ? fetchFees() : Promise.resolve()]);
+            await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), fetchFees()]);
             checkPending7DayAlerts();
         } catch (error) {
             console.error('Could not initialize motor survey workspace:', error);
@@ -3245,7 +3244,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchFees() {
         const tbody = document.getElementById('fee-register-tbody');
-        if (!tbody || workspaceState.profile?.role !== 'admin') return;
+        if (!tbody) return;
         try {
             const month = document.getElementById('fee-month-filter')?.value;
             const res = await fetch(`/api/fee_bills${month ? `?month=${encodeURIComponent(month)}` : ''}`);
@@ -3255,12 +3254,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 tbody.innerHTML = '<tr><td colspan="9">No fee register rows found.</td></tr>';
                 return;
             }
+            const isAdmin = workspaceState.profile?.role === 'admin';
             tbody.innerHTML = bills.map(bill => {
                 const insurerDisplay = bill.insurer_gst ? `${escapeHtml(bill.insurer_name || '')}<br><small style="color:#aaa;">GST: ${escapeHtml(bill.insurer_gst)}</small>` : escapeHtml(bill.insurer_name || '—');
                 const claimDisplay = `${escapeHtml(bill.claim_no || '—')}<br><small style="color:#aaa;">${escapeHtml(bill.vehicle_no || '')}</small>`;
                 const taxable = bill.taxable_amount ?? (bill.professional_fee || 0);
                 const gst = bill.gst_amount ?? 0;
                 const total = bill.total_amount ?? bill.gross_invoice_value ?? 0;
+                const deleteBtnHtml = isAdmin ? `<button type="button" class="btn btn-secondary btn-sm delete-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Delete"><i class="fas fa-trash"></i></button>` : '';
                 return `<tr>
                     <td><strong>${escapeHtml(bill.invoice_no || '—')}</strong><br><small style="color:#aaa;">${escapeHtml(bill.invoice_date || '')}</small></td>
                     <td>${escapeHtml(bill.report_no || '—')}</td>
@@ -3272,7 +3273,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td><span class="badge badge-outline">${escapeHtml(bill.payment_status || 'unpaid')}</span></td>
                     <td style="white-space: nowrap;">
                         <button type="button" class="btn btn-secondary btn-sm download-saved-fee-pdf-btn" data-bill-id="${escapeHtml(bill.id)}" title="Download PDF"><i class="fas fa-file-pdf"></i> PDF</button>
-                        <button type="button" class="btn btn-secondary btn-sm delete-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Delete"><i class="fas fa-trash"></i></button>
+                        ${deleteBtnHtml}
                     </td>
                 </tr>`;
             }).join('');

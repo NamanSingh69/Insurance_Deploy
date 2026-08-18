@@ -69,17 +69,18 @@ def test_employee_cannot_access_financial_or_user_management_routes(client, mock
     employee = _employee(mock_user)
     _authenticate_as(client, mock_sheets_db, employee)
 
-    requests = [
-        ('get', '/api/fee_bills'),
+    restricted_requests = [
+        ('delete', '/delete_report/test-report-id'),
+        ('delete', '/api/fee_bills/test-bill-id'),
         ('get', '/api/fees_summary'),
         ('get', '/download_fees_excel?month=2026-07'),
+        ('get', '/download_gstr1_csv?month=2026-07'),
         ('get', '/download_consolidated_csv?from_date=2026-07-01&to_date=2026-07-31'),
-        ('get', '/api/next_invoice_no'),
-        ('post', '/generate_fee_pdf'),
         ('get', '/api/admin/users'),
+        ('get', '/api/admin/backup/download'),
     ]
-    for method, path in requests:
-        response = getattr(client, method)(path, json={} if method == 'post' else None)
+    for method, path in restricted_requests:
+        response = getattr(client, method)(path, json={'password': 'pass'} if method == 'delete' else None)
         assert response.status_code == 403
 
     gmail_response = client.post('/api/gmail/sync', json={})
@@ -371,4 +372,56 @@ def test_employee_cannot_download_unshared_legacy_report_of_another_user(client,
 
     response = client.get('/download/report_pdf/unshared-legacy-999')
     assert response.status_code == 404
+
+
+def test_primary_client_admin_shares_workspace_with_employee(client, mock_sheets_db, mock_user):
+    """Verify primary client admin (SKANOWAR) workspace loads reports created by employee (USER)."""
+    client_admin = dict(mock_user)
+    client_admin.update({
+        'id': '3',
+        'username': 'SKANOWAR',
+        'role': 'admin',
+        'admin_id': '3',
+        'full_name': 'SK ANOWAR ALI',
+    })
+    _authenticate_as(client, mock_sheets_db, client_admin)
+
+    mock_sheets_db.get_workspace_reports_page.return_value = {
+        'items': [
+            {'id': 'rep-1', 'report_no': 'REP-001', 'insured_name': 'Test Insured', 'workspace_admin_id': 3, 'user_id': 1}
+        ],
+        'page': 1, 'page_size': 50, 'total': 1
+    }
+
+    response = client.get('/api/claims')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['total'] == 1
+    assert data['items'][0]['id'] == 'rep-1'
+
+
+def test_employee_can_save_fee_bill_and_fetch_next_invoice_no(client, mock_sheets_db, mock_user):
+    """Verify employee can generate next invoice number and save fee bills in the shared workspace."""
+    employee = _employee(mock_user, admin_id='3')
+    _authenticate_as(client, mock_sheets_db, employee)
+
+    mock_sheets_db.get_next_invoice_number.return_value = 'NIC-0005'
+    mock_sheets_db.save_fee_bill.return_value = 'bill-123'
+    mock_sheets_db.get_workspace_fee_bills.return_value = [{'id': 'bill-123', 'invoice_no': 'NIC-0005'}]
+
+    # Test next invoice no
+    res_inv = client.get('/api/next_invoice_no?insurer=National')
+    assert res_inv.status_code == 200
+    assert res_inv.get_json()['invoice_no'] == 'NIC-0005'
+
+    # Test save fee bill
+    res_save = client.post('/api/fee_bills', json={'invoice_no': 'NIC-0005', 'professional_fee': 1500})
+    assert res_save.status_code == 201
+    assert res_save.get_json()['id'] == 'bill-123'
+
+    # Test fetch fee bills in workspace
+    res_get = client.get('/api/fee_bills')
+    assert res_get.status_code == 200
+    assert len(res_get.get_json()) == 1
+
 

@@ -151,17 +151,17 @@ def build_pdf():
     pdf.set_font('Helvetica', 'B', 8.5)
     pdf.set_fill_color(226, 232, 240)
     pdf.cell(45, 6, 'Capability / Feature', 1, 0, 'L', True)
-    pdf.cell(70, 6, 'Administrator (NAMAN)', 1, 0, 'L', True)
+    pdf.cell(70, 6, 'Client Admin (SKANOWAR)', 1, 0, 'L', True)
     pdf.cell(65, 6, 'Employee (USER)', 1, 1, 'L', True)
     
     pdf.set_font('Helvetica', '', 8)
     roles_table = [
         ("Dashboard Claims", "Full View & In-Place Drilldown", "Full View & In-Place Drilldown"),
         ("Financial Revenue KPIs", "Visible (Total Invoiced, Cash Received)", "Completely Hidden & Redacted"),
-        ("Claim Register & Reports", "Create, Edit, Finalize, PDF Download", "Create, Edit, Draft, PDF Download"),
-        ("Survey Fee Register", "Full Access (Create, Edit, Delete, Bill)", "Hidden (Tab removed, 403 Forbidden)"),
+        ("Claim Register & Reports", "Create, Edit, Finalize, Delete, PDF", "Search, Create, Edit, Draft, PDF (No Delete)"),
+        ("Survey Fee Register", "Full Access (Create, Edit, Delete, Bill)", "Create, Edit & Generate PDF (No Delete)"),
         ("Insurer Master Setup", "Add, Edit, Configure Default Rates", "No Access"),
-        ("GSTR-1 / CA Exports", "Full Excel & B2B CSV Export", "No Access"),
+        ("GSTR-1 / CA Exports", "Full Excel & B2B CSV Export", "No Access (403 Forbidden)"),
     ]
     for row in roles_table:
         pdf.cell(45, 5.2, row[0], 1, 0, 'L')
@@ -303,20 +303,25 @@ def build_pdf():
     pdf.set_font('Helvetica', 'B', 8.5)
     pdf.set_fill_color(226, 232, 240)
     pdf.cell(50, 6, 'Account Role', 1, 0, 'L', True)
-    pdf.cell(50, 6, 'Username', 1, 0, 'L', True)
-    pdf.cell(40, 6, 'Default Password', 1, 0, 'L', True)
-    pdf.cell(40, 6, 'Primary Purpose', 1, 1, 'L', True)
+    pdf.cell(40, 6, 'Username', 1, 0, 'L', True)
+    pdf.cell(45, 6, 'Default Password', 1, 0, 'L', True)
+    pdf.cell(45, 6, 'Primary Purpose', 1, 1, 'L', True)
     
     pdf.set_font('Helvetica', '', 8)
-    pdf.cell(50, 5.5, 'Administrator', 1, 0, 'L')
-    pdf.cell(50, 5.5, 'NAMAN', 1, 0, 'L')
-    pdf.cell(40, 5.5, '69420', 1, 0, 'L')
-    pdf.cell(40, 5.5, 'Full Workspace & Finance', 1, 1, 'L')
+    pdf.cell(50, 5.5, 'Primary Client Admin', 1, 0, 'L')
+    pdf.cell(40, 5.5, 'SKANOWAR', 1, 0, 'L')
+    pdf.cell(45, 5.5, 'AnowarAdmin@2026', 1, 0, 'L')
+    pdf.cell(45, 5.5, 'Full Client Workspace & Finance', 1, 1, 'L')
+
+    pdf.cell(50, 5.5, 'Developer Admin', 1, 0, 'L')
+    pdf.cell(40, 5.5, 'NAMAN', 1, 0, 'L')
+    pdf.cell(45, 5.5, '69420', 1, 0, 'L')
+    pdf.cell(45, 5.5, 'System & Developer Admin', 1, 1, 'L')
     
     pdf.cell(50, 5.5, 'Employee / Field Staff', 1, 0, 'L')
-    pdf.cell(50, 5.5, 'USER', 1, 0, 'L')
-    pdf.cell(40, 5.5, 'UH65A#DF', 1, 0, 'L')
-    pdf.cell(40, 5.5, 'Claims & Reports Only', 1, 1, 'L')
+    pdf.cell(40, 5.5, 'USER', 1, 0, 'L')
+    pdf.cell(45, 5.5, 'UH65A#DF', 1, 0, 'L')
+    pdf.cell(45, 5.5, 'Claims, Reports & Fee Bills', 1, 1, 'L')
     
     pdf.ln(6)
     pdf.set_font('Helvetica', 'B', 9)
