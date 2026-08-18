@@ -45,13 +45,13 @@ if [ -f "$APP_DIR/venv/bin/activate" ]; then
     source "$APP_DIR/venv/bin/activate"
     pip install -r requirements.txt --quiet || true
     log "Applying database migrations..."
-    python -c "from db import SheetsDB; db = SheetsDB(); db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv(); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
 elif [ -f "$APP_DIR/.venv/bin/activate" ]; then
     log "Synchronizing Python virtual environment dependencies (.venv)..."
     source "$APP_DIR/.venv/bin/activate"
     pip install -r requirements.txt --quiet || true
     log "Applying database migrations..."
-    python -c "from db import SheetsDB; db = SheetsDB(); db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv(); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
 fi
 
 # 4. Restart services

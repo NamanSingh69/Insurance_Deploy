@@ -2380,4 +2380,5 @@ class PostgresDB:
 
 
 db = PostgresDB()
+SheetsDB = PostgresDB
 
