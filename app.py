@@ -57,16 +57,32 @@ class DatabaseAdapterProxy:
         try:
             if current_app and 'DB_ADAPTER' in current_app.config:
                 adapter = current_app.config['DB_ADAPTER']
-            elif getattr(default_db, 'pool', None) is None:
-                if _fallback_local_db is None:
-                    _fallback_local_db = LocalDBAdapter()
-                adapter = _fallback_local_db
+            else:
+                if getattr(default_db, 'pool', None) is None:
+                    try:
+                        default_db.connect()
+                    except Exception:
+                        pass
+                if getattr(default_db, 'pool', None) is None:
+                    if _fallback_local_db is None:
+                        _fallback_local_db = LocalDBAdapter()
+                    adapter = _fallback_local_db
         except RuntimeError:
+            if getattr(default_db, 'pool', None) is None:
+                try:
+                    default_db.connect()
+                except Exception:
+                    pass
             if getattr(default_db, 'pool', None) is None:
                 if _fallback_local_db is None:
                     _fallback_local_db = LocalDBAdapter()
                 adapter = _fallback_local_db
         return getattr(adapter, name)
+
+try:
+    default_db.connect()
+except Exception:
+    pass
 
 sheets_db = DatabaseAdapterProxy()
 
