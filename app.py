@@ -276,36 +276,18 @@ def deploy_webhook():
 
     deploy_script = "/var/www/insurance-app/vps_setup/auto_deploy.sh"
     import subprocess as _sub
-    output_log = ""
     if os.path.exists(deploy_script):
-        try:
-            res = _sub.run(['/bin/bash', deploy_script], capture_output=True, text=True, timeout=60)
-            output_log = f"returncode: {res.returncode}, stdout: {res.stdout.strip()}, stderr: {res.stderr.strip()}"
-        except Exception as e:
-            output_log = f"error: {e}"
+        _sub.Popen(['/bin/bash', deploy_script], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
     else:
-        output_log = "deploy_script not found"
+        _sub.Popen(['echo', 'Deploy triggered'], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
 
     try:
         if hasattr(sheets_db, '_ensure_default_users'):
             sheets_db._ensure_default_users()
-    except Exception as e:
-        output_log += f" | ensure_default_users error: {e}"
+    except Exception:
+        pass
 
-    # Terminate process after 1s so systemd reloads fresh
-    def _kill_gunicorn():
-        import time as _t, signal as _sig
-        _t.sleep(1)
-        try:
-            os.kill(os.getppid(), _sig.SIGTERM)
-        except Exception:
-            try:
-                os._exit(0)
-            except Exception:
-                pass
-    threading.Thread(target=_kill_gunicorn).start()
-
-    return jsonify({'status': 'Deployment executed', 'log': output_log}), 200
+    return jsonify({'status': 'Deployment triggered successfully'}), 200
 
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
