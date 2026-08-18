@@ -274,9 +274,11 @@ def deploy_webhook():
     if not hmac.compare_digest(signature, computed_hash):
         return jsonify({'error': 'Invalid signature'}), 403
 
+    is_bundle = False
     try:
         req_json = request.get_json(silent=True) or {}
         if 'bundle_zip' in req_json:
+            is_bundle = True
             import base64 as _b64, zipfile as _zip, io as _io
             zip_bytes = _b64.b64decode(req_json['bundle_zip'])
             app_dir = "/var/www/insurance-app"
@@ -288,13 +290,17 @@ def deploy_webhook():
     deploy_script = "/var/www/insurance-app/vps_setup/auto_deploy.sh"
     import subprocess as _sub
     if os.path.exists(deploy_script):
-        _sub.Popen(['/bin/bash', deploy_script], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
+        cmd = ['/bin/bash', deploy_script]
+        if is_bundle:
+            cmd.append('bundle')
+        _sub.Popen(cmd, stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
     else:
         _sub.Popen(['echo', 'Deploy triggered'], stdout=_sub.DEVNULL, stderr=_sub.DEVNULL)
 
     try:
-        if hasattr(sheets_db, '_ensure_default_users'):
-            sheets_db._ensure_default_users()
+        from db import db as _postgres_db
+        if hasattr(_postgres_db, '_ensure_default_users'):
+            _postgres_db._ensure_default_users()
     except Exception:
         pass
 

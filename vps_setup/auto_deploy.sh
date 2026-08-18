@@ -25,15 +25,21 @@ if [ -f "/etc/insurance/insurance.env" ]; then
     set +a
 fi
 
-# 1. Pull latest code from GitHub with safe.directory override and authentication
-log "Fetching latest changes from origin/main..."
-GH_AUTH_URL="https://oauth2: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@github.com/NamanSingh69/Insurance_Deploy.git"
-git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
-git -c safe.directory="*" fetch "$GH_AUTH_URL" main 2>/dev/null || git fetch origin main 2>/dev/null || true
-PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-git -c safe.directory="*" reset --hard FETCH_HEAD 2>/dev/null || git reset --hard origin/main 2>/dev/null || true
-NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
+# 1. Pull latest code from GitHub if not in bundle mode
+if [ "$1" = "bundle" ] || [ -f "$APP_DIR/.bundle_deploy" ]; then
+    log "Bundle mode active; skipping git fetch/reset and preserving extracted files."
+    rm -f "$APP_DIR/.bundle_deploy" 2>/dev/null || true
+else
+    log "Checking for Git updates..."
+    if git -c safe.directory="*" fetch origin main 2>/dev/null; then
+        PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        git -c safe.directory="*" reset --hard origin/main 2>/dev/null || true
+        NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
+    else
+        log "Git fetch failed or offline; keeping current directory."
+    fi
+fi
 
 # 2. Make scripts executable and configure daily backup cron
 chmod +x "$APP_DIR/vps_setup/"*.sh 2>/dev/null || true
@@ -44,10 +50,10 @@ fi
 # 3. Update Python dependencies & apply database migrations
 if [ -f "$APP_DIR/venv/bin/activate" ]; then
     source "$APP_DIR/venv/bin/activate"
-    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect(); db._ensure_default_users();" 2>&1 | tee -a "$LOG_FILE" || true
 elif [ -f "$APP_DIR/.venv/bin/activate" ]; then
     source "$APP_DIR/.venv/bin/activate"
-    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect(); db._ensure_default_users();" 2>&1 | tee -a "$LOG_FILE" || true
 fi
 
 # 4. Restart services

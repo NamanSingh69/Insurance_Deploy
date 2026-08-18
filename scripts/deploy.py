@@ -36,7 +36,7 @@ def create_bundle_zip():
     buffer = io.BytesIO()
     
     include_files = ['app.py', 'db.py', 'sheets_db.py', 'worker.py', 'requirements.txt', 'config.py']
-    include_dirs = ['templates', 'static', 'modules', 'vps_setup', 'scripts']
+    include_dirs = ['templates', 'static', 'modules', 'vps_setup', 'scripts', 'migrations']
     
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         for f in include_files:
@@ -51,6 +51,7 @@ def create_bundle_zip():
                         fp = os.path.join(dirpath, fn)
                         rel_path = os.path.relpath(fp, root_dir)
                         zf.write(fp, arcname=rel_path)
+        zf.writestr('.bundle_deploy', '1')
                         
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
