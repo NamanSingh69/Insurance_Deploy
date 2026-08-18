@@ -62,14 +62,18 @@ fi
 
 # 4. Restart services
 log "Reloading application services..."
-if sudo systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
+if sudo /bin/systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
+    log "Restarted via sudo /bin/systemctl."
+elif sudo systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
     log "Restarted via sudo systemctl."
 elif systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
     log "Restarted via systemctl."
 else
-    log "Falling back to SIGHUP reload for Gunicorn and worker refresh..."
-    pkill -HUP -f gunicorn || true
-    pkill -f "python.*worker.py" || true
+    log "Restarting processes via process termination..."
+    pkill -TERM -f gunicorn || true
+    pkill -TERM -f "python.*worker.py" || true
+    sleep 2
+    pkill -9 -f gunicorn || true
 fi
 
 # 5. Verify local health check
