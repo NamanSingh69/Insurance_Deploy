@@ -12,6 +12,10 @@ import hashlib
 import json
 import time
 import sys
+import os
+import io
+import zipfile
+import base64
 
 BASE_URL = "https://skinsurance.tech"
 WEBHOOK_SECRET = "surveyorportal-deploy-2026"
@@ -26,6 +30,30 @@ def run_cmd(cmd):
             print(res.stdout.strip())
     return res.returncode == 0
 
+def create_bundle_zip():
+    """Create in-memory zip archive of application files."""
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    buffer = io.BytesIO()
+    
+    include_files = ['app.py', 'db.py', 'sheets_db.py', 'worker.py', 'requirements.txt', 'config.py']
+    include_dirs = ['templates', 'static', 'modules', 'vps_setup', 'scripts']
+    
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for f in include_files:
+            p = os.path.join(root_dir, f)
+            if os.path.isfile(p):
+                zf.write(p, arcname=f)
+        for d in include_dirs:
+            dp = os.path.join(root_dir, d)
+            if os.path.isdir(dp):
+                for dirpath, _, filenames in os.walk(dp):
+                    for fn in filenames:
+                        fp = os.path.join(dirpath, fn)
+                        rel_path = os.path.relpath(fp, root_dir)
+                        zf.write(fp, arcname=rel_path)
+                        
+    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+
 def main():
     print("==================================================")
     print(">>> AUTOMATED 1-CLICK DEPLOYMENT TO PRODUCTION VPS")
@@ -36,9 +64,15 @@ def main():
     print("\n[Step 1/3] Pushing latest commits to GitHub origin/main...")
     run_cmd("git push origin main")
 
-    # 2. Trigger signed deployment webhook on production VPS
-    print("\n[Step 2/3] Triggering secure deployment webhook on VPS...")
-    payload = json.dumps({"ref": "refs/heads/main", "action": "push"}).encode("utf-8")
+    # 2. Package bundle and trigger signed deployment webhook on production VPS
+    print("\n[Step 2/3] Triggering secure deployment webhook on VPS with application bundle...")
+    bundle_b64 = create_bundle_zip()
+    payload_dict = {
+        "ref": "refs/heads/main",
+        "action": "push",
+        "bundle_zip": bundle_b64
+    }
+    payload = json.dumps(payload_dict).encode("utf-8")
     signature = "sha256=" + hmac.new(WEBHOOK_SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
     headers = {
@@ -47,14 +81,14 @@ def main():
     }
 
     try:
-        resp = requests.post(f"{BASE_URL}/api/deploy-webhook", data=payload, headers=headers, timeout=30)
-        print(f"Webhook Response: HTTP {resp.status_code} -> {resp.text.strip()}")
+        resp = requests.post(f"{BASE_URL}/api/deploy-webhook", data=payload, headers=headers, timeout=45)
+        print(f"Webhook Response: HTTP {resp.status_code} -> {resp.text.strip()[:200]}")
     except Exception as e:
         print(f"Webhook request failed: {e}")
 
     # 3. Poll liveness & health check
     print("\n[Step 3/3] Verifying production deployment health...")
-    time.sleep(3)
+    time.sleep(4)
     for attempt in range(1, 6):
         try:
             h_resp = requests.get(f"{BASE_URL}/healthz", timeout=10)

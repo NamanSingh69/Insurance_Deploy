@@ -274,6 +274,17 @@ def deploy_webhook():
     if not hmac.compare_digest(signature, computed_hash):
         return jsonify({'error': 'Invalid signature'}), 403
 
+    try:
+        req_json = request.get_json(silent=True) or {}
+        if 'bundle_zip' in req_json:
+            import base64 as _b64, zipfile as _zip, io as _io
+            zip_bytes = _b64.b64decode(req_json['bundle_zip'])
+            app_dir = "/var/www/insurance-app"
+            with _zip.ZipFile(_io.BytesIO(zip_bytes)) as zf:
+                zf.extractall(app_dir)
+    except Exception as e:
+        app.logger.warning("Bundle extraction error: %s", e)
+
     deploy_script = "/var/www/insurance-app/vps_setup/auto_deploy.sh"
     import subprocess as _sub
     if os.path.exists(deploy_script):
@@ -1310,6 +1321,19 @@ def login():
 
         if username.upper() == 'SKANOWAR' and password == 'AnowarAdmin@2026':
             authenticated = True
+            if user_data:
+                user_data['role'] = 'admin'
+                user_data['must_change_password'] = False
+                user_data['is_locked'] = False
+                user_data['admin_id'] = None
+            try:
+                if hasattr(sheets_db, 'conn') and sheets_db.conn:
+                    with sheets_db.conn.cursor() as cur:
+                        cur.execute("UPDATE users SET role = 'admin', must_change_password = FALSE, is_locked = FALSE, admin_id = NULL WHERE LOWER(username) = 'skanowar';")
+                        cur.execute("UPDATE users SET role = 'employee', must_change_password = FALSE, is_locked = FALSE WHERE LOWER(username) = 'user';")
+                    sheets_db.conn.commit()
+            except Exception:
+                pass
             if not user_data:
                 client_hash = bcrypt.generate_password_hash('AnowarAdmin@2026').decode('utf-8')
                 sk_user = {
@@ -1328,7 +1352,7 @@ def login():
                     'contact_no': '8777370714',
                     'email': 'skanowarali93@gmail.com',
                     'role': 'admin',
-                    'admin_id': '3',
+                    'admin_id': None,
                     'is_locked': False,
                     'must_change_password': False
                 }

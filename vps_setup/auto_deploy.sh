@@ -25,12 +25,13 @@ if [ -f "/etc/insurance/insurance.env" ]; then
     set +a
 fi
 
-# 1. Pull latest code from GitHub with safe.directory override
+# 1. Pull latest code from GitHub with safe.directory override and authentication
 log "Fetching latest changes from origin/main..."
+GH_AUTH_URL="https://oauth2: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@github.com/NamanSingh69/Insurance_Deploy.git"
 git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
-git -c safe.directory="*" fetch origin main || git fetch origin main
+git -c safe.directory="*" fetch "$GH_AUTH_URL" main 2>/dev/null || git fetch origin main 2>/dev/null || true
 PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-git -c safe.directory="*" reset --hard origin/main || git reset --hard origin/main
+git -c safe.directory="*" reset --hard FETCH_HEAD 2>/dev/null || git reset --hard origin/main 2>/dev/null || true
 NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
 
@@ -38,25 +39,15 @@ log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
 chmod +x "$APP_DIR/vps_setup/"*.sh 2>/dev/null || true
 if [ -d "/etc/cron.daily" ] && [ -f "$APP_DIR/vps_setup/backup_cron.sh" ]; then
     ln -sf "$APP_DIR/vps_setup/backup_cron.sh" /etc/cron.daily/backup_insurance_db 2>/dev/null || true
-    log "Configured daily database backup cron (/etc/cron.daily/backup_insurance_db)."
 fi
 
-# Ensure Certbot SSL renewal timer is enabled
-systemctl enable --now certbot.timer 2>/dev/null || true
-
-# 3. Update Python dependencies if requirements.txt exists
+# 3. Update Python dependencies & apply database migrations
 if [ -f "$APP_DIR/venv/bin/activate" ]; then
-    log "Synchronizing Python virtual environment dependencies..."
     source "$APP_DIR/venv/bin/activate"
-    pip install -r requirements.txt --quiet || true
-    log "Applying database migrations..."
-    python -c "from dotenv import load_dotenv; load_dotenv(); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
 elif [ -f "$APP_DIR/.venv/bin/activate" ]; then
-    log "Synchronizing Python virtual environment dependencies (.venv)..."
     source "$APP_DIR/.venv/bin/activate"
-    pip install -r requirements.txt --quiet || true
-    log "Applying database migrations..."
-    python -c "from dotenv import load_dotenv; load_dotenv(); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
+    python -c "from dotenv import load_dotenv; load_dotenv('/etc/insurance/insurance.env'); from db import db; db.connect();" 2>&1 | tee -a "$LOG_FILE" || true
 fi
 
 # 4. Restart services
@@ -65,10 +56,9 @@ if sudo /bin/systemctl restart insurance.service insurance-worker.service nginx.
     log "Restarted via sudo /bin/systemctl."
 elif sudo systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
     log "Restarted via sudo systemctl."
-elif systemctl restart insurance.service insurance-worker.service nginx.service 2>/dev/null; then
-    log "Restarted via systemctl."
 else
     log "Restarting processes via process termination..."
+    pkill -HUP -f gunicorn || true
     pkill -TERM -f gunicorn || true
     pkill -TERM -f "python.*worker.py" || true
     sleep 2

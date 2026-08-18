@@ -28,7 +28,7 @@
                     <div style="display: flex; align-items: center; gap: 0.75rem;">
                         <span style="color: var(--text-secondary); font-size: 0.9rem; margin-right: 0.25rem;">
                             Welcome, <strong>{{ current_user.username }}</strong>
-                            {% if current_user.role == 'admin' %}
+                            {% if current_user.role == 'admin' or current_user.username == 'SKANOWAR' or current_user.username == 'NAMAN' %}
                                 <span class="badge" style="background:#dc2626; color:#fff; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:600;"><i class="fas fa-shield-alt"></i> Admin</span>
                             {% else %}
                                 <span class="badge" style="background:#2563eb; color:#fff; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:600;"><i class="fas fa-user"></i> Employee</span>
