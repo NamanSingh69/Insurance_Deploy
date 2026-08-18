@@ -1153,8 +1153,8 @@ class PostgresDB:
         page = max(1, int(page))
         page_size = min(100, max(1, int(page_size)))
         pattern = f"%{(search_query or '').strip()}%"
-        filters = ["(workspace_admin_id = %s OR workspace_admin_id IS NULL)", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
-        params = [workspace_admin_id, (search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
+        filters = ["1=1", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
+        params = [(search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
         if status:
             filters.append("status = %s")
             params.append(status)
@@ -1196,12 +1196,8 @@ class PostgresDB:
         page = max(1, int(page))
         page_size = min(100, max(1, int(page_size)))
         pattern = f"%{(search_query or '').strip()}%"
-        if workspace_admin_id:
-            ownership_sql = "(workspace_admin_id = %s OR workspace_admin_id IS NULL OR user_id = %s)"
-            params = [workspace_admin_id, user_id]
-        else:
-            ownership_sql = "(workspace_admin_id IS NULL OR user_id = %s)"
-            params = [user_id]
+        ownership_sql = "1=1"
+        params = []
         filters = [
             ownership_sql,
             "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)",
@@ -1236,13 +1232,8 @@ class PostgresDB:
             self.connect()
         if not self.conn:
             return None
+        ownership_sql = "1=1"
         params = [report_id]
-        if workspace_admin_id:
-            ownership_sql = "(workspace_admin_id = %s OR workspace_admin_id IS NULL OR user_id = %s)"
-            params.extend([workspace_admin_id, user_id])
-        else:
-            ownership_sql = "(workspace_admin_id IS NULL OR user_id = %s)"
-            params.append(user_id)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(f"SELECT * FROM reports WHERE id = %s AND {ownership_sql};", tuple(params))
@@ -1252,12 +1243,12 @@ class PostgresDB:
             print(f"Error fetching accessible report: {e}")
             return None
 
-    def get_workspace_report_by_id(self, report_id, workspace_admin_id):
+    def get_workspace_report_by_id(self, report_id, workspace_admin_id=None):
         if not self.conn: self.connect()
         if not self.conn: return None
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM reports WHERE id = %s AND (workspace_admin_id = %s OR workspace_admin_id IS NULL);", (report_id, workspace_admin_id))
+                cur.execute("SELECT * FROM reports WHERE id = %s;", (report_id,))
                 row = cur.fetchone()
                 return self._report_row_to_dict(row) if row else None
         except Exception as e:
@@ -2187,12 +2178,12 @@ class PostgresDB:
             return [b for b in self._memory_fee_bills if str(b.get('user_id')) == str(user_id)]
         return []
 
-    def get_workspace_fee_bills(self, workspace_admin_id, month=None, insurer=None, report_id=None):
+    def get_workspace_fee_bills(self, workspace_admin_id=None, month=None, insurer=None, report_id=None):
         if not self.conn: self.connect()
         if not self.conn:
-            return [b for b in getattr(self, '_memory_fee_bills', []) if b.get('workspace_admin_id') == workspace_admin_id]
-        filters = ['(workspace_admin_id = %s OR workspace_admin_id IS NULL)']
-        params = [workspace_admin_id]
+            return getattr(self, '_memory_fee_bills', [])
+        filters = ['1=1']
+        params = []
         if month:
             filters.append("TO_CHAR(invoice_date::date, 'YYYY-MM') = %s")
             params.append(month)
