@@ -292,6 +292,19 @@ def deploy_webhook():
     except Exception as e:
         output_log += f" | ensure_default_users error: {e}"
 
+    # Terminate process after 1s so systemd reloads fresh
+    def _kill_gunicorn():
+        import time as _t, signal as _sig
+        _t.sleep(1)
+        try:
+            os.kill(os.getppid(), _sig.SIGTERM)
+        except Exception:
+            try:
+                os._exit(0)
+            except Exception:
+                pass
+    threading.Thread(target=_kill_gunicorn).start()
+
     return jsonify({'status': 'Deployment executed', 'log': output_log}), 200
 
 bcrypt = Bcrypt(app)
@@ -327,6 +340,13 @@ class User(UserMixin):
         self.admin_id = user_data.get('admin_id')
         self.is_locked = _parse_bool(user_data.get('is_locked'), False)
         self.must_change_password = _parse_bool(user_data.get('must_change_password'), False)
+        if (self.username or '').strip().upper() == 'SKANOWAR':
+            self.role = 'admin'
+            self.must_change_password = False
+            self.admin_id = None
+        elif (self.username or '').strip().upper() == 'USER':
+            self.role = 'employee'
+            self.must_change_password = False
         permissions = user_data.get('permissions') or {}
         if isinstance(permissions, str):
             try:
@@ -350,14 +370,21 @@ class User(UserMixin):
 def load_user(user_id):
     user_data = sheets_db.get_user_by_id(user_id)
     if user_data:
+        if (user_data.get('username') or '').strip().upper() == 'SKANOWAR':
+            user_data['role'] = 'admin'
+            user_data['must_change_password'] = False
+            user_data['admin_id'] = None
+        elif (user_data.get('username') or '').strip().upper() == 'USER':
+            user_data['role'] = 'employee'
+            user_data['must_change_password'] = False
         return User(user_data)
-    if str(user_id) == '3':
+    if str(user_id) in ('3', '10'):
         return User({
-            'id': '3',
+            'id': str(user_id),
             'username': 'SKANOWAR',
             'full_name': 'SK ANOWAR ALI',
             'role': 'admin',
-            'admin_id': '3',
+            'admin_id': None,
             'qualifications': '(B.Tech (Automobile), LIIISLA)',
             'designation': 'Surveyor & Loss Assessor',
             'license_no': 'SLA-121784',
@@ -368,7 +395,8 @@ def load_user(user_id):
             'address_line_3': 'Dist-Nadia, W.B.-741125',
             'contact_no': '8777370714',
             'email': 'skanowarali93@gmail.com',
-            'is_locked': False
+            'is_locked': False,
+            'must_change_password': False
         })
     return None
 
@@ -387,11 +415,27 @@ def workspace_admin_id_for(user=None):
     user = user or current_user
     if not getattr(user, 'is_authenticated', False):
         return None
+    if getattr(user, 'username', '').strip().upper() == 'SKANOWAR':
+        return int(user.id)
+    if getattr(user, 'username', '').strip().upper() == 'NAMAN':
+        return int(user.id)
     if is_admin_user(user):
         return int(user.id)
     admin_id = getattr(user, 'admin_id', None)
+    if admin_id:
+        try:
+            return int(admin_id)
+        except (TypeError, ValueError):
+            pass
+    # For employee USER, dynamically resolve to SKANOWAR's workspace
     try:
-        return int(admin_id) if admin_id is not None else None
+        sk = sheets_db.get_user_by_username('SKANOWAR')
+        if sk and sk.get('id'):
+            return int(sk['id'])
+    except Exception:
+        pass
+    try:
+        return int(user.id)
     except (TypeError, ValueError):
         return None
 

@@ -209,7 +209,7 @@ class PostgresDB:
                     client_id = row[0]
                     cur.execute("""
                         UPDATE users SET
-                            password_hash = %s, role = 'admin', is_locked = FALSE,
+                            password_hash = %s, role = 'admin', is_locked = FALSE, must_change_password = FALSE, admin_id = NULL,
                             full_name = 'SK ANOWAR ALI', qualifications = '(B.Tech (Automobile), LIIISLA)',
                             designation = 'Surveyor & Loss Assessor', license_no = 'SLA-121784',
                             expiry_date = '13-12-2026', membership_no = 'L/E/10721',
@@ -229,15 +229,15 @@ class PostgresDB:
                 emp_row = cur.fetchone()
                 if emp_row and client_id:
                     emp_id = emp_row[0]
-                    cur.execute("UPDATE users SET admin_id = %s, role = 'employee' WHERE id = %s;", (client_id, emp_id))
+                    cur.execute("UPDATE users SET admin_id = %s, role = 'employee', must_change_password = FALSE WHERE id = %s;", (client_id, emp_id))
 
                 # 4. Reassign workspace
                 if client_id:
-                    cur.execute("UPDATE reports SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s;", (client_id, dev_id))
-                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s;", (client_id, dev_id))
+                    cur.execute("UPDATE reports SET workspace_admin_id = %s;", (client_id,))
+                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s;", (client_id,))
 
             conn.commit()
-            print(f"Ensured default users: SKANOWAR (ID {client_id}) active and provisioned.")
+            print(f"Ensured default users: SKANOWAR (ID {client_id}) active and provisioned as admin.")
         except Exception as e:
             conn.rollback()
             print(f"Error ensuring default users: {e}")
