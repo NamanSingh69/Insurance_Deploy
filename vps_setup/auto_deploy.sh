@@ -31,14 +31,17 @@ if [ "$1" = "bundle" ] || [ -f "$APP_DIR/.bundle_deploy" ]; then
     rm -f "$APP_DIR/.bundle_deploy" 2>/dev/null || true
 else
     log "Checking for Git updates..."
-    if git -c safe.directory="*" fetch origin main 2>/dev/null; then
-        PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        git -c safe.directory="*" reset --hard origin/main 2>/dev/null || true
-        NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-        log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
+    git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+    if [ -n "$GITHUB_PAT" ]; then
+        GH_AUTH_URL="https://oauth2:${GITHUB_PAT}@github.com/NamanSingh69/Insurance_Deploy.git"
+        git -c safe.directory="*" fetch "$GH_AUTH_URL" main 2>/dev/null || git fetch origin main 2>/dev/null || true
     else
-        log "Git fetch failed or offline; keeping current directory."
+        git fetch origin main 2>/dev/null || true
     fi
+    PREV_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    git -c safe.directory="*" reset --hard FETCH_HEAD 2>/dev/null || git reset --hard origin/main 2>/dev/null || true
+    NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    log "Updated from commit $PREV_COMMIT to $NEW_COMMIT"
 fi
 
 # 2. Make scripts executable and configure daily backup cron
