@@ -136,9 +136,13 @@ class TestPhotosInReport:
             }
         }
         user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
-        with patch('modules.assets.get_accessible_asset_content') as mock_asset, \
+        with patch('modules.pdf.get_accessible_asset_content') as mock_asset, \
+             patch('modules.pdf.get_owned_asset_content') as mock_owned, \
+             patch('modules.assets.get_accessible_asset_content') as mock_asset_mod, \
              patch('modules.pdf.db') as mock_db:
             mock_asset.return_value = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82', {'mime_type': 'image/png'})
+            mock_owned.return_value = mock_asset.return_value
+            mock_asset_mod.return_value = mock_asset.return_value
             mock_db.get_asset_by_locator.return_value = None
             mock_db.get_file_content.return_value = None
             mock_db.upload_report_pdf.return_value = None
@@ -158,9 +162,13 @@ class TestPhotosInReport:
             }
         }
         user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
-        with patch('modules.assets.get_accessible_asset_content') as mock_asset, \
+        with patch('modules.pdf.get_accessible_asset_content') as mock_asset, \
+             patch('modules.pdf.get_owned_asset_content') as mock_owned, \
+             patch('modules.assets.get_accessible_asset_content') as mock_asset_mod, \
              patch('modules.pdf.db') as mock_db:
             mock_asset.return_value = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82', {'mime_type': 'image/png'})
+            mock_owned.return_value = mock_asset.return_value
+            mock_asset_mod.return_value = mock_asset.return_value
             mock_db.get_asset_by_locator.return_value = None
             mock_db.get_file_content.return_value = None
             mock_db.upload_report_pdf.return_value = None
@@ -187,9 +195,13 @@ class TestPhotosInReport:
             }
         }
         user_snapshot = {'full_name': 'Test User', 'license_no': 'LIC123'}
-        with patch('modules.assets.get_accessible_asset_content') as mock_asset, \
+        with patch('modules.pdf.get_accessible_asset_content') as mock_asset, \
+             patch('modules.pdf.get_owned_asset_content') as mock_owned, \
+             patch('modules.assets.get_accessible_asset_content') as mock_asset_mod, \
              patch('modules.pdf.db') as mock_db:
             mock_asset.return_value = (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82', {'mime_type': 'image/png'})
+            mock_owned.return_value = mock_asset.return_value
+            mock_asset_mod.return_value = mock_asset.return_value
             mock_db.get_asset_by_locator.return_value = None
             mock_db.get_file_content.return_value = None
             mock_db.upload_report_pdf.return_value = None
@@ -203,6 +215,8 @@ class TestConsolidatedCSVDownload:
     
     def test_download_csv_empty(self, authenticated_client, mock_sheets_db):
         """Test CSV download with no reports."""
+        mock_sheets_db.get_workspace_reports_page.return_value = {'items': []}
+        mock_sheets_db.get_workspace_fee_bills.return_value = []
         mock_sheets_db.get_user_reports.return_value = []
         mock_sheets_db.get_user_fee_bills.return_value = []
         
@@ -226,11 +240,16 @@ class TestConsolidatedCSVDownload:
                 })
             }
         ]
+        mock_sheets_db.get_workspace_reports_page.return_value = {'items': [{'id': '1'}]}
+        mock_sheets_db.get_workspace_report_by_id.return_value = mock_reports[0]
+        mock_sheets_db.get_workspace_fee_bills.return_value = []
         mock_sheets_db.get_user_reports.return_value = mock_reports
         mock_sheets_db.get_user_fee_bills.return_value = []
         
         # Needs date params
         response = authenticated_client.get('/download_consolidated_csv?from_date=2024-01-01&to_date=2024-12-31')
+        assert response.status_code == 200
+        assert b"John Doe" in response.data
         
         assert response.status_code == 200
         assert b"R-001" in response.data
