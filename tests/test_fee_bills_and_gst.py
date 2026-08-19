@@ -11,16 +11,16 @@ from unittest.mock import MagicMock, patch
 def test_get_next_invoice_number_format(app):
     """Test invoice number generation logic with company initials, month-year, and sequence."""
     from db import db
-    
-    # Test cases: Company Name, Date Str -> Expected Prefix format
-    # National Insurance Company -> NIC/JUL-26/01
-    inv_1 = db.get_next_invoice_number(user_id=1, insurer_name="National Insurance Company", date_str="2026-07-25")
-    assert inv_1.startswith("NIC/JUL-26/")
-    assert inv_1.endswith("01") or inv_1.endswith("001")
+    with patch.object(db, 'pool', None), patch.object(db, 'connect', lambda: None):
+        # Test cases: Company Name, Date Str -> Expected Prefix format
+        # National Insurance Company -> NIC/JUL-26/01
+        inv_1 = db.get_next_invoice_number(user_id=1, insurer_name="National Insurance Company", date_str="2026-07-25")
+        assert inv_1.startswith("NIC/JUL-26/")
+        assert inv_1.endswith("01") or inv_1.endswith("001")
 
-    # Oriental Insurance Company Limited -> OICL/JUL-26/01
-    inv_2 = db.get_next_invoice_number(user_id=1, insurer_name="Oriental Insurance Company Limited", date_str="2026-07-25")
-    assert inv_2.startswith("OICL/JUL-26/")
+        # Oriental Insurance Company Limited -> OICL/JUL-26/01
+        inv_2 = db.get_next_invoice_number(user_id=1, insurer_name="Oriental Insurance Company Limited", date_str="2026-07-25")
+        assert inv_2.startswith("OICL/JUL-26/")
 
 
 def test_api_next_invoice_no_endpoint(authenticated_client, mock_sheets_db):

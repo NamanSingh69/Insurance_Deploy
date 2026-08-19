@@ -2447,11 +2447,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (isAdmin) {
                 document.getElementById('financial-export-section')?.classList.remove('hidden');
-                document.getElementById('page3-details-wrapper')?.classList.remove('hidden');
             } else {
                 document.getElementById('financial-export-section')?.classList.add('hidden');
-                document.getElementById('page3-details-wrapper')?.classList.add('hidden');
             }
+            // Ensure Survey Fees & Tax Invoice in Report Generator is always visible for both admin and employee
+            document.getElementById('page3-details-wrapper')?.classList.remove('hidden');
 
             // Bind workspace navigation buttons below upload section
             document.getElementById('open-dashboard-btn')?.addEventListener('click', () => switchWorkspaceView('dashboard'));
@@ -2837,7 +2837,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function claimFilterQuery() {
         const pairs = new URLSearchParams();
-        const mappings = [['q', 'claim-search-input'], ['status', 'claim-status-filter'], ['month', 'claim-month-filter'], ['insurer', 'claim-insurer-filter']];
+        const mappings = [['q', 'claim-search-input'], ['status', 'claim-status-filter'], ['month', 'claim-month-filter'], ['insurer', 'claim-insurer-filter'], ['user_id', 'claim-user-filter']];
         mappings.forEach(([key, id]) => {
             const value = document.getElementById(id)?.value.trim();
             if (value) pairs.set(key, value);
@@ -3725,12 +3725,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!trimmed) return;
                 const lower = trimmed.toLowerCase();
                 
-                // 1. Check matching master
-                const matchedMaster = globalInsurerMasters.find(m => 
+                // 1. Check matching masters
+                const insurerMatches = globalInsurerMasters.filter(m => 
                     (m.insurer_name && m.insurer_name.toLowerCase() === lower) ||
                     (m.insurer_name && lower.includes(m.insurer_name.toLowerCase())) ||
                     (m.insurer_name && m.insurer_name.toLowerCase().includes(lower))
                 );
+
+                const matchedMaster = insurerMatches[0];
+
+                if (insurerMatches.length > 0) {
+                    const addressList = document.getElementById('insurer-address-datalist');
+                    const gstinList = document.getElementById('insurer-gstin-datalist');
+                    if (addressList) {
+                        const addrs = [...new Set(insurerMatches.map(i => i.branch_address).filter(Boolean))];
+                        if (addrs.length) addressList.innerHTML = addrs.map(a => `<option value="${escapeHtml(a)}">`).join('');
+                    }
+                    if (gstinList) {
+                        const gstins = [...new Set(insurerMatches.map(i => i.gstin).filter(Boolean))];
+                        if (gstins.length) gstinList.innerHTML = gstins.map(g => `<option value="${escapeHtml(g)}">`).join('');
+                    }
+                }
 
                 let prefix = matchedMaster?.invoice_prefix;
                 if (matchedMaster) {
@@ -3807,8 +3822,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Open Insurer Master Control Panel Modal Buttons
         document.querySelectorAll('.open-insurer-master-modal-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.getElementById('insurer-master-modal')?.classList.remove('hidden');
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const modal = document.getElementById('insurer-master-modal');
+                if (modal) {
+                    modal.classList.remove('hidden');
+                    modal.style.display = 'flex';
+                }
                 loadInsurerMasters();
             });
         });
@@ -3873,8 +3893,13 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('insurer-master-id').value = '';
         });
 
-        document.getElementById('close-insurer-master-modal')?.addEventListener('click', () => {
-            document.getElementById('insurer-master-modal')?.classList.add('hidden');
+        document.getElementById('close-insurer-master-modal')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            const modal = document.getElementById('insurer-master-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
         });
 
         document.getElementById('close-gmail-staging-modal')?.addEventListener('click', () => {

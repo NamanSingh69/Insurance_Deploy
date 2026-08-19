@@ -220,6 +220,7 @@
                 <input id="claim-search-input" type="text" placeholder="Search claim, policy, vehicle, insured…">
                 <select id="claim-status-filter"><option value="">All statuses</option><option value="new_appointment">New appointment</option><option value="inspection_pending">Inspection pending</option><option value="documents_awaited">Documents awaited</option><option value="report_under_preparation">Report under preparation</option><option value="report_submitted">Report submitted</option><option value="closed">Closed</option></select>
                 <input id="claim-month-filter" type="month">
+                <select id="claim-user-filter" class="admin-only-nav hidden"><option value="">All Team Members</option></select>
                 <button type="button" id="claim-filter-reset" class="btn btn-secondary btn-sm"><i class="fas fa-undo"></i> Reset</button>
             </div>
             <div id="claim-register-table-container" class="table-responsive">
@@ -2039,6 +2040,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
     <!-- Datalists for Insurer Master Autocompletion -->
     <datalist id="insurer-masters-datalist"></datalist>
     <datalist id="insurer-gstin-datalist"></datalist>
+    <datalist id="insurer-address-datalist"></datalist>
     <script>
     window.applyKmFormula = function(itemIdx) {
         var kmInput = document.getElementById('km-fee-item-' + itemIdx);

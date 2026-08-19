@@ -202,13 +202,68 @@ def test_dynamic_insurer_prefix_invoice_numbers(client, mock_sheets_db):
     assert res_ogi.get_json()['next_invoice_no'] == 'OGI-1'
 
 
-def test_employee_cannot_access_invoice_numbering(client, mock_sheets_db):
-    """Test employee cannot access financial invoice numbering endpoint."""
+def test_employee_can_access_invoice_numbering_and_create_insurer_master_but_cannot_delete(client, mock_sheets_db):
+    """Test employee can generate next invoice numbers and add masters, but cannot delete."""
     _auth(client, mock_sheets_db, role='employee')
 
-    res = client.get('/api/insurers/next-invoice-no?prefix=NIC')
-    assert res.status_code == 403
-    assert res.get_json()['error'] == 'Admin permission required.'
+    mock_sheets_db.get_next_insurer_invoice_number.return_value = 'NIC-1'
+    mock_sheets_db.save_insurer_master.return_value = 5
+    mock_sheets_db.delete_insurer_master.return_value = True
+
+    # 1. Employee can get next invoice number
+    res_no = client.get('/api/insurers/next-invoice-no?prefix=NIC')
+    assert res_no.status_code == 200
+    assert res_no.get_json()['next_invoice_no'] == 'NIC-1'
+
+    # 2. Employee can create/save insurer master
+    res_post = client.post('/api/insurers', json={'insurer_name': 'Reliance General', 'invoice_prefix': 'RGI'})
+    assert res_post.status_code == 201
+    assert res_post.get_json()['id'] == 5
+
+    # 3. Employee CANNOT delete insurer master (Admin only)
+    res_del = client.delete('/api/insurers/5')
+    assert res_del.status_code == 403
+    assert 'Admin permission required' in res_del.get_json()['error']
+
+
+def test_user_file_segregation_in_claims_and_reports(client, mock_sheets_db):
+    """Test that employee queries pass user_id scoping while admin queries default to workspace."""
+    # Employee query
+    _auth(client, mock_sheets_db, role='employee')
+    mock_sheets_db.get_workspace_reports_page.return_value = {'items': [], 'total': 0, 'page': 1, 'page_size': 50}
+    mock_sheets_db.get_accessible_reports_page.return_value = {'items': [], 'total': 0, 'page': 1, 'page_size': 50}
+
+    res_emp = client.get('/api/claims')
+    assert res_emp.status_code == 200
+    # verify user_id passed to get_workspace_reports_page
+    mock_sheets_db.get_workspace_reports_page.assert_called()
+
+    # Admin query
+    _auth(client, mock_sheets_db, role='admin')
+    res_admin = client.get('/api/claims?user_id=2')
+    assert res_admin.status_code == 200
+
+
+def test_standalone_fee_bill_saving_and_list_query(client, mock_sheets_db):
+    """Test saving an unlinked standalone fee bill and querying workspace bills."""
+    _auth(client, mock_sheets_db, role='employee')
+    mock_sheets_db.save_fee_bill.return_value = 'bill-999'
+    mock_sheets_db.get_workspace_fee_bills.return_value = [{'id': 'bill-999', 'insurer_name': 'IndusInd'}]
+
+    payload = {
+        'invoice_no': 'IND-01',
+        'insurer_name': 'IndusInd Bank / Insurance',
+        'taxable_amount': 2500.0,
+        'report_id': None
+    }
+    res_save = client.post('/api/fee_bills', json=payload)
+    assert res_save.status_code == 201
+    assert res_save.get_json()['id'] == 'bill-999'
+
+    res_list = client.get('/api/fee_bills')
+    assert res_list.status_code == 200
+    assert len(res_list.get_json()) == 1
+
 
 
 

@@ -10,6 +10,7 @@ import bcrypt
 class LocalDBAdapter:
     def __init__(self):
         client_admin_hash = bcrypt.hashpw('AnowarAdmin@2026'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        pranay_hash = bcrypt.hashpw('PranayAdmin@2026'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         admin_hash = bcrypt.hashpw('69420'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         emp_hash = bcrypt.hashpw('UH65A#DF'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
@@ -18,9 +19,9 @@ class LocalDBAdapter:
                 'id': '1',
                 'username': 'USER',
                 'password_hash': emp_hash,
-                'full_name': 'SK ANOWAR ALI',
+                'full_name': 'SK ANOWAR ALI (Staff)',
                 'qualifications': '(B.Tech (Automobile), LIIISLA)',
-                'designation': 'Surveyor & Loss Assessor',
+                'designation': 'Surveyor Assistant',
                 'license_no': 'SLA-121784',
                 'expiry_date': '13-12-2026',
                 'membership_no': 'L/E/10721',
@@ -82,6 +83,48 @@ class LocalDBAdapter:
                 'permissions': {},
                 'must_change_password': False,
                 'is_locked': False
+            },
+            '4': {
+                'id': '4',
+                'username': 'PRANAYMAITY',
+                'password_hash': pranay_hash,
+                'full_name': 'Pranay Maity',
+                'qualifications': '(B.Tech, Surveyor)',
+                'designation': 'Surveyor & Loss Assessor',
+                'license_no': 'SLA-PRANAY',
+                'expiry_date': '31-12-2027',
+                'membership_no': 'L/E/PRANAY',
+                'address_line_1': 'Kolkata, West Bengal',
+                'address_line_2': '',
+                'address_line_3': '',
+                'contact_no': '9876543210',
+                'email': 'pranaymaity@gmail.com',
+                'role': 'admin',
+                'admin_id': '4',
+                'permissions': {},
+                'must_change_password': False,
+                'is_locked': False
+            },
+            '5': {
+                'id': '5',
+                'username': 'USER1',
+                'password_hash': emp_hash,
+                'full_name': 'USER1 (Assistant)',
+                'qualifications': 'Surveyor Staff',
+                'designation': 'Field Assistant',
+                'license_no': '',
+                'expiry_date': '',
+                'membership_no': '',
+                'address_line_1': '',
+                'address_line_2': '',
+                'address_line_3': '',
+                'contact_no': '',
+                'email': 'user1@pranaysurvey.in',
+                'role': 'employee',
+                'admin_id': '4',
+                'permissions': {},
+                'must_change_password': False,
+                'is_locked': False
             }
         }
         self.reports = {}
@@ -100,6 +143,8 @@ class LocalDBAdapter:
         if not username:
             return None
         t = str(username).strip().lower()
+        if t == 'pranay':
+            t = 'pranaymaity'
         for u in self.users.values():
             if u['username'].strip().lower() == t:
                 return dict(u)
@@ -116,20 +161,37 @@ class LocalDBAdapter:
         return new_id
 
     def get_workspace_dashboard(self, workspace_admin_id, *args, **kwargs):
+        ws_reports = [r for r in self.reports.values() if str(r.get('workspace_admin_id')) == str(workspace_admin_id)]
+        ws_bills = [b for b in self.fee_bills.values() if str(b.get('workspace_admin_id')) == str(workspace_admin_id)]
         return {
-            'total_claims': len(self.reports),
-            'pending_claims': sum(1 for r in self.reports.values() if r.get('status') != 'closed'),
-            'completed_claims': sum(1 for r in self.reports.values() if r.get('status') == 'closed'),
+            'total_claims': len(ws_reports),
+            'pending_claims': sum(1 for r in ws_reports if r.get('status') != 'closed'),
+            'completed_claims': sum(1 for r in ws_reports if r.get('status') == 'closed'),
             'new_appointment': 0, 'inspection_pending': 0, 'documents_awaited': 0,
-            'report_under_preparation': 0, 'report_submitted': len(self.reports), 'closed': 0,
-            'total_invoiced': sum(float(b.get('total_amount') or b.get('gross_total') or 0) for b in self.fee_bills.values()),
+            'report_under_preparation': 0, 'report_submitted': len(ws_reports), 'closed': 0,
+            'total_invoiced': sum(float(b.get('total_amount') or b.get('gross_total') or 0) for b in ws_bills),
             'amount_received': 0,
-            'outstanding_fees': sum(float(b.get('total_amount') or b.get('gross_total') or 0) for b in self.fee_bills.values()),
+            'outstanding_fees': sum(float(b.get('total_amount') or b.get('gross_total') or 0) for b in ws_bills),
             'overdue_count': 0
         }
 
     def get_workspace_reports_page(self, workspace_admin_id, search_term='', page=1, page_size=50, *args, **kwargs):
-        items = list(self.reports.values())
+        user_id = kwargs.get('user_id')
+        role = kwargs.get('role')
+        items = [r for r in self.reports.values() if str(r.get('workspace_admin_id')) == str(workspace_admin_id)]
+        if role == 'employee' and user_id:
+            items = [r for r in items if str(r.get('user_id')) == str(user_id) or str(r.get('created_by')) == str(user_id)]
+        return {
+            'items': items,
+            'page': page,
+            'page_size': page_size,
+            'total': len(items)
+        }
+
+    def get_accessible_reports_page(self, workspace_admin_id, user_id, search_term='', page=1, page_size=50, role=None, *args, **kwargs):
+        items = [r for r in self.reports.values() if str(r.get('workspace_admin_id')) == str(workspace_admin_id)]
+        if role == 'employee' and user_id:
+            items = [r for r in items if str(r.get('user_id')) == str(user_id) or str(r.get('created_by')) == str(user_id)]
         return {
             'items': items,
             'page': page,
@@ -147,7 +209,10 @@ class LocalDBAdapter:
         }
 
     def get_workspace_report_by_id(self, report_id, workspace_admin_id=None):
-        return self.reports.get(str(report_id))
+        r = self.reports.get(str(report_id))
+        if r and workspace_admin_id and str(r.get('workspace_admin_id')) != str(workspace_admin_id):
+            return None
+        return r
 
     def reserve_report_number(self, workspace_admin_id, prefix, year):
         self.invoice_seq += 1
@@ -190,8 +255,17 @@ class LocalDBAdapter:
         self.fee_bills[bill_id] = data
         return bill_id
 
-    def get_workspace_fee_bills(self, workspace_admin_id, month=None, insurer=None, report_id=None):
-        return list(self.fee_bills.values())
+    def get_workspace_fee_bills(self, workspace_admin_id, month=None, insurer=None, report_id=None, user_id=None, role=None):
+        bills = [b for b in self.fee_bills.values() if str(b.get('workspace_admin_id')) == str(workspace_admin_id)]
+        if role == 'employee' and user_id:
+            bills = [b for b in bills if str(b.get('user_id')) == str(user_id)]
+        if month:
+            bills = [b for b in bills if str(b.get('invoice_date', '')).startswith(month)]
+        if insurer:
+            bills = [b for b in bills if insurer.lower() in str(b.get('insurer_name', '')).lower()]
+        if report_id:
+            bills = [b for b in bills if str(b.get('report_id')) == str(report_id)]
+        return bills
 
     def get_fee_bill_by_id(self, bill_id, workspace_admin_id=None):
         return self.fee_bills.get(str(bill_id))

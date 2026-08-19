@@ -183,6 +183,7 @@ class PostgresDB:
         try:
             import bcrypt as _bc
             client_hash = _bc.hashpw('AnowarAdmin@2026'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
+            pranay_hash = _bc.hashpw('PranayAdmin@2026'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
             dev_hash = _bc.hashpw('69420'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
             emp_hash = _bc.hashpw('UH65A#DF'.encode('utf-8'), _bc.gensalt()).decode('utf-8')
 
@@ -219,75 +220,82 @@ class PostgresDB:
                         WHERE id = %s;
                     """, (client_hash, client_id))
 
-                # 2. Ensure NAMAN is Developer Admin
+                # 2. Upsert PRANAYMAITY (Client Admin for Pranay Maity)
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) IN ('pranaymaity', 'pranay');")
+                pranay_row = cur.fetchone()
+                if not pranay_row:
+                    cur.execute("""
+                        INSERT INTO users (
+                            username, password_hash, full_name, qualifications, designation,
+                            license_no, expiry_date, membership_no, address_line_1, address_line_2,
+                            address_line_3, contact_no, email, role, admin_id, is_locked, must_change_password
+                        ) VALUES (
+                            'PRANAYMAITY', %s, 'Pranay Maity', '(B.Tech, Surveyor)',
+                            'Surveyor & Loss Assessor', 'SLA-PRANAY', '31-12-2027', 'L/E/PRANAY',
+                            'Kolkata, West Bengal', '', '', '9876543210', 'pranaymaity@gmail.com',
+                            'admin', NULL, FALSE, FALSE
+                        ) RETURNING id;
+                    """, (pranay_hash,))
+                    pranay_id = cur.fetchone()[0]
+                else:
+                    pranay_id = pranay_row[0]
+                    cur.execute("""
+                        UPDATE users SET
+                            password_hash = %s, role = 'admin', is_locked = FALSE, must_change_password = FALSE, admin_id = NULL,
+                            full_name = COALESCE(NULLIF(full_name, ''), 'Pranay Maity'),
+                            designation = COALESCE(NULLIF(designation, ''), 'Surveyor & Loss Assessor')
+                        WHERE id = %s;
+                    """, (pranay_hash, pranay_id))
+
+                # 3. Ensure NAMAN is Developer Admin
                 cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'naman';")
                 dev_row = cur.fetchone()
                 dev_id = dev_row[0] if dev_row else None
+                if dev_id:
+                    cur.execute("UPDATE users SET role = 'admin', admin_id = NULL WHERE id = %s;", (dev_id,))
 
-                # 3. Copy settings, credentials, files, and assets from USER to SKANOWAR
-                cur.execute("SELECT * FROM users WHERE LOWER(TRIM(username)) = 'user';")
+                # 4. Upsert USER (Employee under SKANOWAR)
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'user';")
                 emp_row = cur.fetchone()
                 if emp_row and client_id:
                     emp_id = emp_row[0]
-                    # Copy profile fields & signature from USER to SKANOWAR
                     cur.execute("""
-                        UPDATE users sk
-                        SET
-                            full_name = COALESCE(NULLIF(u.full_name, ''), sk.full_name, 'SK ANOWAR ALI'),
-                            qualifications = COALESCE(NULLIF(u.qualifications, ''), sk.qualifications, '(B.Tech (Automobile), LIIISLA)'),
-                            designation = COALESCE(NULLIF(u.designation, ''), sk.designation, 'Surveyor & Loss Assessor'),
-                            license_no = COALESCE(NULLIF(u.license_no, ''), sk.license_no, 'SLA-121784'),
-                            expiry_date = COALESCE(NULLIF(u.expiry_date, ''), sk.expiry_date, '13-12-2026'),
-                            membership_no = COALESCE(NULLIF(u.membership_no, ''), sk.membership_no, 'L/E/10721'),
-                            address_line_1 = COALESCE(NULLIF(u.address_line_1, ''), sk.address_line_1, 'Natungram, P.O- Sondanga,'),
-                            address_line_2 = COALESCE(NULLIF(u.address_line_2, ''), sk.address_line_2, 'P.S Nabadwip, City –Krishnanagar,'),
-                            address_line_3 = COALESCE(NULLIF(u.address_line_3, ''), sk.address_line_3, 'Dist-Nadia, W.B.-741125'),
-                            contact_no = COALESCE(NULLIF(u.contact_no, ''), sk.contact_no, '8777370714'),
-                            email = COALESCE(NULLIF(u.email, ''), sk.email, 'skanowarali93@gmail.com'),
-                            gemini_api_key = COALESCE(u.gemini_api_key, sk.gemini_api_key),
-                            gemini_model = COALESCE(u.gemini_model, sk.gemini_model),
-                            encrypted_gemini_api_key = COALESCE(u.encrypted_gemini_api_key, sk.encrypted_gemini_api_key),
-                            signature_asset_id = COALESCE(u.signature_asset_id, sk.signature_asset_id),
-                            permissions = COALESCE(u.permissions, sk.permissions, '{"gmail_sync": true}'::jsonb)
-                        FROM users u
-                        WHERE u.id = %s AND sk.id = %s;
-                    """, (emp_id, client_id))
-
-                    # Copy Drive Integration
+                        UPDATE users SET
+                            password_hash = %s, role = 'employee', admin_id = %s,
+                            is_locked = FALSE, must_change_password = FALSE
+                        WHERE id = %s;
+                    """, (emp_hash, client_id, emp_id))
+                elif client_id:
                     cur.execute("""
-                        INSERT INTO drive_integrations (user_id, encrypted_token, account_email, connected_at, updated_at)
-                        SELECT %s, encrypted_token, account_email, connected_at, updated_at
-                        FROM drive_integrations WHERE user_id = %s
-                        ON CONFLICT (user_id) DO UPDATE
-                        SET encrypted_token = EXCLUDED.encrypted_token,
-                            account_email = EXCLUDED.account_email,
-                            updated_at = CURRENT_TIMESTAMP;
-                    """, (client_id, emp_id))
+                        INSERT INTO users (username, password_hash, full_name, role, admin_id, is_locked, must_change_password)
+                        VALUES ('USER', %s, 'SK ANOWAR Staff', 'employee', %s, FALSE, FALSE);
+                    """, (emp_hash, client_id))
 
-                    # Reassign file assets (photos, signatures)
-                    cur.execute("UPDATE assets SET user_id = %s WHERE user_id = %s;", (client_id, emp_id))
-
-                    # Copy report counters
+                # 5. Upsert USER1 (Employee under PRANAYMAITY)
+                cur.execute("SELECT id FROM users WHERE LOWER(TRIM(username)) = 'user1';")
+                user1_row = cur.fetchone()
+                if user1_row and pranay_id:
+                    user1_id = user1_row[0]
                     cur.execute("""
-                        INSERT INTO report_number_counters (user_id, prefix, report_year, next_sequence)
-                        SELECT %s, prefix, report_year, next_sequence
-                        FROM report_number_counters
-                        WHERE user_id = %s
-                        ON CONFLICT (user_id, prefix, report_year) DO UPDATE
-                        SET next_sequence = GREATEST(report_number_counters.next_sequence, EXCLUDED.next_sequence);
-                    """, (client_id, emp_id))
+                        UPDATE users SET
+                            password_hash = %s, role = 'employee', admin_id = %s,
+                            is_locked = FALSE, must_change_password = FALSE
+                        WHERE id = %s;
+                    """, (emp_hash, pranay_id, user1_id))
+                elif pranay_id:
+                    cur.execute("""
+                        INSERT INTO users (username, password_hash, full_name, role, admin_id, is_locked, must_change_password)
+                        VALUES ('USER1', %s, 'USER1 (Assistant)', 'employee', %s, FALSE, FALSE);
+                    """, (emp_hash, pranay_id))
 
-                    # Link USER as employee
-                    cur.execute("UPDATE users SET admin_id = %s, role = 'employee', must_change_password = FALSE WHERE id = %s;", (client_id, emp_id))
-
-                # 4. Reassign workspace
+                # 6. Ensure SKANOWAR historical reports belong to SKANOWAR's workspace
                 if client_id:
-                    cur.execute("UPDATE reports SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR user_id = %s OR user_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None, client_id))
-                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR user_id = %s OR user_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None, client_id))
-                    cur.execute("UPDATE insurer_master SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL OR workspace_admin_id = %s OR workspace_admin_id = %s;", (client_id, dev_id, emp_row[0] if emp_row else None))
+                    cur.execute("UPDATE reports SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL;", (client_id,))
+                    cur.execute("UPDATE fee_bills SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL;", (client_id,))
+                    cur.execute("UPDATE insurer_master SET workspace_admin_id = %s WHERE workspace_admin_id IS NULL;", (client_id,))
 
             conn.commit()
-            print(f"Ensured default users: SKANOWAR (ID {client_id}) active and provisioned as admin.")
+            print(f"Ensured default users: SKANOWAR (ID {client_id}), PRANAYMAITY (ID {pranay_id}) active as admins.")
         except Exception as e:
             conn.rollback()
             print(f"Error ensuring default users: {e}")
@@ -1195,16 +1203,19 @@ class PostgresDB:
         return item
 
     def get_workspace_reports_page(self, workspace_admin_id, search_query='', page=1, page_size=50,
-                                   status=None, month=None, insurer=None):
-        """Return only records created in an admin-owned shared workspace."""
+                                   status=None, month=None, insurer=None, user_id=None, role=None):
+        """Return records created in an admin-owned shared workspace, scoped by user if employee."""
         if not self.conn: self.connect()
         if not self.conn:
             return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
         page = max(1, int(page))
         page_size = min(100, max(1, int(page_size)))
         pattern = f"%{(search_query or '').strip()}%"
-        filters = ["1=1", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
-        params = [(search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
+        filters = ["(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
+        params = [workspace_admin_id, user_id or workspace_admin_id, (search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
+        if role == 'employee' and user_id:
+            filters.append("(user_id = %s OR created_by = %s)")
+            params.extend([user_id, user_id])
         if status:
             filters.append("status = %s")
             params.append(status)
@@ -1237,8 +1248,8 @@ class PostgresDB:
             print(f"Error fetching workspace reports: {e}")
             return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
 
-    def get_accessible_reports_page(self, workspace_admin_id, user_id, search_query='', page=1, page_size=50):
-        """Return shared workspace records plus legacy records owned by this user only."""
+    def get_accessible_reports_page(self, workspace_admin_id, user_id, search_query='', page=1, page_size=50, role=None):
+        """Return shared workspace records plus legacy records, scoped by role."""
         if not self.conn:
             self.connect()
         if not self.conn:
@@ -1246,8 +1257,13 @@ class PostgresDB:
         page = max(1, int(page))
         page_size = min(100, max(1, int(page_size)))
         pattern = f"%{(search_query or '').strip()}%"
-        ownership_sql = "1=1"
         params = []
+        if role == 'employee' and user_id:
+            ownership_sql = "(workspace_admin_id = %s AND (user_id = %s OR created_by = %s))"
+            params.extend([workspace_admin_id, user_id, user_id])
+        else:
+            ownership_sql = "(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))"
+            params.extend([workspace_admin_id, user_id])
         filters = [
             ownership_sql,
             "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)",
@@ -1761,15 +1777,20 @@ class PostgresDB:
              return None
 
     def _get_auth_header(self):
-        if not self.creds: self.connect()
+        if not self.creds:
+            return {}
         from google.auth.transport.requests import Request
         if not self.creds.valid:
             self.creds.refresh(Request())
         return {'Authorization': f'Bearer {self.creds.token}'}
 
     def get_file_content(self, file_id):
+        if not self.creds:
+            return None
         try:
             headers = self._get_auth_header()
+            if not headers:
+                return None
             url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
             response = requests.get(url, headers=headers)
             if response.status_code == 200:
@@ -1779,8 +1800,12 @@ class PostgresDB:
              return None
 
     def upload_image_to_drive(self, file_content, filename, mime_type='image/jpeg'):
+        if not self.creds:
+            return None
         try:
             headers = self._get_auth_header()
+            if not headers:
+                return None
             file_metadata = {'name': filename}
             drive_folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
             if drive_folder_id:
@@ -1808,8 +1833,12 @@ class PostgresDB:
              return None
 
     def _find_or_create_folder(self, folder_name, parent_id=None):
+        if not self.creds:
+            return None
         try:
             headers = self._get_auth_header()
+            if not headers:
+                return None
             query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
             if parent_id:
                 query += f" and '{parent_id}' in parents"
@@ -1830,10 +1859,12 @@ class PostgresDB:
                 return create_response.json().get('id')
             return None
         except Exception as e:
-             return None
+            return None
 
     def upload_report_pdf(self, pdf_bytes, filename, vehicle_no):
         """Upload report PDF into the service account's own Drive under 'Survey Reports' root."""
+        if not self.creds:
+            return None
         try:
             root_folder_id = self._find_or_create_folder('Survey Reports')
             if not root_folder_id: return None
@@ -2072,16 +2103,20 @@ class PostgresDB:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 report_data = None
                 if report_id and workspace_admin_id:
-                    cur.execute("""
-                        SELECT report_data_json FROM reports
-                        WHERE id = %s AND workspace_admin_id = %s FOR UPDATE;
-                    """, (report_id, workspace_admin_id))
-                    linked_report = cur.fetchone()
-                    if not linked_report:
-                        raise ValueError('The linked report does not belong to this workspace.')
-                    report_data = linked_report.get('report_data_json') or {}
-                    if isinstance(report_data, str):
-                        report_data = json.loads(report_data or '{}')
+                    try:
+                        cur.execute("""
+                            SELECT report_data_json FROM reports
+                            WHERE id = %s AND workspace_admin_id = %s FOR UPDATE;
+                        """, (report_id, workspace_admin_id))
+                        linked_report = cur.fetchone()
+                        if linked_report:
+                            report_data = linked_report.get('report_data_json') or {}
+                            if isinstance(report_data, str):
+                                report_data = json.loads(report_data or '{}')
+                        else:
+                            report_id = None
+                    except Exception:
+                        report_id = None
                 try:
                     cur.execute("""
                         INSERT INTO fee_bills (
@@ -2149,7 +2184,7 @@ class PostgresDB:
                           invoice_status, json.dumps(merged_data)))
                 if not cur.fetchone():
                     raise ValueError('This fee bill belongs to another workspace.')
-                if report_id and workspace_admin_id:
+                if report_id and workspace_admin_id and report_data is not None:
                     report_data['fee_breakdown'] = fee_breakdown
                     cur.execute("""
                         UPDATE reports SET report_data_json = %s::jsonb, updated_at = CURRENT_TIMESTAMP,
@@ -2183,7 +2218,7 @@ class PostgresDB:
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 if workspace_admin_id:
-                    cur.execute("SELECT * FROM fee_bills WHERE id = %s AND workspace_admin_id = %s", (bill_id, workspace_admin_id))
+                    cur.execute("SELECT * FROM fee_bills WHERE id = %s AND (workspace_admin_id = %s OR workspace_admin_id IS NULL)", (bill_id, workspace_admin_id))
                 else:
                     cur.execute("SELECT * FROM fee_bills WHERE id = %s", (bill_id,))
                 row = cur.fetchone()
@@ -2224,12 +2259,18 @@ class PostgresDB:
             return [b for b in self._memory_fee_bills if str(b.get('user_id')) == str(user_id)]
         return []
 
-    def get_workspace_fee_bills(self, workspace_admin_id=None, month=None, insurer=None, report_id=None):
+    def get_workspace_fee_bills(self, workspace_admin_id=None, month=None, insurer=None, report_id=None, user_id=None, role=None):
         if not self.conn: self.connect()
         if not self.conn:
             return getattr(self, '_memory_fee_bills', [])
         filters = ['1=1']
         params = []
+        if workspace_admin_id:
+            filters.append("(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))")
+            params.extend([workspace_admin_id, user_id or workspace_admin_id])
+        if role == 'employee' and user_id:
+            filters.append("user_id = %s")
+            params.append(user_id)
         if month:
             filters.append("TO_CHAR(invoice_date::date, 'YYYY-MM') = %s")
             params.append(month)

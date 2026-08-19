@@ -428,7 +428,7 @@ def is_admin_user(user=None):
     user = user or current_user
     if not getattr(user, 'is_authenticated', False):
         return False
-    if (getattr(user, 'username', '') or '').strip().upper() in ('SKANOWAR', 'NAMAN'):
+    if (getattr(user, 'username', '') or '').strip().upper() in ('SKANOWAR', 'NAMAN', 'PRANAYMAITY', 'PRANAY'):
         return True
     return bool(getattr(user, 'role', 'employee') == 'admin')
 
@@ -437,7 +437,7 @@ def workspace_admin_id_for(user=None):
     if not getattr(user, 'is_authenticated', False):
         return None
     username = (getattr(user, 'username', '') or '').strip().upper()
-    if username in ('SKANOWAR', 'NAMAN'):
+    if username in ('SKANOWAR', 'NAMAN', 'PRANAYMAITY', 'PRANAY'):
         return int(user.id)
     if is_admin_user(user):
         return int(user.id)
@@ -447,7 +447,14 @@ def workspace_admin_id_for(user=None):
             return int(admin_id)
         except (TypeError, ValueError):
             pass
-    # For employee USER, dynamically resolve to SKANOWAR's workspace
+    if username == 'USER1':
+        try:
+            p = sheets_db.get_user_by_username('PRANAYMAITY') or sheets_db.get_user_by_username('PRANAY')
+            if p and p.get('id'):
+                return int(p['id'])
+        except Exception:
+            pass
+    # For default employee USER, dynamically resolve to SKANOWAR's workspace
     try:
         sk = sheets_db.get_user_by_username('SKANOWAR')
         if sk and sk.get('id'):
@@ -4603,7 +4610,7 @@ def get_saved_reports():
         workspace_admin_id = workspace_admin_id_for(current_user)
         if workspace_admin_id:
             page_data = sheets_db.get_accessible_reports_page(
-                workspace_admin_id, current_user.id, search_query, page, page_size)
+                workspace_admin_id, current_user.id, search_query, page, page_size, role=current_user.role)
         else:
             page_data = sheets_db.get_user_reports_page(current_user.id, search_query, page, page_size)
         reports = page_data.get('items', []) if isinstance(page_data, dict) else []
@@ -4740,8 +4747,10 @@ def claims_register():
         page = request.args.get('page', 1, type=int)
         page_size = request.args.get('page_size', 50, type=int)
         query = request.args.get('q', request.args.get('query', ''))
+        filter_user_id = request.args.get('user_id') or None
         return jsonify(sheets_db.get_workspace_reports_page(
-            workspace_admin_id, query, page, page_size, status=status, month=month, insurer=insurer))
+            workspace_admin_id, query, page, page_size, status=status, month=month, insurer=insurer,
+            user_id=filter_user_id or current_user.id, role=current_user.role))
 
     data = request.get_json() or {}
     claim_no = str(data.get('claim_no', '')).strip()
@@ -4812,9 +4821,6 @@ def manage_insurers():
         insurers = sheets_db.get_insurer_masters(workspace_admin_id)
         return jsonify({'success': True, 'insurers': insurers})
 
-    if not is_admin_user(current_user):
-        return jsonify({'error': 'Admin permission required.'}), 403
-
     data = request.get_json() or {}
     if not data.get('insurer_name'):
         return jsonify({'error': 'Insurer name is required.'}), 400
@@ -4848,8 +4854,6 @@ def get_or_delete_insurer(insurer_id):
 @app.route('/api/insurers/next-invoice-no', methods=['GET'])
 @login_required
 def get_next_insurer_invoice_no():
-    if not is_admin_user(current_user):
-        return jsonify({'error': 'Admin permission required.'}), 403
     workspace_admin_id = workspace_admin_id_for(current_user)
     if not workspace_admin_id:
         return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
@@ -5386,7 +5390,8 @@ def handle_fee_bills():
         data = request.get_json() or {}
         report_id = data.get('report_id')
         if report_id and not sheets_db.get_workspace_report_by_id(report_id, workspace_admin_id):
-            return jsonify({'error': 'The selected report does not belong to this workspace.'}), 404
+            # Treat as unlinked standalone fee bill if report_id not in workspace
+            data['report_id'] = None
         bill_id = sheets_db.save_fee_bill(current_user.id, data, workspace_admin_id=workspace_admin_id)
         if not bill_id:
             return jsonify({'error': 'Could not save the fee bill.'}), 500
@@ -5394,7 +5399,8 @@ def handle_fee_bills():
 
     bills = sheets_db.get_workspace_fee_bills(
         workspace_admin_id, month=request.args.get('month') or None,
-        insurer=request.args.get('insurer') or None, report_id=request.args.get('report_id') or None)
+        insurer=request.args.get('insurer') or None, report_id=request.args.get('report_id') or None,
+        user_id=current_user.id, role=current_user.role)
     return jsonify(bills), 200
 
 

@@ -29,43 +29,47 @@
 ### Application Accounts & Roles
 - **Primary Client Administrator Account:** `SKANOWAR` / `AnowarAdmin@2026` (ID: 3)
   - Primary account for surveyor Sk Anowar Ali.
-  - Full client workspace ownership, all reports and claims visibility, financial Survey Fee Register, Insurer Master management, GSTR-1 / CA Excel tax exports, employee user management, and system settings.
+  - Full client workspace ownership, universal report and claim visibility across all 90+ historical and newly generated files, financial Survey Fee Register, Insurer Master management, GSTR-1 / CA Excel tax exports, employee user management, and system settings.
 - **Developer Administrator Account:** `NAMAN` / `69420` (ID: 2)
   - Dedicated developer account for system maintenance, enhancements, and diagnostic administration.
 - **Employee Account:** `USER` / `UH65A#DF` (ID: 1, `admin_id`: 3)
   - Field staff and surveyor assistant account linked to `SKANOWAR`'s workspace.
-  - Operational claim management, survey report creation/editing, photo uploads, fee bill drafting/PDF downloads.
-  - **Restrictions:** Cannot delete reports (`403 Forbidden`), cannot delete fee bills (`403 Forbidden`), cannot view overall corporate financial dashboard totals or download GSTR-1/CA tax exports (`403 Forbidden`).
+  - Operational claim management, survey report creation/editing, photo uploads.
+  - **Survey Fee Register Access:** Can open Survey Fee Register, auto-fill insurer details from master, auto-derive acronym prefixes, fetch sequential invoice numbers, draft/save fee bills, and download Fee Bill PDFs.
+  - **Restrictions (RBAC):** Cannot delete reports (`403 Forbidden`), cannot delete fee bills (`403 Forbidden`), cannot view overall corporate financial dashboard totals (`#financial-dashboard`), and cannot download GSTR-1/CA tax exports (`403 Forbidden`).
 
 ---
 
 ## 2. Automated CI/CD & Zero-Friction Deployment Pipeline
 
-### How Deployment Works (Push-to-Deploy)
-The deployment process is **100% automated**. Pushing code to `origin/main` automatically updates production in **~3.5 seconds** with zero manual server interaction:
+### How Deployment Works (Dual-Mode Automated Deployment)
+The deployment process is **100% automated** with two execution paths:
 
-```bash
-git add -A
-git commit -m "your commit message"
-git push origin main
-```
+1. **In-Memory Zip Bundle Deployment (Recommended):**
+   ```bash
+   python scripts/deploy.py
+   ```
+   Packages local files into an in-memory zip bundle transmitted via HMAC-SHA256 signed payload to `/api/deploy-webhook`. The server extracts directly into `/var/www/insurance-app` with `.bundle_deploy` flag, applies database schema/migrations, and gracefully reloads Gunicorn master/workers without requiring GitHub Personal Access Token authentication on the VPS.
 
-Or execute the local deployment script:
-```bash
-python scripts/deploy.py
-```
+2. **Git Push-to-Deploy:**
+   ```bash
+   git add -A
+   git commit -m "your commit message"
+   git push origin main
+   ```
+   Pushes commits to GitHub `origin/main` and triggers webhook for automated server synchronization.
 
 ### Webhook & Automation Architecture
 - **GitHub Webhook ID:** `666295837` (`NamanSingh69/Insurance_Deploy`)
 - **Webhook Endpoint:** `https://skinsurance.tech/api/deploy-webhook` (POST)
 - **Signature Security:** HMAC SHA-256 validated via `X-Hub-Signature-256` header against `DEPLOY_WEBHOOK_SECRET` (`surveyorportal-deploy-2026`).
 - **Server Deployment Script:** `/var/www/insurance-app/vps_setup/auto_deploy.sh`
-  1. `git fetch origin main && git reset --hard origin/main`
-  2. `pip install -r requirements.txt --quiet`
-  3. `systemctl restart insurance.service insurance-worker.service nginx.service`
-  4. Liveness validation against `http://127.0.0.1:5000/healthz` (HTTP 200 OK)
+  1. Detects `.bundle_deploy` or pulls from GitHub if in Git mode.
+  2. Synchronizes dependencies and applies PostgreSQL migrations.
+  3. Restarts/reloads `insurance.service`, `insurance-worker.service`, and `nginx.service`.
+  4. Liveness validation against `https://skinsurance.tech/healthz` (HTTP 200 OK).
   5. Audit log recorded to `/var/log/insurance_deploy.log`.
-- **Sudoers Permission Rule:** `/etc/sudoers.d/insurance_deploy` grants `www-data` passwordless execution of `systemctl restart/reload` for insurance services.
+- **Sudoers Permission Rule:** `/etc/sudoers.d/insurance_deploy` grants passwordless execution of `systemctl restart/reload` for insurance services.
 
 ---
 
@@ -93,9 +97,12 @@ python scripts/deploy.py
 | **Dynamic Gemini Model Ranking & Failover** | `_score_model_for_intelligence` dynamically scores models from Google GenAI API. `get_best_models` ranks top models (e.g. 2.5-pro, 2.5-flash, 2.0-flash) and automatically fails over upon HTTP 429 Quota Exceeded. | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), [modules/utils.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/modules/utils.py) |
 | **Multi-Worker Ephemeral Asset Storage** | Ephemeral PDF previews and temporary damage photos use PostgreSQL private asset storage (`modules/assets.py`) with UUID tokens and TTL expiration, guaranteeing multi-worker consistency across Gunicorn processes. | [modules/assets.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/modules/assets.py), `/assets/<token>/content` |
 | **Surveyor Master Profile & Auto-Prefill** | Stores SLA No, License No, Category, Valid Up To, Bank Name, Account Number, IFSC, Branch, PAN, Mobile, Email. `get_last_surveyor_details` automatically pre-fills these values into new reports. | [db.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/db.py), [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py) |
-| **GSTR-1 & CA Multi-Column Excel Export** | Generates GSTR-1 B2B CSV and multi-column CA Excel (`.xlsx`) workbooks with GSTIN, Invoice Number, Taxable Value, CGST (9%), SGST (9%), IGST (18%), and Gross Total breakdown. | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), `/export_gstr1_excel` |
+| **Universal Workspace & Report Sharing** | All historical (90+ reports) and newly created reports are shared across `SKANOWAR`, `USER`, and `NAMAN`. `is_admin_user()` enforces administrative rights for `SKANOWAR` and `NAMAN`. | `app.py` (`is_admin_user`, `workspace_admin_id_for`), `db.py` |
+| **Employee Survey Fee Register Access** | Employees can open `#fee-register-section`, draft fee bills, auto-generate sequential invoice numbers, and download PDFs. Financial summary cards (`#financial-dashboard`) and delete actions remain hidden and blocked via 403. | `static/script.js` (`initMotorSurveyWorkspace`), `templates/index.html` (`#open-fees-btn`), `app.py` |
+| **Insurer Master CRUD & Multi-Tenant Sharing** | Insurer masters (`insurer_master`) are shared across workspace members for instant auto-complete and prefix generation. Delete operations are restricted to Admins. | `db.py` (`get_insurer_masters`, `save_insurer_master`), `/api/insurer-masters` |
+| **GSTR-1 & CA Multi-Column Excel Export** | Generates GSTR-1 B2B CSV and multi-column CA Excel (`.xlsx`) workbooks with GSTIN, Invoice Number, Taxable Value, CGST (9%), SGST (9%), IGST (18%), and Gross Total breakdown. Restricted to Admins. | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), `/export_gstr1_excel` |
 | **Gmail Intimation Sync & Cancellation** | Syncs claim intimations from Gmail via OAuth (Fernet-encrypted tokens), parses details into spot drafts, deduplicates claim numbers, and supports intimation cancellation. | [modules/gmail.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/modules/gmail.py), [worker.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/worker.py) |
-| **Role Redaction & Workspace Isolation** | Survey Fee Register and financial KPIs are completely hidden from employee UI. Direct HTTP requests to `/api/insurers/next-invoice-no` return `403 Forbidden`. Claims are workspace-scoped (`workspace_admin_id`). | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), [static/script.js](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/static/script.js) |
+| **Role Redaction & RBAC Seam** | Financial summary totals and corporate tax exports are redacted for normal employees. Report and fee bill deletion routes return `403 Forbidden` for non-admin accounts. | [app.py](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/app.py), [static/script.js](file:///c:/Users/namsi/Desktop/Freelance/Insurance%20-%20SK/static/script.js) |
 
 ---
 

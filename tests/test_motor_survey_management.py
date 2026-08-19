@@ -174,7 +174,7 @@ def test_claim_register_filters_and_creates_shared_workspace_claim(client, mock_
     listing = client.get('/api/claims?q=CLM&status=inspection_pending&month=2026-07&insurer=Example&page=1&page_size=25')
     assert listing.status_code == 200
     mock_sheets_db.get_workspace_reports_page.assert_called_once_with(
-        1, 'CLM', 1, 25, status='inspection_pending', month='2026-07', insurer='Example')
+        1, 'CLM', 1, 25, status='inspection_pending', month='2026-07', insurer='Example', user_id='2', role='employee')
 
     creation = client.post('/api/claims', json={
         'claim_no': 'CLM-2', 'vehicle_no': 'WB-01-AB-1234', 'insured_name': 'Insured',

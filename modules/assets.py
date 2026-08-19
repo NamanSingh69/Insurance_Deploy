@@ -228,11 +228,21 @@ def read_asset_content(asset):
 
 
 def get_owned_asset_content(asset_id, user_id):
+    if not asset_id:
+        return None, None
+    adapter = _database()
+    if not getattr(adapter, 'pool', None):
+        return None, None
     asset = get_asset_for_user(asset_id, user_id)
     return read_asset_content(asset), asset
 
 
 def get_accessible_asset_content(asset_id, user_id, workspace_admin_id=None):
+    if not asset_id:
+        return None, None
+    adapter = _database()
+    if not getattr(adapter, 'pool', None):
+        return None, None
     asset = get_asset_for_access(asset_id, user_id, workspace_admin_id)
     return read_asset_content(asset), asset
 

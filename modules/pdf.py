@@ -59,6 +59,8 @@ def _private_signature_path(user_id, workspace_admin_id=None):
     """Materialize an owned or workspace signature briefly for FPDF without public static files."""
     if not user_id and not workspace_admin_id:
         return None
+    if not getattr(db, 'pool', None):
+        return None
     try:
         user_data = db.get_user_by_id(user_id) if user_id else None
         asset_id = user_data.get('signature_asset_id') if user_data else None
@@ -715,17 +717,17 @@ def render_report(data, user_data_snapshot, user_id):
                     delimiter = '/api/assets/' if '/api/assets/' in photo_b64 else '/assets/'
                     parts = photo_b64.split(delimiter)
                     asset_id = parts[1].split('/')[0].split('?')[0] if len(parts) > 1 else ''
-                    ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id') if isinstance(user_data_snapshot, dict) else None
-                    if not ws_admin_id and user_id:
-                        u_row = db.get_user_by_id(user_id)
-                        if u_row:
-                            ws_admin_id = u_row.get('admin_id') or user_id
+                    ws_admin_id = None
+                    if isinstance(user_data_snapshot, dict):
+                        ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id')
+                    if not ws_admin_id:
+                        ws_admin_id = user_id
                     img_data, _asset = get_accessible_asset_content(asset_id, user_id, ws_admin_id)
                     if not img_data:
                         img_data, _asset = get_owned_asset_content(asset_id, user_id)
                     if not img_data and ws_admin_id:
                         img_data, _asset = get_owned_asset_content(asset_id, ws_admin_id)
-                    if not img_data:
+                    if not img_data and getattr(db, 'pool', None):
                         raw_asset = db.get_asset_by_id(asset_id) or db.get_asset_by_locator(asset_id)
                         if raw_asset:
                             img_data = read_asset_content(raw_asset)
@@ -735,9 +737,10 @@ def render_report(data, user_data_snapshot, user_id):
                     else:
                         locator = photo_b64.split('/local_image/')[-1].split('?')[0].split('/')[0]
                     ws_admin_id = user_data_snapshot.get('workspace_admin_id') or user_data_snapshot.get('admin_id') if isinstance(user_data_snapshot, dict) else None
-                    asset = db.get_asset_by_locator(locator, user_id)
-                    if asset:
-                        img_data, _ = get_accessible_asset_content(asset['id'], user_id, ws_admin_id)
+                    if getattr(db, 'pool', None):
+                        asset = db.get_asset_by_locator(locator, user_id)
+                        if asset:
+                            img_data, _ = get_accessible_asset_content(asset['id'], user_id, ws_admin_id)
                     if not img_data and '/proxy_image/' in photo_b64:
                         img_data = db.get_file_content(locator)
                     if not img_data and '/local_image/' in photo_b64:
@@ -787,19 +790,18 @@ def render_report(data, user_data_snapshot, user_id):
                             buf.seek(0)
                             img_stream = buf
                     except Exception:
-                        img_stream = io.BytesIO(img_data)
-                        img_stream.seek(0)
+                        img_stream = None
                 
                 if img_stream:
                     try:
                         img_stream.seek(0)
                         pdf_obj.image(img_stream, x=x, y=y, w=img_width, h=img_height)
                     except Exception:
-                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                        pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
                 else:
-                    pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                    pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
             except Exception:
-                pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x="RIGHT", new_y="TOP", align='C')
+                pdf_obj.set_xy(x, y); pdf_obj.set_font("Helvetica", '', 8); pdf_obj.cell(img_width, img_height, "Error loading image", border=1, new_x=XPos.RIGHT, new_y=YPos.TOP, align='C')
 
     # --- Page 1: Survey Report ---
     pdf.add_page(); pdf.set_margins(10, 10, 10); add_pdf_header(pdf)
