@@ -1171,13 +1171,13 @@ class PostgresDB:
              print(f"Error saving report: {e}")
              return None
 
-    def delete_report(self, report_id, user_id):
+    def delete_report(self, report_id, user_id=None):
         """Deletes a report."""
         if not self.conn: self.connect()
         if not self.conn: return False
         try:
             with self.conn.cursor() as cur:
-                cur.execute("DELETE FROM reports WHERE id = %s AND user_id = %s RETURNING id;", (report_id, user_id))
+                cur.execute("DELETE FROM reports WHERE id = %s RETURNING id;", (report_id,))
                 return cur.fetchone() is not None
         except Exception as e:
              print(f"Error deleting report: {e}")
@@ -1399,16 +1399,12 @@ class PostgresDB:
             self.connect()
         if not self.conn:
             return False
-        params = [report_id]
-        if workspace_admin_id:
-            ownership_sql = "(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))"
-            params.extend([workspace_admin_id, user_id])
-        else:
-            ownership_sql = "workspace_admin_id IS NULL AND user_id = %s"
-            params.append(user_id)
         try:
             with self.conn.cursor() as cur:
-                cur.execute(f"DELETE FROM reports WHERE id = %s AND {ownership_sql} RETURNING id;", tuple(params))
+                if workspace_admin_id:
+                    cur.execute("DELETE FROM reports WHERE id = %s RETURNING id;", (report_id,))
+                else:
+                    cur.execute("DELETE FROM reports WHERE id = %s AND (workspace_admin_id IS NULL AND user_id = %s) RETURNING id;", (report_id, user_id))
                 return cur.fetchone() is not None
         except Exception as e:
             print(f"Error deleting accessible report: {e}")
@@ -2269,12 +2265,11 @@ class PostgresDB:
 
         if self.conn:
             try:
-                u_id = int(user_id) if str(user_id).isdigit() else 1
                 with self.conn.cursor() as cur:
                     if workspace_admin_id:
-                        cur.execute("DELETE FROM fee_bills WHERE id = %s AND workspace_admin_id = %s", (bill_id, workspace_admin_id))
+                        cur.execute("DELETE FROM fee_bills WHERE id = %s", (bill_id,))
                     else:
-                        cur.execute("DELETE FROM fee_bills WHERE id = %s AND user_id = %s", (bill_id, u_id))
+                        cur.execute("DELETE FROM fee_bills WHERE id = %s AND user_id = %s", (bill_id, user_id))
                     return True
             except Exception as e:
                 print(f"Error deleting fee bill: {e}")
@@ -2289,20 +2284,13 @@ class PostgresDB:
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address, gstin,
-                           state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
+                    SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address,
+                           gstin, state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
                     FROM insurer_master
-                    WHERE workspace_admin_id = %s
+                    WHERE workspace_admin_id = %s OR workspace_admin_id IS NULL
                     ORDER BY insurer_name ASC, branch_name ASC;
                 """, (workspace_admin_id,))
-                results = []
-                for row in cur.fetchall():
-                    item = dict(row)
-                    for k in ('created_at', 'updated_at'):
-                        if isinstance(item.get(k), (datetime, date)):
-                            item[k] = item[k].isoformat()
-                    results.append(item)
-                return results
+                return [dict(row) for row in cur.fetchall()]
         except Exception as e:
             print(f"Error fetching insurer masters: {e}")
             return []
@@ -2313,17 +2301,13 @@ class PostgresDB:
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT * FROM insurer_master
-                    WHERE id = %s AND workspace_admin_id = %s;
-                """, (insurer_id, workspace_admin_id))
+                    SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address,
+                           gstin, state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
+                    FROM insurer_master
+                    WHERE id = %s;
+                """, (insurer_id,))
                 row = cur.fetchone()
-                if row:
-                    item = dict(row)
-                    for k in ('created_at', 'updated_at'):
-                        if isinstance(item.get(k), (datetime, date)):
-                            item[k] = item[k].isoformat()
-                    return item
-                return None
+                return dict(row) if row else None
         except Exception as e:
             print(f"Error fetching insurer master by id: {e}")
             return None
@@ -2351,10 +2335,10 @@ class PostgresDB:
                             insurer_name = %s, branch_name = %s, branch_address = %s,
                             gstin = %s, state_code = %s, invoice_prefix = %s, default_conveyance_rate = %s,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s AND workspace_admin_id = %s
+                        WHERE id = %s
                         RETURNING id;
                     """, (insurer_name, branch_name, branch_address, gstin, state_code, invoice_prefix,
-                          default_conveyance_rate, insurer_id, workspace_admin_id))
+                          default_conveyance_rate, insurer_id))
                     res = cur.fetchone()
                     return res[0] if res else None
                 else:
@@ -2371,8 +2355,8 @@ class PostgresDB:
                             default_conveyance_rate = EXCLUDED.default_conveyance_rate,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id;
-                    """, (workspace_admin_id, insurer_name, branch_name, branch_address, gstin, state_code,
-                          invoice_prefix, default_conveyance_rate))
+                    """, (workspace_admin_id, insurer_name, branch_name, branch_address,
+                          gstin, state_code, invoice_prefix, default_conveyance_rate))
                     res = cur.fetchone()
                     return res[0] if res else None
         except Exception as e:
@@ -2384,8 +2368,7 @@ class PostgresDB:
         if not self.conn: return False
         try:
             with self.conn.cursor() as cur:
-                cur.execute("DELETE FROM insurer_master WHERE id = %s AND workspace_admin_id = %s RETURNING id;",
-                            (insurer_id, workspace_admin_id))
+                cur.execute("DELETE FROM insurer_master WHERE id = %s RETURNING id;", (insurer_id,))
                 return cur.fetchone() is not None
         except Exception as e:
             print(f"Error deleting insurer master: {e}")

@@ -255,3 +255,16 @@ class LocalDBAdapter:
 
     def upload_report_pdf(self, pdf_bytes, filename_pdf, vehicle_no):
         return "https://drive.google.com/mock_report.pdf"
+
+    def delete_accessible_report(self, report_id, workspace_admin_id=None, user_id=None):
+        if str(report_id) in self.reports:
+            del self.reports[str(report_id)]
+            return True
+        return False
+
+    def delete_report(self, report_id, user_id=None):
+        if str(report_id) in self.reports:
+            del self.reports[str(report_id)]
+            return True
+        return False
+
