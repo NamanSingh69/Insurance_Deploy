@@ -1,5 +1,5 @@
 # AGENT MEMORY DASHBOARD
-*Last Synchronized: 2026-08-18T23:03:39.064603*
+*Last Synchronized: 2026-08-19T00:47:41.920078*
 
 ## ACTIVE ARCHITECTURAL CONSTRAINTS
 - **[CRITICAL]** (MUST_FOLLOW): All operational claim records must be strictly workspace-scoped (workspace_admin_id). Financial fee data must be redacted from employee API responses and employee save operations must never overwrite financial records.
