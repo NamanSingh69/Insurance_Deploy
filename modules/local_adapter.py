@@ -276,6 +276,52 @@ class LocalDBAdapter:
             return True
         return False
 
+    def update_fee_bill_payment(self, bill_id, workspace_admin_id, payment_data):
+        b = self.fee_bills.get(str(bill_id))
+        if not b:
+            return False
+        if workspace_admin_id and str(b.get('workspace_admin_id')) != str(workspace_admin_id):
+            return False
+        payment_status = str(payment_data.get('payment_status') or 'unpaid').strip().lower()
+        payment_date = payment_data.get('payment_date') or None
+        payment_reference = str(payment_data.get('payment_reference') or '').strip()
+        payment_remarks = str(payment_data.get('payment_remarks') or payment_data.get('remarks') or '').strip()
+        try:
+            amount_received = float(payment_data.get('amount_received') or 0.0)
+        except (ValueError, TypeError):
+            amount_received = 0.0
+        try:
+            tds_amount = float(payment_data.get('tds_amount') or 0.0)
+        except (ValueError, TypeError):
+            tds_amount = 0.0
+
+        gross = float(b.get('gross_invoice_value') or b.get('total_amount') or 0.0)
+        if payment_status == 'paid' and amount_received == 0.0 and tds_amount == 0.0:
+            amount_received = gross
+        outstanding = max(0.0, gross - amount_received - tds_amount) if payment_status != 'paid' else 0.0
+
+        b['payment_status'] = payment_status
+        b['payment_date'] = payment_date
+        b['amount_received'] = amount_received
+        b['tds_amount'] = tds_amount
+        b['outstanding_amount'] = outstanding
+        b['payment_reference'] = payment_reference
+        b['payment_remarks'] = payment_remarks
+        if isinstance(b.get('bill_data_json'), dict):
+            b['bill_data_json'].update({
+                'payment_status': payment_status,
+                'payment_date': payment_date,
+                'amount_received': amount_received,
+                'tds_amount': tds_amount,
+                'outstanding_amount': outstanding,
+                'payment_reference': payment_reference,
+                'payment_remarks': payment_remarks,
+            })
+        return True
+
+    def add_audit_log(self, action, user_id, details=None, ip_address=None, workspace_admin_id=None):
+        pass
+
     def get_next_insurer_invoice_number(self, workspace_admin_id, prefix='NIC'):
         self.invoice_seq += 1
         return f"{prefix}/2026/{self.invoice_seq:04d}"

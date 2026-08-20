@@ -2743,13 +2743,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const tbody = document.getElementById('insurer-master-tbody');
             if (tbody) {
                 if (!globalInsurerMasters.length) {
-                    tbody.innerHTML = '<tr><td colspan="6">No Insurer Masters added yet.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7">No Insurer Masters added yet.</td></tr>';
                 } else {
                     tbody.innerHTML = globalInsurerMasters.map(i => `
                         <tr>
                             <td><strong>${escapeHtml(i.insurer_name)}</strong></td>
                             <td>${escapeHtml(i.branch_name || '—')}</td>
                             <td><code>${escapeHtml(i.invoice_prefix || '')}</code></td>
+                            <td>${escapeHtml(i.surveyor_code || '—')}</td>
                             <td>${escapeHtml(i.gstin || '—')}</td>
                             <td>Rs. ${escapeHtml(i.default_conveyance_rate || 10)}/km</td>
                             <td>
@@ -2775,6 +2776,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('im-insurer-name').value = item.insurer_name || '';
         document.getElementById('im-branch-name').value = item.branch_name || '';
         document.getElementById('im-prefix').value = item.invoice_prefix || '';
+        document.getElementById('im-surveyor-code').value = item.surveyor_code || '';
         document.getElementById('im-gstin').value = item.gstin || '';
         document.getElementById('im-conveyance-rate').value = item.default_conveyance_rate || 10;
         document.getElementById('im-branch-address').value = item.branch_address || '';
@@ -3367,10 +3369,13 @@ document.addEventListener('DOMContentLoaded', () => {
             total_amount: totalAmount,
             gross_invoice_value: totalAmount,
             include_signature: includeSignature,
+            surveyor_code: document.getElementById('fee-surveyor-code')?.value.trim() || undefined,
             payment_status: document.getElementById('fee-payment-status')?.value || 'unpaid',
             invoice_status: document.getElementById('fee-invoice-status')?.value || 'draft'
         };
     }
+
+    let currentFeeBillsList = [];
 
     async function fetchFees() {
         const tbody = document.getElementById('fee-register-tbody');
@@ -3380,6 +3385,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`/api/fee_bills${month ? `?month=${encodeURIComponent(month)}` : ''}`);
             if (!res.ok) throw new Error('Could not load fees');
             const bills = await res.json();
+            currentFeeBillsList = bills || [];
             if (!bills.length) {
                 tbody.innerHTML = '<tr><td colspan="9">No fee register rows found.</td></tr>';
                 return;
@@ -3391,7 +3397,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const taxable = bill.taxable_amount ?? (bill.professional_fee || 0);
                 const gst = bill.gst_amount ?? 0;
                 const total = bill.total_amount ?? bill.gross_invoice_value ?? 0;
-                const deleteBtnHtml = isAdmin ? `<button type="button" class="btn btn-secondary btn-sm delete-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Delete"><i class="fas fa-trash"></i></button>` : '';
+                const deleteBtnHtml = isAdmin ? `<button type="button" class="btn btn-secondary btn-sm delete-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Delete" style="margin-left: 4px;"><i class="fas fa-trash"></i></button>` : '';
+
+                let statusBadge = `<span class="badge" style="background:#4b5563; color:#fff; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; font-weight:600;">Unpaid</span>`;
+                const st = (bill.payment_status || 'unpaid').toLowerCase();
+                if (st === 'paid') {
+                    statusBadge = `<span class="badge" style="background:#059669; color:#fff; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; font-weight:600;"><i class="fas fa-check-circle"></i> Paid</span>`;
+                } else if (st === 'partially_paid' || st === 'partial') {
+                    statusBadge = `<span class="badge" style="background:#d97706; color:#fff; padding:0.25rem 0.5rem; border-radius:4px; font-size:0.75rem; font-weight:600;"><i class="fas fa-clock"></i> Partial</span>`;
+                }
+
                 return `<tr>
                     <td><strong>${escapeHtml(bill.invoice_no || '—')}</strong><br><small style="color:#aaa;">${escapeHtml(bill.invoice_date || '')}</small></td>
                     <td>${escapeHtml(bill.report_no || '—')}</td>
@@ -3400,17 +3415,32 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>${formatMoney(taxable)}</td>
                     <td>${formatMoney(gst)}</td>
                     <td><strong style="color:#10b981;">${formatMoney(total)}</strong></td>
-                    <td><span class="badge badge-outline">${escapeHtml(bill.payment_status || 'unpaid')}</span></td>
+                    <td>${statusBadge}</td>
                     <td style="white-space: nowrap;">
-                        <button type="button" class="btn btn-secondary btn-sm download-saved-fee-pdf-btn" data-bill-id="${escapeHtml(bill.id)}" title="Download PDF"><i class="fas fa-file-pdf"></i> PDF</button>
+                        <button type="button" class="btn btn-secondary btn-sm preview-saved-fee-pdf-btn" data-bill-id="${escapeHtml(bill.id)}" title="Preview PDF"><i class="fas fa-eye"></i> PDF</button>
+                        <button type="button" class="btn btn-primary btn-sm open-fee-payment-btn" data-bill-id="${escapeHtml(bill.id)}" title="Update Payment" style="margin-left: 4px;"><i class="fas fa-credit-card"></i> Payment</button>
                         ${deleteBtnHtml}
                     </td>
                 </tr>`;
             }).join('');
 
-            tbody.querySelectorAll('.download-saved-fee-pdf-btn').forEach(btn => btn.addEventListener('click', () => {
+            tbody.querySelectorAll('.preview-saved-fee-pdf-btn').forEach(btn => btn.addEventListener('click', async () => {
                 const billId = btn.dataset.billId;
-                window.open(`/api/fee_bills/${encodeURIComponent(billId)}/pdf`, '_blank');
+                const pdfUrl = `/api/fee_bills/${encodeURIComponent(billId)}/pdf?preview=true`;
+                const previewModal = document.getElementById('preview-modal');
+                const previewIframe = document.getElementById('preview-iframe');
+                if (previewModal && previewIframe) {
+                    previewIframe.src = pdfUrl;
+                    previewModal.classList.remove('hidden');
+                    previewModal.style.display = 'flex';
+                } else {
+                    window.open(pdfUrl, '_blank');
+                }
+            }));
+
+            tbody.querySelectorAll('.open-fee-payment-btn').forEach(btn => btn.addEventListener('click', () => {
+                const billId = btn.dataset.billId;
+                openFeePaymentModal(billId);
             }));
 
             tbody.querySelectorAll('.delete-fee-bill-btn').forEach(btn => btn.addEventListener('click', async () => {
@@ -3429,11 +3459,36 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
     }
 
+    function openFeePaymentModal(billId) {
+        const bill = currentFeeBillsList.find(b => String(b.id) === String(billId));
+        if (!bill) return;
+
+        const modal = document.getElementById('fee-payment-modal');
+        if (!modal) return;
+
+        document.getElementById('pay-modal-bill-id').value = bill.id;
+        document.getElementById('pay-modal-invoice-no').textContent = bill.invoice_no || '—';
+        document.getElementById('pay-modal-total-amt').textContent = formatMoney(bill.total_amount ?? bill.gross_invoice_value ?? 0);
+        document.getElementById('pay-modal-insurer').textContent = bill.insurer_name || '—';
+        document.getElementById('pay-modal-claim').textContent = bill.claim_no || bill.vehicle_no || '—';
+
+        document.getElementById('pay-modal-status').value = bill.payment_status || 'unpaid';
+        document.getElementById('pay-modal-date').value = bill.payment_date ? bill.payment_date.split('T')[0] : '';
+        document.getElementById('pay-modal-amount').value = bill.amount_received !== undefined && bill.amount_received !== null ? bill.amount_received : '';
+        document.getElementById('pay-modal-tds').value = bill.tds_amount !== undefined && bill.tds_amount !== null ? bill.tds_amount : '';
+        document.getElementById('pay-modal-reference').value = bill.payment_reference || '';
+        document.getElementById('pay-modal-remarks').value = bill.payment_remarks || '';
+
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+    }
+
     async function handleDownloadFeePdfPreview() {
         const payload = collectFeeBillPayload();
+        payload.preview = true;
         showStatus('Generating Fee Bill PDF preview...', 'info', true);
         try {
-            const res = await fetch('/generate_fee_pdf', {
+            const res = await fetch('/generate_fee_pdf?preview=true', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -3444,14 +3499,17 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const blob = await res.blob();
             const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${payload.invoice_no || 'FeeBill'}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            window.URL.revokeObjectURL(url);
-            showStatus('Fee Bill PDF downloaded successfully.', 'success', true);
+            const previewModal = document.getElementById('preview-modal');
+            const previewIframe = document.getElementById('preview-iframe');
+            if (previewModal && previewIframe) {
+                previewIframe.src = url;
+                previewModal.classList.remove('hidden');
+                previewModal.style.display = 'flex';
+                showStatus('Fee Bill preview loaded.', 'success', true);
+            } else {
+                window.open(url, '_blank');
+                showStatus('Fee Bill preview opened in new tab.', 'success', true);
+            }
         } catch (error) {
             showStatus(error.message, 'error', true);
         }
@@ -3820,11 +3878,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const gstinInput = document.getElementById('fee-insurer-gst');
             const addressInput = document.getElementById('fee-insurer-address');
             const rateInput = document.getElementById('fee-dist-rate-per-km');
+            const surveyorCodeInput = document.getElementById('fee-surveyor-code');
 
             if (insurerInput) insurerInput.value = item.insurer_name || '';
             if (gstinInput) gstinInput.value = item.gstin || '';
             if (addressInput) addressInput.value = item.branch_address || '';
             if (rateInput) rateInput.value = item.default_conveyance_rate || 10;
+            if (surveyorCodeInput && item.surveyor_code) surveyorCodeInput.value = item.surveyor_code;
 
             if (item.invoice_prefix) {
                 try {
@@ -3922,8 +3982,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     const gstinInput = document.getElementById('fee-insurer-gst');
                     const addressInput = document.getElementById('fee-insurer-address');
                     const rateInput = document.getElementById('fee-dist-rate-per-km');
+                    const surveyorCodeInput = document.getElementById('fee-surveyor-code');
                     if (gstinInput && !gstinInput.value && matchedMaster.gstin) gstinInput.value = matchedMaster.gstin;
                     if (addressInput && !addressInput.value && matchedMaster.branch_address) addressInput.value = matchedMaster.branch_address;
+                    if (surveyorCodeInput && !surveyorCodeInput.value && matchedMaster.surveyor_code) surveyorCodeInput.value = matchedMaster.surveyor_code;
                     if (rateInput && matchedMaster.default_conveyance_rate) {
                         rateInput.value = matchedMaster.default_conveyance_rate;
                         updateDistanceConveyanceCalc();
@@ -4053,6 +4115,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 invoice_prefix: document.getElementById('im-prefix')?.value.trim(),
                 gstin: document.getElementById('im-gstin')?.value.trim(),
                 state_code: document.getElementById('im-state-code')?.value.trim() || '19',
+                surveyor_code: document.getElementById('im-surveyor-code')?.value.trim() || '',
                 default_conveyance_rate: document.getElementById('im-conveyance-rate')?.value,
                 branch_address: document.getElementById('im-branch-address')?.value.trim()
             };
@@ -4078,6 +4141,59 @@ document.addEventListener('DOMContentLoaded', () => {
             if (modal) {
                 modal.classList.add('hidden');
                 modal.style.display = 'none';
+            }
+        });
+
+        // Fee Payment Modal Controls & Submit Handler
+        const closeFeePayModal = () => {
+            const modal = document.getElementById('fee-payment-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+        };
+
+        document.getElementById('close-fee-payment-modal')?.addEventListener('click', closeFeePayModal);
+        document.getElementById('pay-modal-cancel-btn')?.addEventListener('click', closeFeePayModal);
+
+        document.getElementById('fee-payment-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const billId = document.getElementById('pay-modal-bill-id')?.value;
+            if (!billId) return;
+
+            const submitBtn = document.getElementById('pay-modal-submit-btn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            }
+
+            const payload = {
+                payment_status: document.getElementById('pay-modal-status')?.value || 'unpaid',
+                payment_date: document.getElementById('pay-modal-date')?.value || null,
+                amount_received: parseFloat(document.getElementById('pay-modal-amount')?.value || 0) || 0,
+                tds_amount: parseFloat(document.getElementById('pay-modal-tds')?.value || 0) || 0,
+                payment_reference: document.getElementById('pay-modal-reference')?.value.trim() || '',
+                payment_remarks: document.getElementById('pay-modal-remarks')?.value.trim() || ''
+            };
+
+            try {
+                const res = await fetch(`/api/fee_bills/${encodeURIComponent(billId)}/payment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || 'Failed to update payment details');
+                showStatus('Fee bill payment details updated successfully.', 'success', true);
+                closeFeePayModal();
+                await fetchFees();
+            } catch (err) {
+                showStatus(err.message, 'error', true);
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="fas fa-save"></i> Save Payment Details';
+                }
             }
         });
 

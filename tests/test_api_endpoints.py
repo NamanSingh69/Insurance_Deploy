@@ -480,7 +480,7 @@ class TestDashboardEndpoint:
         assert response.status_code == 200
         data = response.get_json()
         assert data['total_claims'] == 5
-        mock_sheets_db.get_workspace_dashboard.assert_called_with(1, date_range='1m')
+        mock_sheets_db.get_workspace_dashboard.assert_called_with(1, date_range='1m', from_date=None, to_date=None)
 
     def test_extract_fee_pdf_no_file(self, authenticated_client):
         """Test extract fee PDF with no file uploaded returns 400."""

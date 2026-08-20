@@ -311,6 +311,10 @@
                         <label for="fee-insurer-gst" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer GSTIN:</label>
                         <input id="fee-insurer-gst" type="text" placeholder="e.g. 19AAACB6747B1ZD" list="insurer-gstin-datalist">
                     </div>
+                    <div>
+                        <label for="fee-surveyor-code" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer Surveyor Code:</label>
+                        <input id="fee-surveyor-code" type="text" placeholder="e.g. 2075995">
+                    </div>
                     <div style="grid-column: 1 / -1;">
                         <label for="fee-insurer-address" style="font-size: 0.75rem; color: #aaa; margin: 0;">Insurer Branch Address:</label>
                         <input id="fee-insurer-address" type="text" placeholder="e.g. 4th Floor Thapar House, 163 Shyama Prasad Mukherjee Rd, Kolkata-700026" list="insurer-address-datalist">
@@ -469,7 +473,7 @@
 
                 <!-- Action Buttons -->
                 <div style="grid-column: 1 / -1; display: flex; gap: 0.75rem; justify-content: flex-end; align-items: center; flex-wrap: wrap;">
-                    <button type="button" id="fee-pdf-preview-btn" class="btn btn-secondary"><i class="fas fa-file-pdf"></i> Download Preview PDF</button>
+                    <button type="button" id="fee-pdf-preview-btn" class="btn btn-secondary"><i class="fas fa-eye"></i> Preview Fee Bill</button>
                     <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Fee Bill</button>
                 </div>
             </form>
@@ -2022,7 +2026,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                 <button type="button" id="close-insurer-master-modal" class="btn btn-danger btn-sm"><i class="fas fa-times"></i></button>
             </div>
             <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-                Configure Insurers, Division/Branch Office Addresses, State GSTINs, Short Codes (Prefixes), and Default Conveyance Rates.
+                Configure Insurers, Division/Branch Office Addresses, State GSTINs, Short Codes (Prefixes), Surveyor Codes, and Default Conveyance Rates.
             </p>
             <form id="insurer-master-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; background: rgba(255,255,255,0.03); padding: 1rem; border-radius: 6px;">
                 <input type="hidden" id="insurer-master-id">
@@ -2031,6 +2035,7 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                 <input type="text" id="im-prefix" placeholder="Short Code / Prefix (e.g. NIA, IGI) *" required>
                 <input type="text" id="im-gstin" placeholder="Branch GSTIN Number">
                 <input type="text" id="im-state-code" placeholder="State Code (Default: 19)" value="19">
+                <input type="text" id="im-surveyor-code" placeholder="Insurer Surveyor Code (e.g. 2075995)">
                 <input type="number" id="im-conveyance-rate" min="0" step="0.5" value="10" placeholder="Default Rate/Km (e.g. 10)">
                 <textarea id="im-branch-address" placeholder="Branch Address" style="grid-column: 1 / -1; height: 60px;"></textarea>
                 <div style="grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 0.5rem;">
@@ -2046,16 +2051,76 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
                             <th>Insurer Name</th>
                             <th>Branch</th>
                             <th>Prefix</th>
+                            <th>Surveyor Code</th>
                             <th>GSTIN</th>
                             <th>Rate/Km</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody id="insurer-master-tbody">
-                        <tr><td colspan="6">Loading Insurer Masters...</td></tr>
+                        <tr><td colspan="7">Loading Insurer Masters...</td></tr>
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- Fee Bill Payment Lifecycle Modal -->
+    <div id="fee-payment-modal" class="modal hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 2500; display: flex; align-items: center; justify-content: center;">
+        <div class="modal-content" style="background: var(--bg-card, #1e293b); width: 620px; max-width: 95%; max-height: 90vh; overflow-y: auto; border-radius: 8px; padding: 1.5rem; border: 1px solid var(--border-color, #334155); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color, #334155); padding-bottom: 0.75rem;">
+                <h3 style="margin: 0; font-size: 1.15rem; color: var(--text-primary);"><i class="fas fa-credit-card"></i> Update Fee Bill Payment</h3>
+                <button type="button" id="close-fee-payment-modal" class="btn btn-danger btn-sm"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="fee-payment-bill-summary" style="margin-bottom: 1.25rem; padding: 0.75rem 1rem; background: rgba(255,255,255,0.04); border-radius: 6px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.08);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.35rem;">
+                    <span><strong>Invoice No:</strong> <span id="pay-modal-invoice-no" style="color: var(--primary-light, #60a5fa);">—</span></span>
+                    <span><strong>Total Bill:</strong> <strong id="pay-modal-total-amt" style="color: #10b981; font-size: 1rem;">₹0.00</strong></span>
+                </div>
+                <div style="color: var(--text-secondary); font-size: 0.85rem; display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <span><strong>Insurer:</strong> <span id="pay-modal-insurer">—</span></span>
+                    <span><strong>Claim:</strong> <span id="pay-modal-claim">—</span></span>
+                </div>
+            </div>
+            <form id="fee-payment-form" style="display: flex; flex-direction: column; gap: 0.9rem;">
+                <input type="hidden" id="pay-modal-bill-id">
+                <div>
+                    <label for="pay-modal-status" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">Payment Status *</label>
+                    <select id="pay-modal-status" required style="width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155); font-size: 0.9rem;">
+                        <option value="unpaid">Unpaid (Pending Remittance)</option>
+                        <option value="paid">Paid (Fully Remitted)</option>
+                        <option value="partially_paid">Partially Paid (Short Payment / Deduction)</option>
+                    </select>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label for="pay-modal-date" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">Payment Date</label>
+                        <input type="date" id="pay-modal-date" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155);">
+                    </div>
+                    <div>
+                        <label for="pay-modal-amount" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">Amount Received (₹)</label>
+                        <input type="number" id="pay-modal-amount" step="0.01" min="0" placeholder="0.00" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155);">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label for="pay-modal-tds" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">TDS Deducted (₹)</label>
+                        <input type="number" id="pay-modal-tds" step="0.01" min="0" placeholder="0.00" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155);">
+                    </div>
+                    <div>
+                        <label for="pay-modal-reference" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">Reference / UTR No.</label>
+                        <input type="text" id="pay-modal-reference" placeholder="e.g. UTR / NEFT / Cheque No" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155);">
+                    </div>
+                </div>
+                <div>
+                    <label for="pay-modal-remarks" style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.3rem; color: var(--text-primary);">Payment Remarks / Short-Payment Reason</label>
+                    <textarea id="pay-modal-remarks" placeholder="Enter reason for short-payment or deduction notes (e.g. Conveyance disallowed above 50km, TDS 10% deducted, etc.)..." style="width: 100%; height: 75px; padding: 0.5rem; border-radius: 6px; background: var(--bg-input, #0f172a); color: var(--text-primary); border: 1px solid var(--border-color, #334155); resize: vertical;"></textarea>
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+                    <button type="button" id="pay-modal-cancel-btn" class="btn btn-secondary btn-sm">Cancel</button>
+                    <button type="submit" id="pay-modal-submit-btn" class="btn btn-primary btn-sm"><i class="fas fa-save"></i> Save Payment Details</button>
+                </div>
+            </form>
         </div>
     </div>
 

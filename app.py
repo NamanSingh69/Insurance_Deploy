@@ -5531,7 +5531,7 @@ def generate_fee_pdf_route():
             'address_line_3': current_user.address_line_3 or 'Krishnanagar, Dist.-Nadia, W.B-741125',
             'contact_no': current_user.contact_no or '8777207014',
             'email': current_user.email or 'skanowarali93@gmail.com',
-            'surveyor_code': getattr(current_user, 'surveyor_code', '') or '2075995',
+            'surveyor_code': data.get('surveyor_code') or getattr(current_user, 'surveyor_code', '') or '2075995',
             'surveyor_gstin': getattr(current_user, 'surveyor_gstin', '') or '19AZZPA2301R1ZM',
             'bank_account_no': getattr(current_user, 'bank_account_no', '') or '33717014374',
             'bank_name': getattr(current_user, 'bank_name', '') or 'State Bank Of India (SBI)',
@@ -5543,16 +5543,38 @@ def generate_fee_pdf_route():
         pdf_bytes = res['pdf_bytes']
         inv_no = res['invoice_no']
         safe_name = "".join(c for c in inv_no if c.isalnum() or c in ('_', '-')) or 'FeeBill'
+        is_preview = request.args.get('preview') == 'true' or bool(data.get('preview'))
 
         return send_file(
             io.BytesIO(pdf_bytes),
             mimetype='application/pdf',
-            as_attachment=True,
+            as_attachment=not is_preview,
             download_name=f"{safe_name}.pdf"
         )
     except Exception as e:
         app.logger.exception("Error generating fee PDF: %s", e)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/fee_bills/<bill_id>/payment', methods=['POST'])
+@login_required
+def update_fee_bill_payment_route(bill_id):
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+    data = request.get_json() or {}
+    success = sheets_db.update_fee_bill_payment(bill_id, workspace_admin_id, data)
+    if not success:
+        return jsonify({'error': 'Failed to update payment details or fee bill not found.'}), 404
+    payment_status = str(data.get('payment_status') or 'unpaid').strip()
+    sheets_db.add_audit_log(
+        action='update_fee_bill_payment',
+        user_id=current_user.id,
+        details=f"Updated payment status to '{payment_status}' for fee bill {bill_id}",
+        ip_address=request.remote_addr,
+        workspace_admin_id=workspace_admin_id
+    )
+    return jsonify({'success': True, 'message': 'Payment status updated successfully.'}), 200
 
 
 @app.route('/api/fee_bills/<bill_id>/pdf', methods=['GET'])
@@ -5578,7 +5600,7 @@ def download_saved_fee_pdf_route(bill_id):
             'address_line_3': current_user.address_line_3 or 'Krishnanagar, Dist.-Nadia, W.B-741125',
             'contact_no': current_user.contact_no or '8777207014',
             'email': current_user.email or 'skanowarali93@gmail.com',
-            'surveyor_code': getattr(current_user, 'surveyor_code', '') or '2075995',
+            'surveyor_code': bill.get('surveyor_code') or getattr(current_user, 'surveyor_code', '') or '2075995',
             'surveyor_gstin': getattr(current_user, 'surveyor_gstin', '') or '19AZZPA2301R1ZM',
             'bank_account_no': getattr(current_user, 'bank_account_no', '') or '33717014374',
             'bank_name': getattr(current_user, 'bank_name', '') or 'State Bank Of India (SBI)',
@@ -5590,11 +5612,12 @@ def download_saved_fee_pdf_route(bill_id):
         pdf_bytes = res['pdf_bytes']
         inv_no = res['invoice_no']
         safe_name = "".join(c for c in inv_no if c.isalnum() or c in ('_', '-')) or 'FeeBill'
+        is_preview = request.args.get('preview') == 'true' or request.args.get('inline') == 'true'
 
         return send_file(
             io.BytesIO(pdf_bytes),
             mimetype='application/pdf',
-            as_attachment=True,
+            as_attachment=not is_preview,
             download_name=f"{safe_name}.pdf"
         )
     except Exception as e:

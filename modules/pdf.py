@@ -1464,6 +1464,10 @@ def render_fee_report(fee_data, user_data_snapshot, user_id, include_signature=T
     Generates a Fee Invoice / Professional Bill PDF matching the client's official Word template layout.
     """
     u = UserSnapshot(user_data_snapshot)
+    if fee_data.get('surveyor_code'):
+        u.surveyor_code = str(fee_data['surveyor_code']).strip()
+    elif fee_data.get('insurer_surveyor_code'):
+        u.surveyor_code = str(fee_data['insurer_surveyor_code']).strip()
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.set_margins(10, 10, 10)
     pdf.add_page()

@@ -2,162 +2,137 @@
 
 **Project:** Motor Survey Report Generator ([https://skinsurance.tech](https://skinsurance.tech))  
 **Target Client:** Sk Anowar Ali (Surveyor & Loss Assessor)  
-**Date:** 20 August 2026  
-**Status:** Awaiting User Approval (PHASE 1 STOP POINT)
+**Date:** 20 August 2026 (Night Session — 21:25 IST)  
+**Status:** 🛑 **STOP POINT — Awaiting User Approval (PHASE 1)**
 
 ---
 
-## Executive Summary & Media Ingestion Log
+## 1. Executive Summary & Media Ingestion Log (Phase 0)
 
-All client communications, audio voice notes, screen recordings, and chat threads from `Downloads/client changes request/` and WhatsApp chat history have been ingested and analyzed end-to-end natively:
+All media files located in `Downloads/client changes request/` have been listed, converted where necessary, and ingested natively end-to-end via multimodal analysis. Zero policyholder PII has been transmitted to external services.
 
-| # | Media File | Type | Duration / Size | Sender | Summary / Core Issue |
+### Complete Media Files Ingestion Table
+
+| # | File Name | Type | Size / Duration | Sender | Core Subject / Evidence Captured |
 |---|---|---|---|---|---|
-| 1 | `WhatsApp Ptt 2026-08-20 at 12.38.47 AM.ogg` (`WhatsApp Ptt 2026-08-20 at 12.38.47 AM_audio.mp4`) | Audio (.ogg → native multimodal) | 01:11 / 168 KB | Sk Anowar Ali (Client) | Clarification on Dashboard counters: Total Claims = All files (Pending + Submitted/Closed). Pending Claims = Total active unsubmitted files. Sub-status counts (New appointment, Inspection pending, Documents awaited, Under preparation) are categorical subsets of Pending Claims and do not subtractively diminish Pending Claims. |
-| 2 | `WhatsApp Video 2026-08-20 at 12.29.52 AM.mp4` | Video / Audio (.mp4) | 01:21 / 10.3 MB | Sk Anowar Ali (Client, logged in as `USER`) | (1) Navigation/Back button: Clicking "Back to Upload & Overview" jumps all the way back to Step 1 home page instead of returning to the previous view/workspace; (2) Claim Register: Status filter dropdown does not filter claims table properly. |
-| 3 | `WhatsApp Video 2026-08-20 at 12.30.16 AM.mp4` | Video / Audio (.mp4) | 07:32 / 37.8 MB | Sk Anowar Ali (Client, logged in as `USER`) | (1) Dashboard should default to "Monthly Basis" with options for 3 Months, 6 Months, 1 Year, All Time, or Custom Range; (2) Dashboard drilldown shows "No claims found" when clicking non-zero KPI cards; (3) Missing Documents Checklist modal needs Insured Phone/Email inputs, Work Order vs Docs Pending template picker, message preview, and 7-day reminder indicator; (4) Survey Fee Register fixes: Insurer master access, policy PDF auto-fill, and reliable Save / Preview PDF without form validation blocks. |
-| 4 | WhatsApp Chat History (`SK Anowar Ali Client`) | Text Messages | Recent messages | Client & Developer | Client confirmed: "Working, but we need change in the modification." Sent screen recordings and voice note at 12:29 AM - 12:38 AM. |
+| 1 | `WhatsApp Image 2026-08-20 at 9.09.20 PM.jpeg` | Image (.jpeg) | 87.7 KB | Sk Anowar Ali (Client) | Photo of physical survey fee bill showing: `HSN/SAC-997162`, `Insurer's Surveyor Code No: 2075995`, `GSTIN: 19AZZPA2301R1ZM`, SBI Bank details. Caption: *"Surveyor code"*. |
+| 2 | `WhatsApp Image 2026-08-20 at 9.09.42 PM.jpeg` | Image (.jpeg) | 99.5 KB | Sk Anowar Ali (Client) | Photo of current web application screen showing the **Insurer Master Control Panel** modal with input fields for Insurer Name, Branch, Prefix, GSTIN, State Code, Rate/Km, and Address. |
+| 3 | `Screenshot 2026-08-20 212259.png` | Image (.png) | 630.8 KB | Naman / Sk Anowar Ali | Full chronological chat thread from 9:09 PM to 9:16 PM showing message *"Surveyor code option create karna hai"* (9:10 PM), voice notes, and fee register screenshot. |
+| 4 | `WhatsApp Ptt 2026-08-20 at 9.11.07 PM.ogg` (`vn1.mp4`) | Audio (.ogg → native multimodal) | 66.7 KB / 00:29 | Sk Anowar Ali (Client) | Voice note requesting: (1) Insurer-specific Surveyor Code option in Insurer Master Control Panel so different insurer surveyor codes can be saved and auto-populated; (2) Fee Bill Preview currently forces a PDF file download instead of previewing in-browser. |
+| 5 | `WhatsApp Image 2026-08-20 at 9.13.45 PM.jpeg` | Image (.jpeg) | 122.0 KB | Sk Anowar Ali (Client, logged in as `USER`) | Photo of **Survey Fee Register** table with mouse cursor pointing directly at the `unpaid` status badge and the actions column next to the PDF download button. |
+| 6 | `WhatsApp Ptt 2026-08-20 at 9.14.53 PM.ogg` (`vn2.mp4`) | Audio (.ogg → native multimodal) | 7.7 KB / 00:03 | Sk Anowar Ali (Client) | Short voice clip: *"Matlab PDF ke bagal me..."* (referencing placement of the payment action next to the PDF button in the Fee Register row). |
+| 7 | `WhatsApp Ptt 2026-08-20 at 9.16.01 PM.ogg` (`vn3.mp4`) | Audio (.ogg → native multimodal) | 70.8 KB / 00:30 | Sk Anowar Ali (Client) | Voice note detailing payment lifecycle: fee bills are submitted as `unpaid`, insurers pay 7–20 days later. When paid, user must be able to mark status as `paid` / update payment and enter **Remarks** because insurance companies frequently make short payments / deductions. |
 
 ---
 
-## Detailed Requirements Matrix (R1 – R6)
+## 2. Requirements Specification (R1 – R3)
 
-### R1: Dashboard Time-Period Filter & Default "Monthly Basis" View
-- **Source:** `Downloads/client changes request/WhatsApp Video 2026-08-20 at 12.30.16 AM.mp4` (0:00 – 1:25) & `WhatsApp Ptt 2026-08-20 at 12.38.47 AM.ogg`
+### R1: Insurer Master — Insurer-Specific Surveyor Code Field & Dynamic Prefill / PDF Rendering
+- **Source:**
+  - `WhatsApp Image 2026-08-20 at 9.09.20 PM.jpeg`
+  - `WhatsApp Image 2026-08-20 at 9.09.42 PM.jpeg`
+  - `Screenshot 2026-08-20 212259.png` (9:10 PM message: *"Surveyor code option create karna hai"*)
+  - `WhatsApp Ptt 2026-08-20 at 9.11.07 PM.ogg` / `vn1.mp4` (0:00 – 0:19)
 - **Exact Quote / Transcript (Hindi):**
-  > *"Yeh jo Dashboard hai, yeh monthly basis claim ka status hai kya yearly basis hai, woh select option rehna chahiye. Yeh jo 116 file dikha rahe hain, iska matlab aapka isme up-to-date jitna saare file hai wahan par show kar rahe hain. Toh yeh jo Dashboard hai yeh monthly basis dikhayega... Jaise August mahina hai toh August mahine mein total kitna claim aaya... Generally default hona chahiye monthly basis."*
-- **Interpretation:**
-  1. **Default Timeframe:** The Dashboard metric bar must default to **"This Month" (Current Month, e.g. August 2026)** rather than lifetime data.
-  2. **Time Range Dropdown:** Provide clean, intuitive dropdown options:
-     - **This Month (Default)** — e.g. `2026-08-01` to current date.
-     - **Last Month**
-     - **Last 3 Months (Quarterly)**
-     - **Last 6 Months (Half-Yearly)**
-     - **This Financial Year / 1 Year**
-     - **All Time (Lifetime)**
-     - **Custom Date Range** (From Date / To Date).
-  3. **Real-time Refresh:** Switching the timeframe immediately updates all operational metric cards, drill-down lists, and financial aggregates (for Admins).
+  > *"Surveyor jo code hai, wo code wo jo master control panel me wo option aapko daalna padega. Kyunki surveyor code wo saare jagah me ek hi le raha hai. To wo code option daalna padega, jab mai master control panel me add karunga to wo surveyor code daal dunga to usi hisab se wo le lega."*
+- **Interpretation & Functional Requirement:**
+  1. **Context / Problem:** In motor survey operations, insurance companies assign distinct Surveyor Code numbers (e.g. National Insurance has one surveyor ID, United India Insurance has surveyor code `2075995`, Oriental Insurance has another). Currently, the codebase hardcodes/defaults surveyor code universally to `'2075995'` everywhere.
+  2. **Database & API Schema (`insurer_master`):**
+     - Add `surveyor_code VARCHAR(100)` column to table `insurer_master` in `migrations/0014_insurer_surveyor_code_and_fee_payments.sql`.
+     - Update `get_insurer_masters()`, `get_insurer_master_by_id()`, and `save_insurer_master()` in `db.py` to persist and return `surveyor_code`.
+  3. **UI / Insurer Master Control Panel Modal:**
+     - Add an **"Insurer's Surveyor Code"** input field (`#im-surveyor-code`, placeholder e.g. `2075995`) in `#insurer-master-modal` in `templates/index.html`.
+     - Add a "Surveyor Code" column to the configured insurer table inside the Insurer Master modal.
+  4. **Dynamic Prefill in Fee Register & Claim Forms:**
+     - When selecting an insurer in the Survey Fee Register or Claim form, dynamically pre-fill the Surveyor Code field with the insurer's specific `surveyor_code` (falling back to user profile surveyor code or `'2075995'` if blank).
+  5. **Fee Bill PDF & Word Templates:**
+     - Ensure the generated Fee Bill PDF (`modules/pdf.py`) and fee bill records print `Insurer's Surveyor Code No: <insurer_surveyor_code>` using the active insurer's surveyor code.
 - **Ambiguities & Trade-Offs:**
-  - Date filtering should consider `COALESCE(email_received_date, saved_at, created_at)` so newly synced or manually created claims match their respective month accurately.
-- **Risk Rating:** Medium
-- **App Area:** `Dashboard`
-
----
-
-### R2: Dashboard Metric Mathematical Integrity & Drill-Down Claim Rendering
-- **Source:** `Downloads/client changes request/WhatsApp Ptt 2026-08-20 at 12.38.47 AM.ogg` & `WhatsApp Video 2026-08-20 at 12.30.16 AM.mp4` (1:25 – 3:45)
-- **Exact Quote / Transcript (Hindi):**
-  > *"Neeche wala video mein ek correction karna hai... Total Claims se ghatega nahi. Total Claims jitna total file hai woh saare cheez wahan par show hoga. Jo claim ka calculation distribute hoga woh Pending Claims se... Jo file jab tak submit nahi hoga, tab tak Pending Claim mein show hoga total... Aur jo video mein file show nahi kar raha hai jab click kar rahe hain, isko aapko theek karna padega."*
-- **Interpretation:**
-  1. **Mathematical Consistency:**
-     - **`Total Claims`:** Overall claims in selected period $= \text{Pending Claims} + \text{Submitted Claims} + \text{Closed Claims}$.
-     - **`Pending Claims`:** Total active, un-finalized claims (all claims whose status $\notin \{\text{'report\_submitted'}, \text{'closed'}\}$).
-     - **Categorical Breakdown Cards:** *New appointment*, *Inspection pending*, *Documents awaited*, *Report under preparation* represent active subsets of Pending Claims. Their sum $\le \text{Pending Claims}$.
-     - **`Submitted` / `Completed`:** Claims with final report drafted and bill generated.
-     - **`Closed`:** Claims where fee remittance / payment is marked as received.
-  2. **In-Place Drilldown Fix:** When clicking any metric card (e.g. *Inspection pending*, *Documents awaited*, *New appointment*), the drilldown table (`#dashboard-drilldown-section`) must fetch and render the exact matching claims in the active time range, eliminating the "No claims found for Inspection pending (0)" bug observed in Video 2.
-  3. **Direct Navigation:** Add "Open Report" and "Docs" quick actions directly on each drilldown row.
-- **Ambiguities & Trade-Offs:**
-  - Standardize status keys between backend SQL queries and frontend JavaScript filters (`new_appointment`, `inspection_pending`, `documents_awaited`, `report_under_preparation`, `report_submitted`, `closed`) to guarantee 1:1 parity.
-- **Risk Rating:** Medium
-- **App Area:** `Dashboard` / `Claim Register`
-
----
-
-### R3: Claim Register Status Filter & Search Fix
-- **Source:** `Downloads/client changes request/WhatsApp Video 2026-08-20 at 12.29.52 AM.mp4` (0:45 – 1:21)
-- **Exact Quote / Transcript (Hindi):**
-  > *"Yeh status mein yeh kaam nahi kar raha hai aapka... documents awaited kiya dekhiye documents awaited file nahi aa raha hai... yeh kaam nahi kar raha hai, isko aapko thoda dekhna padega."*
-- **Interpretation:**
-  1. Fix the `#claim-status-filter` dropdown in the Claim Register so selecting `Documents awaited`, `Inspection pending`, `New appointment`, `Report under preparation`, or `Report submitted` correctly queries `/api/claims?status=...` and updates `#claim-register-tbody`.
-  2. Ensure combined filters (Search text + Status dropdown + Month filter + User filter) work together cleanly without resetting pagination to invalid pages.
-  3. Ensure status changes made via dropdown in the Claim Register table immediately update the status on the server and synchronize the Dashboard counters.
-- **Ambiguities & Trade-Offs:**
-  - Status names in the filter dropdown must strictly match the database canonical values (`new_appointment`, `inspection_pending`, `documents_awaited`, `report_under_preparation`, `report_submitted`, `closed`) while displaying formatted titles to the user.
+  - If an existing insurer record has no surveyor code set, fallback smoothly to the surveyor profile's license/code or `'2075995'`.
 - **Risk Rating:** Low
-- **App Area:** `Claim Register`
+- **App Area:** `Survey Fee Register` / `Admin settings` (Insurer Master) / `Reports`
 
 ---
 
-### R4: Contextual Navigation & Intuitive "Back" Routing
-- **Source:** `Downloads/client changes request/WhatsApp Video 2026-08-20 at 12.29.52 AM.mp4` (0:00 – 0:45)
+### R2: Survey Fee Register — In-Browser PDF Preview (Modal / New Tab) vs Direct Download
+- **Source:**
+  - `WhatsApp Ptt 2026-08-20 at 9.11.07 PM.ogg` / `vn1.mp4` (0:19 – 0:29)
 - **Exact Quote / Transcript (Hindi):**
-  > *"Idhar na aapko ek back karne ka option rehna padega... iske pehle jo step mein tha, us step mein jab back karke aaunga woh nahi hoga. Yeh dekhiye back karunga toh pura ekdam homepage mein chala jayega... isme dikkat hai."*
-- **Interpretation:**
-  1. Replace the generic "Back to Upload & Documents" button with a contextual navigation hierarchy:
-     - When inside **Survey Fee Register**, clicking "Back" returns to the previous view (e.g. **Claim Register** or **Dashboard**).
-     - When viewing a **Claim / Report Form**, provide a clear "Back to Claim Register" / "Back to Dashboard" button that returns to the operational list without losing filters or state.
-     - When on the **Dashboard** or **Claim Register**, provide a clear "Back to Home / Upload" button.
-  2. Ensure the top navigation bar (`#workspace-active-nav`) clearly reflects the active tab (Dashboard, Claim Register, Fee Register) with smooth tab switching that never abruptly forces the user to the file upload dropzone.
+  > *"Aur dusra baat hai iska jo preview kar raha hu, to preview me preview nahi ho raha hai, wo direct ek PDF download ho ja raha hai. Theek hai? Ye cheez dekhna hai."*
+- **Interpretation & Functional Requirement:**
+  1. **Context / Problem:** In `static/script.js` (`handleDownloadFeePdfPreview()`), clicking "Download Preview PDF" generates the PDF blob and immediately triggers a synthetic `<a download="FeeBill.pdf">` download click. This fills the client's local Downloads folder with temporary drafts whenever they only want to inspect the generated bill layout.
+  2. **In-Browser Preview:**
+     - Update the "Preview Fee Bill" action so that clicking it opens an **in-browser PDF preview** inside the application's preview modal (`#preview-modal` / `#preview-iframe` or `window.open(previewUrl, '_blank')`).
+     - Allow the surveyor to review the bill layout, itemized charges, GST breakdown, bank details, and surveyor code directly on screen without forcing a file download.
+     - Keep a clear "Download PDF" button in the preview header or fee register table for when the user explicitly intends to save the file to disk.
 - **Ambiguities & Trade-Offs:**
-  - Use a view history stack (`workspaceState.previousView`) in JavaScript to seamlessly return to whichever view the user came from.
+  - PDF generation uses `/generate_fee_pdf` or ephemeral asset token via `modules/assets.py` to ensure multi-worker Gunicorn consistency without saving public files under `/static`.
 - **Risk Rating:** Low
-- **App Area:** `Dashboard` / `Claim Register` / `Survey Fee Register` / `Reports`
+- **App Area:** `Survey Fee Register`
 
 ---
 
-### R5: Missing Documents Checklist Modal Enhancements & Template Notification Picker
-- **Source:** `Downloads/client changes request/WhatsApp Video 2026-08-20 at 12.30.16 AM.mp4` (3:50 – 5:05)
+### R3: Survey Fee Register — Fee Bill Payment Lifecycle (Mark Paid, Payment Date, Amount Received, TDS & Short-Payment Remarks)
+- **Source:**
+  - `WhatsApp Image 2026-08-20 at 9.13.45 PM.jpeg`
+  - `WhatsApp Ptt 2026-08-20 at 9.14.53 PM.ogg` / `vn2.mp4` (*"Matlab PDF ke bagal me..."*)
+  - `WhatsApp Ptt 2026-08-20 at 9.16.01 PM.ogg` / `vn3.mp4` (0:00 – 0:30)
 - **Exact Quote / Transcript (Hindi):**
-  > *"Claim Register mein... Docs mein... yeh bilkul theek hai. Yahan par Claim Manager Mail aur Claim Manager Phone... Yahan par customer ko bhi phone aur mail chahiye. Aur notification mein jo send karunga, woh kahan par show karega dikha dijiyega... Ek option rahega: Work Order ya Documents Pending... Aur ek hafta baad mujhe blink karega ki iska documents pending hai ek hafta se."*
-- **Interpretation:**
-  1. **Customer / Insured Contact Fields:** Add inputs for **Insured Mobile No.** (`insured_contact_no`) and **Insured Email ID** (`insured_email`) in the Missing Documents Checklist Modal alongside Claim Manager contacts, pre-filled from claim data.
-  2. **Notification Template Selector:**
-     - **Template A: "Work Order / Inspection Intimation"** (Formal intimation acknowledging survey appointment and requesting garage/vehicle inspection access).
-     - **Template B: "Documents Pending Reminder"** (Itemized checklist of pending documents with 1st, 2nd, and 3rd notice escalation wording).
-  3. **Live Message Preview Box:** Display a read-only live text preview box inside the modal showing the exact generated message before sending or copying.
-  4. **WhatsApp & Copy Actions:** Generate both one-click WhatsApp web links and clipboard copy buttons for Claim Manager and Insured contacts.
-  5. **7-Day Document Pending Aging Flag:**
-     - In Claim Register and Dashboard, add a visual badge / pulse indicator for claims where documents have been pending for $\ge 7$ days without completion.
-     - Ticking off all documents or updating status clears the indicator.
+  > *"Insurance... Insurance wale ko mai survey report bana kar fees ek karta hu, fees charge karta hu aur usko jama karta hu. Wo humko 20 din, 15 din, ek hafta baad payment karta hai. Wo jab payment karega tab hum isko 'paid' kar denge, jo abhi mera status me 'unpaid' hai. To tab mai payment 'paid' karunga to wo kaise karunga thoda aap usko ek arrange kijiye. Aur remark ka option rakhiyega kyunki insurance wala sometime wo short payment karta hai, to wo remark humko rakhna hai."*
+- **Interpretation & Functional Requirement:**
+  1. **Context / Problem:** When survey reports and fee bills are created, they are submitted to insurance companies with status `unpaid`. Insurers remit survey fees 1 to 3 weeks later. Insurers frequently disallow specific line items (e.g. conveyance excess) or deduct statutory TDS, resulting in short-payments. The surveyor requires a streamlined way to mark bills as `paid` or `partially_paid`, log the payment date and received amount, and record a **Payment Remark** explaining short-payments or deductions.
+  2. **Database & API Schema (`fee_bills`):**
+     - Ensure table `fee_bills` has columns: `payment_status VARCHAR(50) DEFAULT 'unpaid'`, `amount_received NUMERIC(12,2) DEFAULT 0`, `tds_amount NUMERIC(12,2) DEFAULT 0`, `payment_date DATE`, `payment_reference VARCHAR(100)`, and `payment_remarks TEXT` (in migration `migrations/0014_insurer_surveyor_code_and_fee_payments.sql`).
+     - Create endpoint `POST /api/fee_bills/<bill_id>/payment` (and update `PUT/POST /api/fee_bills`) with workspace scoping (`workspace_admin_id`), audit logging, and employee authorization.
+  3. **UI / Fee Register Table & Modal:**
+     - In `fetchFees()` table rendering (`#fee-register-tbody`):
+       - Next to the PDF button in each row, add a **"Payment" / "Update Status"** button (e.g. `<button class="btn btn-sm btn-outline-success update-fee-payment-btn" data-bill-id="...">💳 Payment</button>`).
+       - Status badge styling:
+         - `paid`: Green badge (`badge-success` / `bg-emerald-500`)
+         - `partially_paid`: Amber badge (`badge-warning` / `bg-amber-500`)
+         - `unpaid`: Gray badge (`badge-outline` / `badge-secondary`)
+       - If payment remarks exist, show a small info icon or tooltip on the row displaying the short-payment note.
+     - **Payment Update Modal (`#fee-payment-modal`):**
+       - Modal displays Bill Invoice No, Insurer, Claim No, and Total Bill Amount (₹).
+       - Inputs:
+         - **Payment Status Dropdown:** `Paid`, `Partially Paid`, `Unpaid`
+         - **Payment Received Date:** Date picker (defaults to today)
+         - **Amount Received (₹):** Number input (auto-fills Total Amount when selecting `Paid`)
+         - **TDS Amount (₹):** Number input (optional)
+         - **Payment Remarks / Short-Payment Reason:** Multi-line textarea (e.g. *"Deducted Rs. 325 for conveyance slab; TDS 10% deducted"*).
+       - Save Button: Submits via AJAX, instantly refreshes the fee register list and dashboard KPI counters.
+  4. **RBAC & Financial Security:**
+     - Both Admin (`SKANOWAR`) and Employee (`USER`) accounts in the workspace can update the payment status and remarks of operational fee bills.
+     - Corporate high-level financial turnover and tax exports remain strictly redacted and restricted to Admin accounts.
 - **Ambiguities & Trade-Offs:**
-  - Retain the existing automated 3-tier reminder counter (Reminder 1, Reminder 2 Final, Reminder 3 Critical notice) while supporting the Work Order template option.
+  - Changing status to `Paid` should also update the linked dashboard status and claim fee settlement status where appropriate.
 - **Risk Rating:** Medium
-- **App Area:** `Claim Register` / `Dashboard` / `Admin settings`
+- **App Area:** `Survey Fee Register` / `Dashboard`
 
 ---
 
-### R6: Survey Fee Register Reliability, Insurer Master Access & PDF Auto-Extraction
-- **Source:** `Downloads/client changes request/WhatsApp Video 2026-08-20 at 12.30.16 AM.mp4` (5:05 – 7:32)
-- **Exact Quote / Transcript (Hindi):**
-  > *"Yeh jo Master hai yahan par kaam nahi kar raha hai... Aur yahan par upload kiya jo policy copy, upload karne se insurer name, address, GST le lega... Lekin yeh kaam nahi kar raha hai... Itemized breakdown sahi karke diya hai, main yehi cheez chahta tha... Lekin Save Fee Bill aur Download Preview PDF nahi ho raha hai, 'Please fill out this field' aa raha hai... isko theek karna padega."*
-- **Interpretation:**
-  1. **Insurer Master Modal Access for Employees:** Ensure employee users (`USER`) can open `#insurer-master-modal`, create/edit insurer masters, and select branch GSTINs without permission blocks.
-  2. **Policy / RC Copy PDF Auto-Extraction:** Fix `/api/extract_fee_pdf` so uploading a Policy/RC PDF in Fee Register automatically extracts and pre-fills Insurer Name, Insurer GSTIN, Branch Address, Policy No, Claim No, Vehicle Regn No, and Insured Name.
-  3. **Itemized Fee Saving & PDF Preview:**
-     - Fix form validation so hidden/optional inputs do not trigger browser `Please fill out this field` validation errors.
-     - Ensure `/api/fee_bills` POST and `/generate_fee_pdf` handle all 8 itemized fee rows (Final Survey Fees, Conveyance with route & KM formula, 2nd visit Conveyance, Re-inspection, Photos, Halting, Other charges) seamlessly for both standalone and linked claims.
-     - Ensure newly saved fee bills immediately appear in the Fee Register table and are downloadable via `/api/fee_bills/<id>/pdf`.
-- **Ambiguities & Trade-Offs:**
-  - Standalone fee bills should cleanly set `report_id = NULL` rather than empty strings to prevent PostgreSQL integer cast errors.
-- **Risk Rating:** High (Core client invoicing and fee recovery pipeline).
-- **App Area:** `Survey Fee Register` / `Reports` / `Admin settings`
+## 3. Requirements Mapping Matrix
+
+| Requirement | App Area | Primary Files Impacted | Migration Required | RBAC Scope |
+|---|---|---|---|---|
+| **R1: Insurer Surveyor Code** | `Survey Fee Register`, `Admin settings`, `Reports` | `db.py`, `app.py`, `templates/index.html`, `static/script.js`, `modules/pdf.py` | Yes (`insurer_master.surveyor_code`) | Shared in Workspace |
+| **R2: In-Browser PDF Preview** | `Survey Fee Register` | `static/script.js`, `templates/index.html`, `app.py` | No | Admin & Employee |
+| **R3: Payment Status & Remarks** | `Survey Fee Register`, `Dashboard` | `db.py`, `app.py`, `templates/index.html`, `static/script.js` | Yes (`fee_bills.payment_date`, `payment_remarks`, etc.) | Admin & Employee |
 
 ---
 
-## App Area to Requirements Mapping
+## 4. Architectural Invariants & Compliance Verification
 
-| App Area | Touching Requirements | Key Files / Seams |
+| Invariant | System Rule | Status |
 |---|---|---|
-| **Dashboard** | **R1, R2, R4, R5** | `templates/index.html`, `static/script.js`, `app.py`, `db.py` |
-| **Claim Register** | **R2, R3, R4, R5** | `templates/index.html`, `static/script.js`, `app.py`, `db.py` |
-| **Survey Fee Register** | **R4, R6** | `templates/index.html`, `static/script.js`, `app.py`, `db.py`, `modules/pdf.py` |
-| **Reports** | **R4, R6** | `templates/index.html`, `static/script.js`, `modules/pdf.py`, `worker.py` |
-| **Admin Settings** | **R5, R6** | `templates/index.html`, `static/script.js`, `app.py` |
-| **Exports** | **R1, R6** | `app.py` (`/export_gstr1_excel`, `/api/admin/backup/download`) |
-| **Gmail Sync** | **R1, R2** | `modules/gmail.py`, `worker.py` |
+| **Workspace Isolation** | All `insurer_master` and `fee_bills` queries filtered by `workspace_admin_id`. | ✅ Strictly Enforced |
+| **No ORM** | Raw parameterized SQL with `psycopg2` only. | ✅ Strictly Enforced |
+| **Private Assets** | Ephemeral previews routed through `modules/assets.py` and memory blobs. | ✅ Strictly Enforced |
+| **RBAC Redaction** | Employee saves cannot overwrite admin financial summaries; tax exports remain admin-only. | ✅ Strictly Enforced |
+| **Audit Logging** | All payment status changes and insurer master modifications log to `audit_logs`. | ✅ Strictly Enforced |
+| **Idempotent Migrations** | `migrations/0014_insurer_surveyor_code_and_fee_payments.sql` uses `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`. | ✅ Strictly Enforced |
 
 ---
 
-## Verification & Acceptance Criteria
-
-- [ ] **AC1 (Dashboard Time Filter):** Dashboard defaults to "This Month" (August 2026) and accurately recalculates metrics when switching to Last 3 Months, 6 Months, 1 Year, All Time, or Custom Date Range.
-- [ ] **AC2 (Dashboard Drilldown):** Clicking any KPI card (*Inspection pending*, *Documents awaited*, *New appointment*, *Report under preparation*, *Submitted*, *Closed*) displays matching claims in `#dashboard-drilldown-section` with no "No claims found" errors when counts are $>0$.
-- [ ] **AC3 (Claim Register Filters):** Status filter dropdown in Claim Register accurately filters table by `Documents awaited`, `Inspection pending`, `New appointment`, `Report under preparation`, and `Report submitted`.
-- [ ] **AC4 (Contextual Navigation):** Clicking "Back" inside any sub-section returns to the previously active view rather than abruptly jumping to the Step 1 file dropzone.
-- [ ] **AC5 (Docs Checklist & Notifications):** Missing Documents modal includes Insured contact fields, Work Order vs Docs Pending template picker, live message preview, and 7-day reminder aging indicator.
-- [ ] **AC6 (Survey Fee Register Save & PDF):** Policy PDF upload auto-fills billing details; Insurer Master modal opens smoothly for employees; and all 8 itemized fee rows save and generate Word-template style PDF fee bills reliably without validation errors.
-- [ ] **AC7 (Security & Invariants):** Employee role cannot view corporate financial aggregates or tax exports (`403 Forbidden`). All pytest tests pass.
-
----
-**STOP POINT:** Awaiting user approval on `requirements2026-08-20.md` before proceeding to PHASE 2 (Plan) and PHASE 3 (Implementation).
+🛑 **STOP POINT — Phase 1 Complete.**  
+Please review and confirm approval of requirements **R1, R2, and R3** before we proceed to Phase 2 (Implementation Plan) and Phase 3 (Feature Branch Implementation).

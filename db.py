@@ -2162,6 +2162,9 @@ class PostgresDB:
         payment_status = bill_data.get('payment_status', 'Pending')
         invoice_status = bill_data.get('invoice_status', 'Draft')
         fee_items = bill_data.get('fee_items') or bill_data.get('items') or []
+        payment_date = bill_data.get('payment_date') or None
+        payment_reference = str(bill_data.get('payment_reference') or '').strip()
+        payment_remarks = str(bill_data.get('payment_remarks') or bill_data.get('remarks') or '').strip()
         created_at = datetime.now().isoformat()
         fee_breakdown = {
             'survey_type': survey_type,
@@ -2188,6 +2191,9 @@ class PostgresDB:
             'outstanding_amount': outstanding_amount,
             'due_date': due_date,
             'payment_status': payment_status,
+            'payment_date': payment_date,
+            'payment_reference': payment_reference,
+            'payment_remarks': payment_remarks,
             'invoice_status': invoice_status,
             'invoice_no': invoice_no,
             'invoice_date': invoice_date,
@@ -2213,7 +2219,9 @@ class PostgresDB:
             'total_amount': gross_invoice_value, 'gross_invoice_value': gross_invoice_value,
             'tds_amount': tds_amount, 'amount_received': amount_received,
             'outstanding_amount': outstanding_amount, 'due_date': due_date,
-            'payment_status': payment_status, 'invoice_status': invoice_status,
+            'payment_status': payment_status, 'payment_date': payment_date,
+            'payment_reference': payment_reference, 'payment_remarks': payment_remarks,
+            'invoice_status': invoice_status,
             'fee_updated_at': created_at, 'created_at': created_at, 'bill_data_json': merged_data,
         }
         if not self.conn:
@@ -2256,8 +2264,9 @@ class PostgresDB:
                             insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
                             professional_fee, gst_pc, gst_amount, total_amount, gross_invoice_value,
                             tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                            payment_date, payment_reference, payment_remarks,
                             invoice_status, fee_updated_at, bill_data_json
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s::jsonb)
                         ON CONFLICT (id) DO UPDATE SET
                             workspace_admin_id = EXCLUDED.workspace_admin_id, report_id = EXCLUDED.report_id,
                             report_no = EXCLUDED.report_no, date_of_accident = EXCLUDED.date_of_accident,
@@ -2270,7 +2279,9 @@ class PostgresDB:
                             total_amount = EXCLUDED.total_amount, gross_invoice_value = EXCLUDED.gross_invoice_value,
                             tds_amount = EXCLUDED.tds_amount, amount_received = EXCLUDED.amount_received,
                             outstanding_amount = EXCLUDED.outstanding_amount, due_date = EXCLUDED.due_date,
-                            payment_status = EXCLUDED.payment_status, invoice_status = EXCLUDED.invoice_status,
+                            payment_status = EXCLUDED.payment_status, payment_date = EXCLUDED.payment_date,
+                            payment_reference = EXCLUDED.payment_reference, payment_remarks = EXCLUDED.payment_remarks,
+                            invoice_status = EXCLUDED.invoice_status,
                             fee_updated_at = CURRENT_TIMESTAMP, bill_data_json = EXCLUDED.bill_data_json
                         WHERE fee_bills.workspace_admin_id = EXCLUDED.workspace_admin_id
                            OR (fee_bills.workspace_admin_id IS NULL AND EXCLUDED.workspace_admin_id IS NULL
@@ -2281,6 +2292,7 @@ class PostgresDB:
                           insurer_name, insured_name, policy_no, claim_no, vehicle_no, taxable_amount,
                           professional_fee, gst_pc, gst_amount, gross_invoice_value, gross_invoice_value,
                           tds_amount, amount_received, outstanding_amount, due_date, payment_status,
+                          payment_date, payment_reference, payment_remarks,
                           invoice_status, json.dumps(merged_data)))
                 except Exception:
                     # Fallback for unmigrated schema
@@ -2422,7 +2434,7 @@ class PostgresDB:
                         for k, v in bd.items():
                             if k not in item or item[k] is None:
                                 item[k] = v
-                    for key in ('created_at', 'fee_updated_at', 'due_date'):
+                    for key in ('created_at', 'fee_updated_at', 'due_date', 'payment_date'):
                         if isinstance(item.get(key), (datetime, date)):
                             item[key] = item[key].isoformat()
                     results.append(item)
@@ -2430,6 +2442,110 @@ class PostgresDB:
         except Exception as e:
             print(f"Error fetching workspace fee bills: {e}")
             return []
+
+    def update_fee_bill_payment(self, bill_id, workspace_admin_id, payment_data):
+        """Updates payment status, payment date, amount received, TDS amount, reference, and remarks for a fee bill."""
+        if not self.conn:
+            self.connect()
+        payment_status = str(payment_data.get('payment_status') or 'unpaid').strip().lower()
+        payment_date = payment_data.get('payment_date') or None
+        payment_reference = str(payment_data.get('payment_reference') or '').strip()
+        payment_remarks = str(payment_data.get('payment_remarks') or payment_data.get('remarks') or '').strip()
+        try:
+            amount_received = float(payment_data.get('amount_received') or 0.0)
+        except (ValueError, TypeError):
+            amount_received = 0.0
+        try:
+            tds_amount = float(payment_data.get('tds_amount') or 0.0)
+        except (ValueError, TypeError):
+            tds_amount = 0.0
+
+        if not self.conn:
+            if hasattr(self, '_memory_fee_bills'):
+                for b in self._memory_fee_bills:
+                    if str(b.get('id')) == str(bill_id):
+                        if workspace_admin_id is None or b.get('workspace_admin_id') == workspace_admin_id:
+                            gross = float(b.get('gross_invoice_value') or b.get('total_amount') or 0.0)
+                            if payment_status == 'paid' and amount_received == 0.0 and tds_amount == 0.0:
+                                amount_received = gross
+                            outstanding = max(0.0, gross - amount_received - tds_amount) if payment_status != 'paid' else 0.0
+                            b['payment_status'] = payment_status
+                            b['payment_date'] = payment_date
+                            b['amount_received'] = amount_received
+                            b['tds_amount'] = tds_amount
+                            b['outstanding_amount'] = outstanding
+                            b['payment_reference'] = payment_reference
+                            b['payment_remarks'] = payment_remarks
+                            if isinstance(b.get('bill_data_json'), dict):
+                                b['bill_data_json'].update({
+                                    'payment_status': payment_status,
+                                    'payment_date': payment_date,
+                                    'amount_received': amount_received,
+                                    'tds_amount': tds_amount,
+                                    'outstanding_amount': outstanding,
+                                    'payment_reference': payment_reference,
+                                    'payment_remarks': payment_remarks,
+                                })
+                            return True
+            return False
+
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, gross_invoice_value, total_amount, bill_data_json
+                    FROM fee_bills
+                    WHERE id = %s AND (workspace_admin_id = %s OR (workspace_admin_id IS NULL AND %s IS NULL));
+                """, (bill_id, workspace_admin_id, workspace_admin_id))
+                row = cur.fetchone()
+                if not row:
+                    return False
+                gross = float(row.get('gross_invoice_value') or row.get('total_amount') or 0.0)
+                if payment_status == 'paid' and amount_received == 0.0 and tds_amount == 0.0:
+                    amount_received = gross
+                outstanding = max(0.0, gross - amount_received - tds_amount) if payment_status != 'paid' else 0.0
+
+                bd = row.get('bill_data_json') or {}
+                if isinstance(bd, str):
+                    try:
+                        bd = json.loads(bd)
+                    except Exception:
+                        bd = {}
+                bd.update({
+                    'payment_status': payment_status,
+                    'payment_date': payment_date,
+                    'amount_received': amount_received,
+                    'tds_amount': tds_amount,
+                    'outstanding_amount': outstanding,
+                    'payment_reference': payment_reference,
+                    'payment_remarks': payment_remarks,
+                })
+
+                cur.execute("""
+                    UPDATE fee_bills SET
+                        payment_status = %s,
+                        payment_date = %s,
+                        amount_received = %s,
+                        tds_amount = %s,
+                        outstanding_amount = %s,
+                        payment_reference = %s,
+                        payment_remarks = %s,
+                        bill_data_json = %s::jsonb,
+                        fee_updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s AND (workspace_admin_id = %s OR (workspace_admin_id IS NULL AND %s IS NULL))
+                    RETURNING id;
+                """, (payment_status, payment_date, amount_received, tds_amount, outstanding,
+                      payment_reference, payment_remarks, json.dumps(bd),
+                      bill_id, workspace_admin_id, workspace_admin_id))
+                res = cur.fetchone()
+                self.conn.commit()
+                return res is not None
+        except Exception as e:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            print(f"Error updating fee bill payment: {e}")
+            return False
 
     def delete_fee_bill(self, bill_id, user_id, workspace_admin_id=None):
         if hasattr(self, '_memory_fee_bills'):
@@ -2457,7 +2573,8 @@ class PostgresDB:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address,
-                           gstin, state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
+                           gstin, state_code, invoice_prefix, default_conveyance_rate, surveyor_code,
+                           created_at, updated_at
                     FROM insurer_master
                     WHERE workspace_admin_id = %s OR workspace_admin_id IS NULL
                     ORDER BY insurer_name ASC, branch_name ASC;
@@ -2474,7 +2591,8 @@ class PostgresDB:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, workspace_admin_id, insurer_name, branch_name, branch_address,
-                           gstin, state_code, invoice_prefix, default_conveyance_rate, created_at, updated_at
+                           gstin, state_code, invoice_prefix, default_conveyance_rate, surveyor_code,
+                           created_at, updated_at
                     FROM insurer_master
                     WHERE id = %s;
                 """, (insurer_id,))
@@ -2493,6 +2611,7 @@ class PostgresDB:
         gstin = str(insurer_data.get('gstin', '')).strip()
         state_code = str(insurer_data.get('state_code', '19')).strip()
         invoice_prefix = str(insurer_data.get('invoice_prefix', '')).strip().upper()
+        surveyor_code = str(insurer_data.get('surveyor_code', '')).strip()
         try:
             default_conveyance_rate = float(insurer_data.get('default_conveyance_rate', 10.0))
         except (ValueError, TypeError):
@@ -2506,29 +2625,30 @@ class PostgresDB:
                         UPDATE insurer_master SET
                             insurer_name = %s, branch_name = %s, branch_address = %s,
                             gstin = %s, state_code = %s, invoice_prefix = %s, default_conveyance_rate = %s,
-                            updated_at = CURRENT_TIMESTAMP
+                            surveyor_code = %s, updated_at = CURRENT_TIMESTAMP
                         WHERE id = %s
                         RETURNING id;
                     """, (insurer_name, branch_name, branch_address, gstin, state_code, invoice_prefix,
-                          default_conveyance_rate, insurer_id))
+                          default_conveyance_rate, surveyor_code, insurer_id))
                     res = cur.fetchone()
                     return res[0] if res else None
                 else:
                     cur.execute("""
                         INSERT INTO insurer_master (
                             workspace_admin_id, insurer_name, branch_name, branch_address,
-                            gstin, state_code, invoice_prefix, default_conveyance_rate
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            gstin, state_code, invoice_prefix, default_conveyance_rate, surveyor_code
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (workspace_admin_id, insurer_name, branch_name) DO UPDATE SET
                             branch_address = EXCLUDED.branch_address,
                             gstin = EXCLUDED.gstin,
                             state_code = EXCLUDED.state_code,
                             invoice_prefix = EXCLUDED.invoice_prefix,
                             default_conveyance_rate = EXCLUDED.default_conveyance_rate,
+                            surveyor_code = EXCLUDED.surveyor_code,
                             updated_at = CURRENT_TIMESTAMP
                         RETURNING id;
                     """, (workspace_admin_id, insurer_name, branch_name, branch_address,
-                          gstin, state_code, invoice_prefix, default_conveyance_rate))
+                          gstin, state_code, invoice_prefix, default_conveyance_rate, surveyor_code))
                     res = cur.fetchone()
                     return res[0] if res else None
         except Exception as e:
