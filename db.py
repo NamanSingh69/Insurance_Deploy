@@ -1203,8 +1203,9 @@ class PostgresDB:
         return item
 
     def get_workspace_reports_page(self, workspace_admin_id, search_query='', page=1, page_size=50,
-                                   status=None, month=None, insurer=None, user_id=None, role=None):
-        """Return records created in an admin-owned shared workspace, scoped by user if employee."""
+                                   status=None, month=None, insurer=None, user_id=None, role=None,
+                                   date_range=None, from_date=None, to_date=None):
+        """Return records created in an admin-owned shared workspace, scoped by user if employee, with flexible filters."""
         if not self.conn: self.connect()
         if not self.conn:
             return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
@@ -1216,15 +1217,67 @@ class PostgresDB:
         if role == 'employee' and user_id:
             filters.append("(user_id = %s OR created_by = %s)")
             params.extend([user_id, user_id])
+
         if status:
-            filters.append("status = %s")
-            params.append(status)
+            norm_status = str(status).strip().lower().replace(' ', '_')
+            if norm_status in ('pending', 'active'):
+                filters.append("LOWER(COALESCE(status, 'new_appointment')) NOT IN ('report_submitted', 'closed')")
+            elif norm_status in ('report_submitted', 'submitted', 'completed'):
+                filters.append("LOWER(COALESCE(status, 'new_appointment')) = 'report_submitted'")
+            elif norm_status == 'closed':
+                filters.append("LOWER(COALESCE(status, 'new_appointment')) = 'closed'")
+            elif norm_status not in ('total', 'all', ''):
+                filters.append("LOWER(COALESCE(status, 'new_appointment')) = %s")
+                params.append(norm_status)
+
         if month:
-            filters.append("TO_CHAR(COALESCE(email_received_date, saved_at), 'YYYY-MM') = %s")
-            params.append(month)
+            filters.append("TO_CHAR(COALESCE(email_received_date, saved_at, created_at), 'YYYY-MM') = %s")
+            params.append(str(month).strip())
+
+        now = datetime.now()
+        start_cutoff = None
+        end_cutoff = None
+
+        if from_date or to_date:
+            if from_date:
+                try:
+                    start_cutoff = datetime.strptime(str(from_date).strip(), '%Y-%m-%d').isoformat()
+                except Exception:
+                    start_cutoff = str(from_date).strip()
+            if to_date:
+                try:
+                    end_cutoff = (datetime.strptime(str(to_date).strip(), '%Y-%m-%d') + timedelta(days=1)).isoformat()
+                except Exception:
+                    end_cutoff = str(to_date).strip()
+        elif date_range:
+            dr = str(date_range).strip().lower()
+            if dr in ('this_month', 'current_month', 'month'):
+                start_cutoff = datetime(now.year, now.month, 1).isoformat()
+            elif dr in ('last_month', 'prev_month'):
+                first_this_month = datetime(now.year, now.month, 1)
+                first_last_month = (first_this_month - timedelta(days=1)).replace(day=1)
+                start_cutoff = first_last_month.isoformat()
+                end_cutoff = first_this_month.isoformat()
+            elif dr in ('1m', '30d'):
+                start_cutoff = (now - timedelta(days=30)).isoformat()
+            elif dr in ('3m', '90d'):
+                start_cutoff = (now - timedelta(days=90)).isoformat()
+            elif dr in ('6m', '180d'):
+                start_cutoff = (now - timedelta(days=180)).isoformat()
+            elif dr in ('1y', '365d', 'year'):
+                start_cutoff = (now - timedelta(days=365)).isoformat()
+
+        if start_cutoff:
+            filters.append("COALESCE(email_received_date, saved_at, created_at) >= %s")
+            params.append(start_cutoff)
+        if end_cutoff:
+            filters.append("COALESCE(email_received_date, saved_at, created_at) < %s")
+            params.append(end_cutoff)
+
         if insurer:
             filters.append("COALESCE(report_data_json->'survey_report'->>'insurer', '') ILIKE %s")
             params.append(f"%{insurer.strip()}%")
+
         where_sql = ' AND '.join(filters)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1232,14 +1285,40 @@ class PostgresDB:
                 total = int(cur.fetchone()['total'])
                 cur.execute(f"""
                     SELECT id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no, claim_no,
-                           policy_no, saved_at, updated_at, status, survey_type, email_received_date,
-                           COALESCE(report_data_json->'survey_report'->>'insurer', '') AS insurer
+                           policy_no, saved_at, updated_at, status, survey_type, email_received_date, created_at,
+                           COALESCE(report_data_json->'survey_report'->>'insurer', '') AS insurer,
+                           COALESCE(report_data_json->'survey_report'->>'insured_contact_no', '') AS insured_contact_no,
+                           COALESCE(report_data_json->'survey_report'->>'insured_email', '') AS insured_email,
+                           COALESCE(report_data_json->'survey_report'->>'claim_manager_phone', '') AS claim_manager_phone,
+                           COALESCE(report_data_json->'survey_report'->>'claim_manager_email', '') AS claim_manager_email
                     FROM reports WHERE {where_sql}
-                    ORDER BY COALESCE(email_received_date, saved_at) DESC
+                    ORDER BY COALESCE(email_received_date, saved_at, created_at) DESC
                     LIMIT %s OFFSET %s;
                 """, tuple(params + [page_size, (page - 1) * page_size]))
+                
+                items = []
+                for row in cur.fetchall():
+                    item = self._report_row_to_dict(row)
+                    # Check 7-day pending indicator
+                    c_status = str(item.get('status') or 'new_appointment').lower()
+                    created_dt_str = item.get('created_at') or item.get('saved_at') or item.get('email_received_date')
+                    is_pending_7d = False
+                    if c_status not in ('report_submitted', 'closed'):
+                        try:
+                            if created_dt_str:
+                                if isinstance(created_dt_str, datetime):
+                                    c_dt = created_dt_str
+                                else:
+                                    c_dt = datetime.fromisoformat(str(created_dt_str).replace('Z', ''))
+                                if (now - c_dt).days >= 7:
+                                    is_pending_7d = True
+                        except Exception:
+                            pass
+                    item['is_pending_7day'] = is_pending_7d
+                    items.append(item)
+
                 return {
-                    'items': [self._report_row_to_dict(row) for row in cur.fetchall()],
+                    'items': items,
                     'page': page,
                     'page_size': page_size,
                     'total': total,
@@ -1426,8 +1505,8 @@ class PostgresDB:
             print(f"Error deleting accessible report: {e}")
             return False
 
-    def get_workspace_dashboard(self, workspace_admin_id, date_range=None):
-        """Return operational counters and financial aggregates for a workspace with optional date range filter."""
+    def get_workspace_dashboard(self, workspace_admin_id, date_range=None, from_date=None, to_date=None):
+        """Return operational counters and financial aggregates for a workspace with flexible date range filters."""
         default = {'total_claims': 0, 'pending_claims': 0, 'completed_claims': 0,
                    'new_appointment': 0, 'inspection_pending': 0, 'documents_awaited': 0,
                    'report_under_preparation': 0, 'report_submitted': 0, 'closed': 0,
@@ -1436,45 +1515,97 @@ class PostgresDB:
         if not self.conn: self.connect()
         if not self.conn: return default
 
-        days_map = {'1m': 30, '3m': 90, '1y': 365}
-        days = days_map.get(date_range)
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat() if days else None
+        now = datetime.now()
+        start_cutoff = None
+        end_cutoff = None
+
+        if from_date or to_date:
+            if from_date:
+                try:
+                    start_cutoff = datetime.strptime(str(from_date).strip(), '%Y-%m-%d').isoformat()
+                except Exception:
+                    start_cutoff = str(from_date).strip()
+            if to_date:
+                try:
+                    end_cutoff = (datetime.strptime(str(to_date).strip(), '%Y-%m-%d') + timedelta(days=1)).isoformat()
+                except Exception:
+                    end_cutoff = str(to_date).strip()
+        elif date_range:
+            dr = str(date_range).strip().lower()
+            if dr in ('this_month', 'current_month', 'month'):
+                start_cutoff = datetime(now.year, now.month, 1).isoformat()
+            elif dr in ('last_month', 'prev_month'):
+                first_this_month = datetime(now.year, now.month, 1)
+                first_last_month = (first_this_month - timedelta(days=1)).replace(day=1)
+                start_cutoff = first_last_month.isoformat()
+                end_cutoff = first_this_month.isoformat()
+            elif dr in ('1m', '30d'):
+                start_cutoff = (now - timedelta(days=30)).isoformat()
+            elif dr in ('3m', '90d'):
+                start_cutoff = (now - timedelta(days=90)).isoformat()
+            elif dr in ('6m', '180d'):
+                start_cutoff = (now - timedelta(days=180)).isoformat()
+            elif dr in ('1y', '365d', 'year'):
+                start_cutoff = (now - timedelta(days=365)).isoformat()
+            elif dr in ('all', 'all_time', 'lifetime'):
+                start_cutoff = None
+                end_cutoff = None
+        else:
+            # Default to this month if nothing passed
+            start_cutoff = datetime(now.year, now.month, 1).isoformat()
 
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                if cutoff:
-                    cur.execute("""
-                        SELECT status, COUNT(*) AS count FROM reports
-                        WHERE workspace_admin_id = %s AND saved_at >= %s GROUP BY status;
-                    """, (workspace_admin_id, cutoff))
-                else:
-                    cur.execute("""
-                        SELECT status, COUNT(*) AS count FROM reports
-                        WHERE workspace_admin_id = %s GROUP BY status;
-                    """, (workspace_admin_id,))
-                for row in cur.fetchall():
-                    default[row['status']] = int(row['count'])
-                    default['total_claims'] += int(row['count'])
-                default['completed_claims'] = default['report_submitted'] + default['closed']
-                default['pending_claims'] = default['total_claims'] - default['completed_claims']
+                where_clauses = ["workspace_admin_id = %s"]
+                params = [workspace_admin_id]
 
-                if cutoff:
-                    cutoff_date = (datetime.now() - timedelta(days=days)).date()
-                    cur.execute("""
-                        SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
-                               COALESCE(SUM(amount_received), 0) AS amount_received,
-                               COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
-                               COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
-                        FROM fee_bills WHERE workspace_admin_id = %s AND invoice_date >= %s;
-                    """, (workspace_admin_id, cutoff_date))
-                else:
-                    cur.execute("""
-                        SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
-                               COALESCE(SUM(amount_received), 0) AS amount_received,
-                               COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
-                               COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
-                        FROM fee_bills WHERE workspace_admin_id = %s;
-                    """, (workspace_admin_id,))
+                if start_cutoff:
+                    where_clauses.append("COALESCE(email_received_date, saved_at, created_at) >= %s")
+                    params.append(start_cutoff)
+                if end_cutoff:
+                    where_clauses.append("COALESCE(email_received_date, saved_at, created_at) < %s")
+                    params.append(end_cutoff)
+
+                where_sql = " AND ".join(where_clauses)
+                cur.execute(f"""
+                    SELECT LOWER(COALESCE(status, 'new_appointment')) AS status, COUNT(*) AS count
+                    FROM reports
+                    WHERE {where_sql}
+                    GROUP BY LOWER(COALESCE(status, 'new_appointment'));
+                """, tuple(params))
+
+                for row in cur.fetchall():
+                    s = str(row['status'] or '').strip().lower().replace(' ', '_')
+                    c = int(row['count'] or 0)
+                    default[s] = c
+                    default['total_claims'] += c
+
+                default['completed_claims'] = default.get('report_submitted', 0) + default.get('closed', 0)
+                default['pending_claims'] = max(0, default['total_claims'] - default['completed_claims'])
+
+                # Financial aggregates from fee_bills
+                fee_clauses = ["workspace_admin_id = %s"]
+                fee_params = [workspace_admin_id]
+
+                if start_cutoff:
+                    start_date = start_cutoff[:10]
+                    fee_clauses.append("invoice_date >= %s")
+                    fee_params.append(start_date)
+                if end_cutoff:
+                    end_date = end_cutoff[:10]
+                    fee_clauses.append("invoice_date < %s")
+                    fee_params.append(end_date)
+
+                fee_where_sql = " AND ".join(fee_clauses)
+                cur.execute(f"""
+                    SELECT COALESCE(SUM(gross_invoice_value), 0) AS total_invoiced,
+                           COALESCE(SUM(amount_received), 0) AS amount_received,
+                           COALESCE(SUM(outstanding_amount), 0) AS outstanding_fees,
+                           COUNT(*) FILTER (WHERE due_date < CURRENT_DATE AND outstanding_amount > 0) AS overdue_count
+                    FROM fee_bills
+                    WHERE {fee_where_sql};
+                """, tuple(fee_params))
+
                 fees = cur.fetchone() or {}
                 for key in ('total_invoiced', 'amount_received', 'outstanding_fees'):
                     default[key] = float(fees.get(key) or 0)

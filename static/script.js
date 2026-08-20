@@ -2377,12 +2377,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(value || 0));
     }
 
-    function switchWorkspaceView(viewName) {
+    workspaceState.viewHistory = [];
+    workspaceState.currentView = null;
+
+    function switchWorkspaceView(viewName, isBackNavigation = false) {
         const dashboardSec = document.getElementById('operations-workspace');
         const claimsSec = document.getElementById('claim-register-section');
         const feesSec = document.getElementById('fee-register-section') || document.getElementById('fees-workspace');
         const activeNav = document.getElementById('workspace-active-nav');
+        const backNavLabel = document.getElementById('back-nav-label');
         if (!dashboardSec || !claimsSec || !feesSec) return;
+
+        if (!isBackNavigation && workspaceState.currentView && workspaceState.currentView !== viewName) {
+            workspaceState.viewHistory.push(workspaceState.currentView);
+        }
+        workspaceState.currentView = viewName;
+
+        // Update back navigation button label based on stack
+        if (backNavLabel) {
+            if (workspaceState.viewHistory.length > 0) {
+                const prev = workspaceState.viewHistory[workspaceState.viewHistory.length - 1];
+                if (prev === 'dashboard') backNavLabel.textContent = 'Back to Dashboard';
+                else if (prev === 'claims') backNavLabel.textContent = 'Back to Claim Register';
+                else if (prev === 'fees') backNavLabel.textContent = 'Back to Fee Register';
+                else backNavLabel.textContent = 'Back';
+            } else {
+                backNavLabel.textContent = 'Back to Upload & Documents';
+            }
+        }
 
         // Hide all workspace detail cards first
         dashboardSec.classList.add('hidden');
@@ -2404,9 +2426,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (viewName === 'dashboard') {
             dashboardSec.classList.remove('hidden');
             tabDash?.classList.add('active');
+            fetchDashboard();
         } else if (viewName === 'claims') {
             claimsSec.classList.remove('hidden');
             tabClaims?.classList.add('active');
+            fetchClaims();
         } else if (viewName === 'fees') {
             feesSec.classList.remove('hidden');
             tabFees?.classList.add('active');
@@ -2464,12 +2488,19 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('tab-btn-fees')?.addEventListener('click', () => switchWorkspaceView('fees'));
 
             document.getElementById('btn-back-to-upload')?.addEventListener('click', () => {
-                document.getElementById('workspace-active-nav')?.classList.add('hidden');
-                document.getElementById('operations-workspace')?.classList.add('hidden');
-                document.getElementById('claim-register-section')?.classList.add('hidden');
-                document.getElementById('fee-register-section')?.classList.add('hidden');
-                document.getElementById('fees-workspace')?.classList.add('hidden');
-                document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                if (workspaceState.viewHistory && workspaceState.viewHistory.length > 0) {
+                    const prevView = workspaceState.viewHistory.pop();
+                    switchWorkspaceView(prevView, true);
+                } else {
+                    workspaceState.currentView = null;
+                    workspaceState.viewHistory = [];
+                    document.getElementById('workspace-active-nav')?.classList.add('hidden');
+                    document.getElementById('operations-workspace')?.classList.add('hidden');
+                    document.getElementById('claim-register-section')?.classList.add('hidden');
+                    document.getElementById('fee-register-section')?.classList.add('hidden');
+                    document.getElementById('fees-workspace')?.classList.add('hidden');
+                    document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
             });
 
             await Promise.all([fetchDashboard(), fetchClaims(), initGmailControls(), fetchFees()]);
@@ -2481,8 +2512,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentDrilldownStatusKey = null;
     let currentDrilldownLabel = '';
+    let cachedDrilldownClaims = [];
 
-    function renderDashboardDrilldown(statusKey, label) {
+    async function renderDashboardDrilldown(statusKey, label) {
         const section = document.getElementById('dashboard-drilldown-section');
         const tbody = document.getElementById('dashboard-drilldown-tbody');
         const titleStatus = document.getElementById('drilldown-status-name');
@@ -2497,34 +2529,51 @@ document.addEventListener('DOMContentLoaded', () => {
         if (titleStatus) titleStatus.textContent = currentDrilldownLabel || 'Filtered Claims';
         section.classList.remove('hidden');
 
-        // Filter claims
-        let list = workspaceState.claims || [];
-        const key = currentDrilldownStatusKey;
+        const range = document.getElementById('dashboard-range-select')?.value || 'this_month';
+        const key = currentDrilldownStatusKey || '';
 
-        if (key === '' || key === 'total') {
-            // All claims
-        } else if (key === 'pending') {
-            list = list.filter(c => c.status !== 'closed' && c.status !== 'report_submitted');
-        } else if (key === 'report_submitted' || key === 'completed') {
-            list = list.filter(c => c.status === 'report_submitted');
-        } else if (key) {
-            list = list.filter(c => c.status === key);
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 1.5rem;"><i class="fas fa-spinner fa-spin"></i> Loading drilldown claims…</td></tr>`;
+
+        try {
+            const queryParams = new URLSearchParams();
+            if (key && key !== 'total') queryParams.set('status', key);
+            queryParams.set('range', range);
+            queryParams.set('page_size', '100');
+
+            const res = await fetch(`/api/claims?${queryParams.toString()}`);
+            if (!res.ok) throw new Error('Could not fetch drilldown claims');
+            const data = await res.json();
+            cachedDrilldownClaims = data.items || [];
+        } catch (err) {
+            console.warn('Falling back to local claims cache:', err);
+            cachedDrilldownClaims = workspaceState.claims || [];
         }
 
+        renderFilteredDrilldownRows();
+    }
+
+    function renderFilteredDrilldownRows() {
+        const tbody = document.getElementById('dashboard-drilldown-tbody');
+        const countSpan = document.getElementById('drilldown-count');
+        const badge = document.getElementById('drilldown-badge');
+        const searchInput = document.getElementById('dashboard-drilldown-search');
+        if (!tbody) return;
+
+        let list = [...cachedDrilldownClaims];
         const searchTerm = (searchInput?.value || '').toLowerCase().trim();
         if (searchTerm) {
             list = list.filter(c => 
                 (c.claim_no || '').toLowerCase().includes(searchTerm) ||
                 (c.vehicle_no || '').toLowerCase().includes(searchTerm) ||
                 (c.insured_name || '').toLowerCase().includes(searchTerm) ||
-                (c.insurer_name || '').toLowerCase().includes(searchTerm)
+                (c.insurer_name || c.insurer || '').toLowerCase().includes(searchTerm)
             );
         }
 
         if (countSpan) countSpan.textContent = String(list.length);
         if (badge) {
             badge.textContent = currentDrilldownLabel || 'All Claims';
-            badge.className = `status-badge badge-${(key || 'default').replace(/_/g, '-')}`;
+            badge.className = `status-badge badge-${(currentDrilldownStatusKey || 'default').replace(/_/g, '-')}`;
         }
 
         if (!list.length) {
@@ -2535,12 +2584,13 @@ document.addEventListener('DOMContentLoaded', () => {
         tbody.innerHTML = list.map(item => {
             const statusLabel = formatStatus(item.status);
             const statusClass = `badge-${(item.status || 'default').replace(/_/g, '-')}`;
+            const alertBadge = item.is_pending_7day ? `<span style="background:#f59e0b; color:#000; font-size:0.7rem; font-weight:700; padding:2px 5px; border-radius:3px; margin-left:4px;" title="Over 7 days pending action"><i class="fas fa-clock"></i> &gt;7d</span>` : '';
             return `
                 <tr>
-                    <td><strong>${escapeHtml(item.claim_no || '—')}</strong></td>
+                    <td><strong>${escapeHtml(item.claim_no || '—')}</strong>${alertBadge}</td>
                     <td>${escapeHtml(item.vehicle_no || '—')}</td>
                     <td>${escapeHtml(item.insured_name || '—')}</td>
-                    <td>${escapeHtml(item.insurer_name || '—')}</td>
+                    <td>${escapeHtml(item.insurer || item.insurer_name || '—')}</td>
                     <td><span class="status-badge ${statusClass}">${escapeHtml(statusLabel)}</span></td>
                     <td>${escapeHtml(item.survey_type || 'Final')}</td>
                     <td>
@@ -2569,7 +2619,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function fetchDashboard() {
-        const range = document.getElementById('dashboard-range-select')?.value || '1m';
+        const range = document.getElementById('dashboard-range-select')?.value || 'this_month';
         const res = await fetch(`/api/dashboard?range=${encodeURIComponent(range)}`);
         if (!res.ok) return;
         const data = await res.json();
@@ -2889,8 +2939,9 @@ document.addEventListener('DOMContentLoaded', () => {
         tbody.innerHTML = claims.map(claim => {
             const current = claim.status || 'new_appointment';
             const options = Object.entries(claimStatusLabels).map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+            const alertBadge = claim.is_pending_7day ? `<span style="background:#f59e0b; color:#000; font-size:0.7rem; font-weight:700; padding:2px 5px; border-radius:3px; margin-left:4px;" title="Over 7 days pending action"><i class="fas fa-clock"></i> &gt;7d</span>` : '';
             return `<tr>
-                <td>${escapeHtml(claim.claim_no || '—')}</td>
+                <td><strong>${escapeHtml(claim.claim_no || '—')}</strong>${alertBadge}</td>
                 <td>${escapeHtml(claim.vehicle_no || '—')}</td>
                 <td>${escapeHtml(claim.insured_name || '—')}</td>
                 <td>${escapeHtml(claim.insurer || '')}</td>
@@ -2922,12 +2973,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
     }
 
-    function generateReminderTextClient(claim, pendingDocs, reminderCount) {
+    function generateReminderTextClient(claim, pendingDocs, reminderCount, templateType = 'docs_pending') {
         const claimNo = claim.claim_no || '[Claim Number]';
         const policyNo = claim.policy_no || '[Policy Number]';
         const insured = claim.insured_name || '[Customer Name]';
         const vehicle = claim.vehicle_no || '[Vehicle Number]';
-        const insurer = claim.insurer || '[Insurance Company Name]';
+        const insurer = claim.insurer || claim.insurer_name || '[Insurance Company Name]';
+        const workshop = claim.workshop_name || '';
+
+        if (templateType === 'work_order') {
+            let text = `Dear Sir/Madam,\n\nThis is regarding the motor insurance claim intimation mentioned below:\n\n`;
+            text += `Claim Number: ${claimNo}\n`;
+            text += `Policy Number: ${policyNo}\n`;
+            text += `Insured Name: ${insured}\n`;
+            text += `Vehicle Registration Number: ${vehicle}\n`;
+            text += `Insurance Company: ${insurer}\n`;
+            if (workshop) text += `Workshop / Garage: ${workshop}\n`;
+            text += `\nPlease be informed that the undersigned surveyor has been appointed by the insurance company to conduct the survey inspection of the subject vehicle.\n\n`;
+            text += `You are requested to facilitate vehicle access / inspection at the workshop and arrange for necessary dismantling and preliminary document copies at the earliest.\n\n`;
+            text += `Regards,\nSk Anowar Ali\nMotor Surveyor & Loss Assessor\nLicence No.: SLA-121784\nMobile: 8777370714`;
+            return text;
+        }
 
         const docsListStr = pendingDocs.length ? pendingDocs.map((d, i) => `${i + 1}. ${d}`).join('\n') : "1. Policy copy\n2. Duly completed and signed claim form\n3. Repairer's final tax invoice and payment receipt\n4. Clear bank details/cancelled cheque of the insured";
 
@@ -2955,9 +3021,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let currentPendingDocs = [];
+    let currentReminderClaim = null;
 
     async function openPendingDocsModal(reportId) {
-        const report = workspaceState.claims.find(c => c.id === reportId) || {};
+        const report = (workspaceState.claims || []).find(c => c.id === reportId) || cachedDrilldownClaims.find(c => c.id === reportId) || {};
+        currentReminderClaim = report;
         document.getElementById('pending-docs-report-id').value = reportId;
         document.getElementById('pending-docs-claim-info').textContent = `Claim: ${report.claim_no || '—'} | Vehicle: ${report.vehicle_no || '—'} | Insured: ${report.insured_name || '—'}`;
 
@@ -2971,13 +3039,40 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusText = count > 0 ? `Reminders sent: ${count}/3. Last sent: ${reminderInfo.last_sent_at ? new Date(reminderInfo.last_sent_at).toLocaleDateString() : 'None'}` : 'No reminders sent yet. (Every 7 days, 3 times limit)';
             document.getElementById('pending-docs-reminder-status').textContent = statusText;
 
-            if (reminderInfo.claim_manager_email) document.getElementById('claim-manager-email-input').value = reminderInfo.claim_manager_email;
-            if (reminderInfo.claim_manager_phone) document.getElementById('claim-manager-phone-input').value = reminderInfo.claim_manager_phone;
+            if (document.getElementById('claim-manager-email-input')) document.getElementById('claim-manager-email-input').value = reminderInfo.claim_manager_email || '';
+            if (document.getElementById('claim-manager-phone-input')) document.getElementById('claim-manager-phone-input').value = reminderInfo.claim_manager_phone || '';
+            if (document.getElementById('insured-email-input')) document.getElementById('insured-email-input').value = reminderInfo.insured_email || report.insured_email || '';
+            if (document.getElementById('insured-phone-input')) document.getElementById('insured-phone-input').value = reminderInfo.insured_contact_no || report.insured_contact_no || '';
 
             renderPendingDocsList();
+            updateNotificationPreview();
             document.getElementById('pending-documents-modal').classList.remove('hidden');
         } catch (err) {
             showStatus('Failed to load pending documents checklist.', 'error', true);
+        }
+    }
+
+    function updateNotificationPreview() {
+        const templateType = document.getElementById('notification-template-select')?.value || 'docs_pending';
+        const pendingNames = currentPendingDocs.filter(d => typeof d === 'object' ? !d.received : true).map(d => typeof d === 'object' ? d.name : d);
+        const text = generateReminderTextClient(currentReminderClaim || {}, pendingNames, 1, templateType);
+
+        const previewEl = document.getElementById('reminder-preview-text');
+        if (previewEl) previewEl.value = text;
+
+        const encodedMsg = encodeURIComponent(text);
+        const cmPhone = document.getElementById('claim-manager-phone-input')?.value.trim() || '';
+        const insPhone = document.getElementById('insured-phone-input')?.value.trim() || '';
+
+        const waMgr = document.getElementById('whatsapp-reminder-link');
+        if (waMgr) {
+            waMgr.href = `https://api.whatsapp.com/send?text=${encodedMsg}${cmPhone ? `&phone=${cmPhone}` : ''}`;
+            waMgr.classList.remove('hidden');
+        }
+        const waIns = document.getElementById('whatsapp-insured-link');
+        if (waIns) {
+            waIns.href = `https://api.whatsapp.com/send?text=${encodedMsg}${insPhone ? `&phone=${insPhone}` : ''}`;
+            waIns.classList.remove('hidden');
         }
     }
 
@@ -3010,26 +3105,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentPendingDocs[idx].received = e.target.checked;
             }
             renderPendingDocsList();
+            updateNotificationPreview();
         }));
 
         container.querySelectorAll('.remove-doc-item').forEach(btn => btn.addEventListener('click', (e) => {
             const idx = Number(e.target.dataset.index);
             currentPendingDocs.splice(idx, 1);
             renderPendingDocsList();
+            updateNotificationPreview();
         }));
     }
 
     async function savePendingDocsChecklist() {
         const reportId = document.getElementById('pending-docs-report-id')?.value;
         if (!reportId) return;
+        const claimManagerEmail = document.getElementById('claim-manager-email-input')?.value.trim();
+        const claimManagerPhone = document.getElementById('claim-manager-phone-input')?.value.trim();
+        const insuredEmail = document.getElementById('insured-email-input')?.value.trim();
+        const insuredPhone = document.getElementById('insured-phone-input')?.value.trim();
+
         try {
             const res = await fetch(`/api/claims/${encodeURIComponent(reportId)}/pending_documents`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pending_documents: currentPendingDocs })
+                body: JSON.stringify({
+                    pending_documents: currentPendingDocs,
+                    claim_manager_email: claimManagerEmail,
+                    claim_manager_phone: claimManagerPhone,
+                    insured_email: insuredEmail,
+                    insured_contact_no: insuredPhone
+                })
             });
             if (!res.ok) throw new Error('Could not save checklist.');
-            showStatus('Pending documents checklist saved.', 'success', true);
+            showStatus('Pending documents checklist and contacts saved.', 'success', true);
             document.getElementById('pending-documents-modal').classList.add('hidden');
         } catch (err) {
             showStatus(err.message, 'error', true);
@@ -3041,26 +3149,41 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!reportId) return;
         const claimManagerEmail = document.getElementById('claim-manager-email-input')?.value.trim();
         const claimManagerPhone = document.getElementById('claim-manager-phone-input')?.value.trim();
+        const insuredEmail = document.getElementById('insured-email-input')?.value.trim();
+        const insuredPhone = document.getElementById('insured-phone-input')?.value.trim();
+        const templateType = document.getElementById('notification-template-select')?.value || 'docs_pending';
 
         try {
             const res = await fetch(`/api/claims/${encodeURIComponent(reportId)}/send_reminder`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ claim_manager_email: claimManagerEmail, claim_manager_phone: claimManagerPhone })
+                body: JSON.stringify({
+                    claim_manager_email: claimManagerEmail,
+                    claim_manager_phone: claimManagerPhone,
+                    insured_email: insuredEmail,
+                    insured_phone: insuredPhone,
+                    template_type: templateType
+                })
             });
             const result = await res.json();
             if (!res.ok) throw new Error(result.error || 'Could not send notification.');
             
-            showStatus(`Reminder #${result.reminder_count} sent successfully!`, 'success', true);
+            showStatus(templateType === 'work_order' ? 'Work Order intimation sent successfully!' : `Reminder #${result.reminder_count} sent successfully!`, 'success', true);
             
-            // Format WhatsApp link if text returned
             if (result.message_text) {
+                const previewEl = document.getElementById('reminder-preview-text');
+                if (previewEl) previewEl.value = result.message_text;
+
                 const encodedMsg = encodeURIComponent(result.message_text);
                 const waBtn = document.getElementById('whatsapp-reminder-link');
                 if (waBtn) {
-                    const phone = claimManagerPhone || '';
-                    waBtn.href = `https://api.whatsapp.com/send?text=${encodedMsg}${phone ? `&phone=${phone}` : ''}`;
+                    waBtn.href = `https://api.whatsapp.com/send?text=${encodedMsg}${claimManagerPhone ? `&phone=${claimManagerPhone}` : ''}`;
                     waBtn.classList.remove('hidden');
+                }
+                const waIns = document.getElementById('whatsapp-insured-link');
+                if (waIns) {
+                    waIns.href = `https://api.whatsapp.com/send?text=${encodedMsg}${insuredPhone ? `&phone=${insuredPhone}` : ''}`;
+                    waIns.classList.remove('hidden');
                 }
             }
 
@@ -3563,6 +3686,51 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('toggle-new-claim')?.addEventListener('click', () => document.getElementById('new-claim-form')?.classList.toggle('hidden'));
         document.getElementById('new-claim-form')?.addEventListener('submit', createClaim);
         document.getElementById('claim-filter-button')?.addEventListener('click', () => { workspaceState.claimsPage = 1; fetchClaims(); });
+        document.getElementById('claim-status-filter')?.addEventListener('change', () => {
+            workspaceState.claimsPage = 1;
+            fetchClaims();
+        });
+        document.getElementById('claim-month-filter')?.addEventListener('change', () => {
+            workspaceState.claimsPage = 1;
+            fetchClaims();
+        });
+        document.getElementById('claim-user-filter')?.addEventListener('change', () => {
+            workspaceState.claimsPage = 1;
+            fetchClaims();
+        });
+        document.getElementById('claim-search-input')?.addEventListener('input', () => {
+            clearTimeout(window._claimSearchTimeout);
+            window._claimSearchTimeout = setTimeout(() => {
+                workspaceState.claimsPage = 1;
+                fetchClaims();
+            }, 300);
+        });
+        document.getElementById('claim-filter-reset')?.addEventListener('click', () => {
+            const s = document.getElementById('claim-search-input'); if (s) s.value = '';
+            const st = document.getElementById('claim-status-filter'); if (st) st.value = '';
+            const m = document.getElementById('claim-month-filter'); if (m) m.value = '';
+            const u = document.getElementById('claim-user-filter'); if (u) u.value = '';
+            workspaceState.claimsPage = 1;
+            fetchClaims();
+        });
+        document.getElementById('dashboard-range-select')?.addEventListener('change', () => {
+            fetchDashboard();
+        });
+        document.getElementById('notification-template-select')?.addEventListener('change', () => {
+            updateNotificationPreview();
+        });
+        document.getElementById('claim-manager-email-input')?.addEventListener('input', () => {
+            updateNotificationPreview();
+        });
+        document.getElementById('claim-manager-phone-input')?.addEventListener('input', () => {
+            updateNotificationPreview();
+        });
+        document.getElementById('insured-email-input')?.addEventListener('input', () => {
+            updateNotificationPreview();
+        });
+        document.getElementById('insured-phone-input')?.addEventListener('input', () => {
+            updateNotificationPreview();
+        });
         document.getElementById('claim-page-prev')?.addEventListener('click', () => {
             if (workspaceState.claimsPage > 1) { workspaceState.claimsPage -= 1; fetchClaims(); }
         });
@@ -3603,16 +3771,18 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('copy-reminder-text-btn')?.addEventListener('click', () => {
             const reportId = document.getElementById('pending-docs-report-id')?.value;
             if (!reportId) return;
-            const report = workspaceState.claims.find(c => c.id === reportId) || {};
-            const pendingNames = currentPendingDocs.filter(d => typeof d === 'object' ? !d.received : true).map(d => typeof d === 'object' ? d.name : d);
-            fetch(`/api/claims/${encodeURIComponent(reportId)}/pending_documents`)
-                .then(r => r.json())
-                .then(data => {
-                    const count = (data.reminder_info?.reminder_count || 0) + 1;
-                    const text = generateReminderTextClient(report, pendingNames, count);
-                    navigator.clipboard.writeText(text);
-                    showStatus('Reminder text copied to clipboard.', 'success', true);
-                });
+            const previewEl = document.getElementById('reminder-preview-text');
+            if (previewEl && previewEl.value) {
+                navigator.clipboard.writeText(previewEl.value);
+                showStatus('Message text copied to clipboard.', 'success', true);
+            } else {
+                const report = currentReminderClaim || workspaceState.claims.find(c => c.id === reportId) || {};
+                const pendingNames = currentPendingDocs.filter(d => typeof d === 'object' ? !d.received : true).map(d => typeof d === 'object' ? d.name : d);
+                const templateType = document.getElementById('notification-template-select')?.value || 'docs_pending';
+                const text = generateReminderTextClient(report, pendingNames, 1, templateType);
+                navigator.clipboard.writeText(text);
+                showStatus('Message text copied to clipboard.', 'success', true);
+            }
         });
         document.getElementById('download-admin-backup-btn')?.addEventListener('click', () => {
             window.location.href = '/api/admin/backup/download';

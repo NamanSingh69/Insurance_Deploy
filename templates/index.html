@@ -92,7 +92,7 @@
         <!-- Workspace Active Navigation Header (shown when viewing a workspace section) -->
         <div id="workspace-active-nav" class="workspace-nav-header hidden">
             <button type="button" id="btn-back-to-upload" class="btn btn-secondary btn-sm">
-                <i class="fas fa-arrow-left"></i> Back to Upload & Documents
+                <i class="fas fa-arrow-left"></i> <span id="back-nav-label">Back to Upload &amp; Documents</span>
             </button>
             <div class="workspace-tab-group">
                 <button type="button" id="tab-btn-dashboard" class="workspace-tab-btn active"><i class="fas fa-chart-line"></i> Dashboard</button>
@@ -108,19 +108,24 @@
                     <h2><i class="fas fa-chart-line"></i> Motor Survey Dashboard</h2>
                     <p id="workspace-role-label" class="workspace-subtitle"></p>
                 </div>
-                <div id="gmail-sync-toolbar" class="workspace-toolbar hidden">
+                <div class="workspace-toolbar" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
                     <select id="dashboard-range-select" class="workspace-select" aria-label="Dashboard Date Range">
-                        <option value="1m" selected>1 Month</option>
-                        <option value="3m">3 Months</option>
-                        <option value="1y">1 Year</option>
-                        <option value="all">All Time</option>
+                        <option value="this_month" selected>This Month</option>
+                        <option value="last_month">Last Month</option>
+                        <option value="1m">Last 30 Days</option>
+                        <option value="3m">Last 3 Months</option>
+                        <option value="6m">Last 6 Months</option>
+                        <option value="1y">This Year (1 Year)</option>
+                        <option value="all">All Time (Lifetime)</option>
                     </select>
-                    <select id="gmail-domain-filter" aria-label="Sender domain filter">
-                        <option value="">All approved senders</option>
-                    </select>
-                    <button type="button" id="sync-gmail-button" class="btn btn-info btn-sm">
-                        <i class="fas fa-sync-alt"></i> Sync Gmail Intimations
-                    </button>
+                    <div id="gmail-sync-toolbar" class="hidden" style="display: flex; gap: 0.5rem; align-items: center;">
+                        <select id="gmail-domain-filter" aria-label="Sender domain filter">
+                            <option value="">All approved senders</option>
+                        </select>
+                        <button type="button" id="sync-gmail-button" class="btn btn-info btn-sm">
+                            <i class="fas fa-sync-alt"></i> Sync Gmail Intimations
+                        </button>
+                    </div>
                 </div>
             </div>
             <div id="dashboard-cards" class="dashboard-grid"></div>
@@ -1922,9 +1927,9 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
 
     <!-- Pending Documents Checklist & Reminders Modal -->
     <div id="pending-documents-modal" class="modal hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; align-items: center; justify-content: center;">
-        <div class="modal-content" style="background: var(--bg-card); width: 650px; max-width: 92%; max-height: 90vh; overflow-y: auto; border-radius: var(--border-radius); padding: 1.5rem;">
+        <div class="modal-content" style="background: var(--bg-card); width: 680px; max-width: 94%; max-height: 92vh; overflow-y: auto; border-radius: var(--border-radius); padding: 1.5rem;">
             <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h3><i class="fas fa-tasks"></i> Missing Documents Checklist & Reminders</h3>
+                <h3><i class="fas fa-tasks"></i> Missing Documents Checklist &amp; Reminders</h3>
                 <button type="button" id="close-pending-docs-modal" class="btn btn-danger btn-sm"><i class="fas fa-times"></i></button>
             </div>
             <input type="hidden" id="pending-docs-report-id">
@@ -1944,23 +1949,40 @@ Total N Nos. photographs of the insured accidentally damaged vehicle were snappe
             </div>
 
             <div style="border-top: 1px solid var(--border-color); padding-top: 1rem; margin-top: 1rem;">
-                <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem;"><i class="fas fa-paper-plane"></i> Send Pending Document Notification</h4>
+                <h4 style="font-size: 0.95rem; margin-bottom: 0.5rem;"><i class="fas fa-paper-plane"></i> Send Notification / Work Order</h4>
+                <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem;">
+                    <label for="notification-template-select" style="font-size: 0.85rem; font-weight: 500; min-width: 130px; margin: 0;">Template:</label>
+                    <select id="notification-template-select" style="flex: 1; padding: 0.35rem 0.5rem; font-size: 0.85rem;">
+                        <option value="docs_pending" selected>Documents Pending Reminder (Notice 1/2/3)</option>
+                        <option value="work_order">Work Order / Inspection Intimation</option>
+                    </select>
+                </div>
                 <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.75rem;">
-                    <div style="display: flex; gap: 0.5rem;">
-                        <input type="email" id="claim-manager-email-input" placeholder="Claim Manager Email (Optional)">
-                        <input type="text" id="claim-manager-phone-input" placeholder="Claim Manager Phone (Optional)">
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <input type="email" id="claim-manager-email-input" placeholder="Claim Manager Email (Optional)" style="flex: 1; min-width: 180px;">
+                        <input type="text" id="claim-manager-phone-input" placeholder="Claim Manager Phone (Optional)" style="flex: 1; min-width: 160px;">
                     </div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <input type="email" id="insured-email-input" placeholder="Insured / Customer Email (Optional)" style="flex: 1; min-width: 180px;">
+                        <input type="text" id="insured-phone-input" placeholder="Insured / Customer Phone (Optional)" style="flex: 1; min-width: 160px;">
+                    </div>
+                </div>
+                <div style="margin-bottom: 0.75rem;">
+                    <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Live Message Preview:</label>
+                    <textarea id="reminder-preview-text" readonly style="width: 100%; height: 110px; font-size: 0.8rem; line-height: 1.4; background: rgba(0,0,0,0.3); color: var(--text-primary); border-radius: 4px; border: 1px solid var(--border-color); padding: 0.5rem; resize: vertical;"></textarea>
                 </div>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                     <button type="button" id="send-reminder-btn" class="btn btn-primary btn-sm"><i class="fas fa-envelope"></i> Send Notification</button>
                     <button type="button" id="copy-reminder-text-btn" class="btn btn-secondary btn-sm"><i class="fas fa-copy"></i> Copy Text</button>
-                    <a id="whatsapp-reminder-link" target="_blank" class="btn btn-info btn-sm hidden"><i class="fab fa-whatsapp"></i> WhatsApp</a>
+                    <a id="whatsapp-reminder-link" target="_blank" class="btn btn-info btn-sm hidden"><i class="fab fa-whatsapp"></i> WhatsApp Claim Mgr</a>
+                    <a id="whatsapp-insured-link" target="_blank" class="btn btn-sm hidden" style="background: #25d366; color: #fff;"><i class="fab fa-whatsapp"></i> WhatsApp Insured</a>
                 </div>
             </div>
             <div style="margin-top: 1.25rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
                 <button type="button" id="save-pending-docs-btn" class="btn btn-primary"><i class="fas fa-save"></i> Save Checklist</button>
             </div>
         </div>
+    </div>
     <!-- 7-Day Pending Claims Alert Modal -->
     <div id="pending-7day-alert-modal" class="modal hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; display: flex; align-items: center; justify-content: center;">
         <div class="modal-content" style="background: var(--bg-card, #222); border: 1px solid #ff9800; width: 480px; max-width: 90%; border-radius: 8px; padding: 2rem; text-align: center;">

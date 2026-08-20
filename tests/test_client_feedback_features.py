@@ -265,5 +265,150 @@ def test_standalone_fee_bill_saving_and_list_query(client, mock_sheets_db):
     assert len(res_list.get_json()) == 1
 
 
+def test_dashboard_date_range_and_mathematical_consistency(client, mock_sheets_db):
+    """Test R1 & R2: Dashboard supports this_month, last_month, 1m, all, and maintains mathematical integrity."""
+    # 1. Admin dashboard test
+    _auth(client, mock_sheets_db, role='admin')
+    mock_sheets_db.get_workspace_dashboard.return_value = {
+        'total_claims': 10,
+        'pending_claims': 7,
+        'completed_claims': 3,
+        'new_appointment': 2,
+        'inspection_pending': 2,
+        'documents_awaited': 2,
+        'report_under_preparation': 1,
+        'report_submitted': 2,
+        'closed': 1,
+        'total_invoiced': 25000.0,
+        'amount_received': 20000.0,
+        'outstanding_fees': 5000.0,
+        'overdue_count': 1
+    }
+
+    res_admin = client.get('/api/dashboard?range=this_month')
+    assert res_admin.status_code == 200
+    admin_data = res_admin.get_json()
+    assert admin_data['total_claims'] == admin_data['pending_claims'] + admin_data['completed_claims']
+    assert admin_data['completed_claims'] == admin_data['report_submitted'] + admin_data['closed']
+    assert 'total_invoiced' in admin_data
+    mock_sheets_db.get_workspace_dashboard.assert_called_with(1, date_range='this_month', from_date=None, to_date=None)
+
+    # 2. Employee dashboard test: financial fields must be redacted
+    _auth(client, mock_sheets_db, role='employee')
+    res_emp = client.get('/api/dashboard?range=last_month')
+    assert res_emp.status_code == 200
+    emp_data = res_emp.get_json()
+    assert emp_data['total_claims'] == 10
+    assert 'total_invoiced' not in emp_data
+    assert 'amount_received' not in emp_data
+    assert 'outstanding_fees' not in emp_data
+    assert 'overdue_count' not in emp_data
+
+
+def test_claim_register_status_filter_and_range_query(client, mock_sheets_db):
+    """Test R3: Claim Register status and date range query parameters."""
+    _auth(client, mock_sheets_db, role='admin')
+    mock_sheets_db.get_workspace_reports_page.return_value = {
+        'items': [{'id': 'rep1', 'claim_no': 'CLM-01', 'status': 'documents_awaited'}],
+        'total': 1,
+        'page': 1,
+        'page_size': 50
+    }
+
+    res = client.get('/api/claims?status=documents_awaited&range=this_month')
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data['total'] == 1
+    assert data['items'][0]['status'] == 'documents_awaited'
+    mock_sheets_db.get_workspace_reports_page.assert_called_with(
+        1, '', 1, 50, status='documents_awaited', month=None, insurer=None,
+        user_id='1', role='admin', date_range='this_month'
+    )
+
+
+def test_pending_documents_preview_and_templates(client, mock_sheets_db):
+    """Test R5: Notification preview endpoint for work order and docs pending templates."""
+    _auth(client, mock_sheets_db, role='admin')
+    mock_sheets_db.get_report_by_id.return_value = {
+        'id': 'rep-123',
+        'claim_no': 'CLM-777',
+        'policy_no': 'POL-888',
+        'insured_name': 'Subrata Ghosh',
+        'vehicle_no': 'WB01AA1111',
+        'insurer': 'National Insurance',
+        'report_data_json': json.dumps({
+            'survey_report': {
+                'claim_no': 'CLM-777',
+                'policy_no': 'POL-888',
+                'insured': 'Subrata Ghosh',
+                'vehicle_regn_no': 'WB01AA1111',
+                'insurer': 'National Insurance',
+                'workshop_name': 'Kalyani Hyundai'
+            },
+            'pending_documents': [{'name': 'RC Copy', 'received': False}]
+        })
+    }
+
+    # 1. Preview Work Order template
+    res_wo = client.post('/api/claims/rep-123/preview_reminder', json={'template_type': 'work_order'})
+    assert res_wo.status_code == 200
+    text_wo = res_wo.get_json()['message_text']
+    assert 'Claim Number: CLM-777' in text_wo
+    assert 'appointed by the insurance company to conduct the survey inspection' in text_wo
+    assert 'Workshop / Garage: Kalyani Hyundai' in text_wo
+
+    # 2. Preview Docs Pending template
+    res_dp = client.post('/api/claims/rep-123/preview_reminder', json={'template_type': 'docs_pending'})
+    assert res_dp.status_code == 200
+    text_dp = res_dp.get_json()['message_text']
+    assert 'RC Copy' in text_dp
+    assert 'observed that the following documents are still pending' in text_dp
+
+
+def test_send_reminder_work_order_and_docs_pending_dual_contacts(client, mock_sheets_db):
+    """Test R5: Sending Work Order and Docs Pending notifications with dual contacts."""
+    _auth(client, mock_sheets_db, role='admin')
+    mock_sheets_db.get_report_by_id.return_value = {
+        'id': 'rep-123',
+        'claim_no': 'CLM-777',
+        'policy_no': 'POL-888',
+        'insured_name': 'Subrata Ghosh',
+        'vehicle_no': 'WB01AA1111',
+        'insurer': 'National Insurance',
+        'report_data_json': json.dumps({
+            'survey_report': {
+                'claim_no': 'CLM-777',
+                'policy_no': 'POL-888',
+                'insured': 'Subrata Ghosh',
+                'vehicle_regn_no': 'WB01AA1111',
+                'insurer': 'National Insurance'
+            },
+            'pending_documents': [{'name': 'RC Copy', 'received': False}]
+        })
+    }
+    mock_sheets_db.get_claim_reminder.return_value = {'reminder_count': 0}
+    mock_sheets_db.update_claim_reminder.return_value = True
+
+    # Send 1st reminder
+    payload = {
+        'claim_manager_email': 'cm@insurer.com',
+        'claim_manager_phone': '9830012345',
+        'insured_email': 'insured@gmail.com',
+        'insured_phone': '9830054321',
+        'template_type': 'docs_pending'
+    }
+    res = client.post('/api/claims/rep-123/send_reminder', json=payload)
+    assert res.status_code == 200
+    assert res.get_json()['reminder_count'] == 1
+    assert res.get_json()['max_reached'] is False
+
+    # Send 4th reminder - should fail
+    mock_sheets_db.get_claim_reminder.return_value = {'reminder_count': 3}
+    res_max = client.post('/api/claims/rep-123/send_reminder', json=payload)
+    assert res_max.status_code == 400
+    assert 'Maximum 3 reminders' in res_max.get_json()['error']
+
+
+
 
 

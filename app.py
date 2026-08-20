@@ -1943,16 +1943,40 @@ def cancel_gmail_intimation(message_id):
         return jsonify({'error': 'Could not cancel Gmail intimation.'}), 400
     return jsonify({'success': True, 'message': 'Gmail intimation cancelled.'})
 
-def generate_pending_documents_reminder_text(claim_data, pending_docs, reminder_count=1):
+def generate_pending_documents_reminder_text(claim_data, pending_docs, reminder_count=1, template_type='docs_pending'):
     """
-    Generates notification text formatted according to client specification for 1st, 2nd, and 3rd reminders.
+    Generates notification text formatted according to client specification for Work Order intimation or Docs Pending reminders.
     """
-    survey = claim_data.get('survey_report', {}) if isinstance(claim_data.get('survey_report'), dict) else {}
+    report_data = claim_data.get('report_data_json') or {}
+    if isinstance(report_data, str):
+        try:
+            report_data = json.loads(report_data or '{}')
+        except Exception:
+            report_data = {}
+    survey = claim_data.get('survey_report') or report_data.get('survey_report') or {}
+    if not isinstance(survey, dict):
+        survey = {}
+
     claim_no = claim_data.get('claim_no') or survey.get('claim_no', '[Claim Number]')
     policy_no = claim_data.get('policy_no') or survey.get('policy_no', '[Policy Number]')
     insured_name = claim_data.get('insured_name') or survey.get('insured', '[Customer Name]')
     vehicle_no = claim_data.get('vehicle_no') or survey.get('vehicle_regn_no', '[Vehicle Number]')
     insurer_name = claim_data.get('insurer') or survey.get('insurer', '[Insurance Company Name]')
+    workshop_name = claim_data.get('workshop_name') or survey.get('workshop_name', '')
+
+    if template_type == 'work_order':
+        body = f"Dear Sir/Madam,\n\nThis is regarding the motor insurance claim intimation mentioned below:\n\n"
+        body += f"Claim Number: {claim_no}\n"
+        body += f"Policy Number: {policy_no}\n"
+        body += f"Insured Name: {insured_name}\n"
+        body += f"Vehicle Registration Number: {vehicle_no}\n"
+        body += f"Insurance Company: {insurer_name}\n"
+        if workshop_name:
+            body += f"Workshop / Garage: {workshop_name}\n"
+        body += "\nPlease be informed that the undersigned surveyor has been appointed by the insurance company to conduct the survey inspection of the subject vehicle.\n\n"
+        body += "You are requested to facilitate vehicle access / inspection at the workshop and arrange for necessary dismantling and preliminary document copies at the earliest.\n\n"
+        body += "Regards,\nSk Anowar Ali\nMotor Surveyor & Loss Assessor\nLicence No.: SLA-121784\nMobile: 8777370714"
+        return body
 
     docs_list_str = "\n".join([f"{idx+1}. {doc}" for idx, doc in enumerate(pending_docs)]) if pending_docs else "1. Policy copy\n2. Duly completed and signed claim form"
 
@@ -1967,6 +1991,11 @@ def generate_pending_documents_reminder_text(claim_data, pending_docs, reminder_
     body += "You are requested to submit clear and legible copies of the above documents at the earliest so that the survey report and claim assessment process can be completed without further delay.\n\n"
     body += "Please mention the claim number and vehicle registration number while sending the documents.\n\n"
 
+    try:
+        reminder_count = int(reminder_count)
+    except Exception:
+        reminder_count = 1
+
     if reminder_count == 2:
         body += "Kindly note that this is the second time reminder, so please treat this with high priority; otherwise we assume you are not interested in taking the claim, and the insurance company may close the claim without further notice.\n\n"
     elif reminder_count >= 3:
@@ -1980,7 +2009,7 @@ def generate_pending_documents_reminder_text(claim_data, pending_docs, reminder_
 @app.route('/api/claims/<report_id>/pending_documents', methods=['GET', 'POST'])
 @login_required
 def manage_pending_documents(report_id):
-    """Get or update pending documents checklist for a claim."""
+    """Get or update pending documents checklist and contact info for a claim."""
     workspace_admin_id = workspace_admin_id_for(current_user)
     report = sheets_db.get_report_by_id(report_id, current_user.id)
     if not report:
@@ -2001,12 +2030,29 @@ def manage_pending_documents(report_id):
             {'name': 'Repair Estimate Copy', 'received': False},
             {'name': 'Other Supporting Documents', 'received': False}
         ])
+        survey = report_data.get('survey_report', {}) if isinstance(report_data.get('survey_report'), dict) else {}
         reminder_info = sheets_db.get_claim_reminder(report_id) or {}
+        if not isinstance(reminder_info, dict):
+            reminder_info = {}
+        reminder_info.setdefault('claim_manager_email', survey.get('claim_manager_email', ''))
+        reminder_info.setdefault('claim_manager_phone', survey.get('claim_manager_phone', ''))
+        reminder_info.setdefault('insured_email', survey.get('insured_email', ''))
+        reminder_info.setdefault('insured_contact_no', survey.get('insured_contact_no', ''))
         return jsonify({'pending_documents': pending, 'reminder_info': reminder_info})
         
     data = request.get_json() or {}
     pending_docs = data.get('pending_documents', [])
     report_data['pending_documents'] = pending_docs
+    if 'survey_report' not in report_data:
+        report_data['survey_report'] = {}
+    if data.get('insured_contact_no'):
+        report_data['survey_report']['insured_contact_no'] = str(data.get('insured_contact_no')).strip()
+    if data.get('insured_email'):
+        report_data['survey_report']['insured_email'] = str(data.get('insured_email')).strip()
+    if data.get('claim_manager_phone'):
+        report_data['survey_report']['claim_manager_phone'] = str(data.get('claim_manager_phone')).strip()
+    if data.get('claim_manager_email'):
+        report_data['survey_report']['claim_manager_email'] = str(data.get('claim_manager_email')).strip()
     
     sheets_db.save_workspace_report(
         current_user.id, workspace_admin_id, report_data, existing_report_id=report_id,
@@ -2015,10 +2061,41 @@ def manage_pending_documents(report_id):
         
     return jsonify({'success': True, 'pending_documents': pending_docs})
 
+@app.route('/api/claims/<report_id>/preview_reminder', methods=['POST'])
+@login_required
+def preview_pending_documents_reminder(report_id):
+    """Generate live notification text preview without incrementing reminder count."""
+    report = sheets_db.get_report_by_id(report_id, current_user.id)
+    if not report:
+        return jsonify({'error': 'Report not found.'}), 404
+    data = request.get_json() or {}
+    template_type = data.get('template_type', 'docs_pending')
+    pending_docs_raw = data.get('pending_documents', [])
+    if not pending_docs_raw:
+        report_data = report.get('report_data_json') or {}
+        if isinstance(report_data, str):
+            report_data = json.loads(report_data or '{}')
+        pending_docs_raw = report_data.get('pending_documents', [])
+    pending_doc_names = [d.get('name') if isinstance(d, dict) else str(d) for d in pending_docs_raw if isinstance(d, dict) and not d.get('received')]
+    if not pending_doc_names:
+        pending_doc_names = [
+            "Policy copy",
+            "Duly completed and signed claim form",
+            "Repairer's final tax invoice and payment receipt",
+            "Clear bank details/cancelled cheque of the insured"
+        ]
+    reminder_info = sheets_db.get_claim_reminder(report_id) or {}
+    try:
+        count = int(reminder_info.get('reminder_count', 0))
+    except Exception:
+        count = 0
+    msg = generate_pending_documents_reminder_text(report, pending_doc_names, (count + 1) if template_type == 'docs_pending' else 1, template_type=template_type)
+    return jsonify({'success': True, 'message_text': msg})
+
 @app.route('/api/claims/<report_id>/send_reminder', methods=['POST'])
 @login_required
 def send_pending_documents_reminder(report_id):
-    """Send document pending reminder notification (Email, WhatsApp/SMS text formatting, Claim Manager option)."""
+    """Send document pending reminder notification (Email, WhatsApp/SMS text formatting, Claim Manager and Insured options)."""
     workspace_admin_id = workspace_admin_id_for(current_user)
     report = sheets_db.get_report_by_id(report_id, current_user.id)
     if not report:
@@ -2027,12 +2104,15 @@ def send_pending_documents_reminder(report_id):
     data = request.get_json() or {}
     claim_manager_email = data.get('claim_manager_email', '').strip()
     claim_manager_phone = data.get('claim_manager_phone', '').strip()
+    insured_email = data.get('insured_email', '').strip()
+    insured_phone = data.get('insured_phone', data.get('insured_contact_no', '')).strip()
+    template_type = data.get('template_type', 'docs_pending')
     
     reminder_info = sheets_db.get_claim_reminder(report_id) or {}
     current_count = reminder_info.get('reminder_count', 0)
-    new_count = current_count + 1
+    new_count = current_count + 1 if template_type == 'docs_pending' else current_count
     
-    if new_count > 3:
+    if template_type == 'docs_pending' and new_count > 3:
         return jsonify({'error': 'Maximum 3 reminders already sent for this claim.'}), 400
         
     report_data = report.get('report_data_json') or {}
@@ -2049,7 +2129,7 @@ def send_pending_documents_reminder(report_id):
             "Clear bank details/cancelled cheque of the insured"
         ]
         
-    formatted_message = generate_pending_documents_reminder_text(report, pending_doc_names, new_count)
+    formatted_message = generate_pending_documents_reminder_text(report, pending_doc_names, new_count or 1, template_type=template_type)
     
     sheets_db.update_claim_reminder(
         report_id, workspace_admin_id, report.get('claim_no', ''),
@@ -2060,7 +2140,7 @@ def send_pending_documents_reminder(report_id):
         'success': True,
         'reminder_count': new_count,
         'message_text': formatted_message,
-        'max_reached': new_count >= 3
+        'max_reached': new_count >= 3 if template_type == 'docs_pending' else False
     })
 
 @app.route('/get_user_upload_url', methods=['POST'])
@@ -4696,8 +4776,10 @@ def get_dashboard():
     workspace_admin_id = workspace_admin_id_for(current_user)
     if not workspace_admin_id:
         return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
-    date_range = request.args.get('range') or None
-    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id, date_range=date_range)
+    date_range = request.args.get('range', 'this_month')
+    from_date = request.args.get('from_date') or None
+    to_date = request.args.get('to_date') or None
+    dashboard = sheets_db.get_workspace_dashboard(workspace_admin_id, date_range=date_range, from_date=from_date, to_date=to_date)
     if not is_admin_user(current_user):
         for key in ('total_invoiced', 'amount_received', 'outstanding_fees', 'overdue_count'):
             dashboard.pop(key, None)
@@ -4712,16 +4794,19 @@ def pending_claims_alerts():
     if not workspace_admin_id:
         return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
     reports_page = sheets_db.get_workspace_reports_page(workspace_admin_id, '', 1, 1000)
-    claims = reports_page.get('reports', [])
+    claims = reports_page.get('items', []) or reports_page.get('reports', [])
     now = datetime.now()
     pending_7day_count = 0
     pending_7day_claims = []
     for c in claims:
-        created_at_str = c.get('created_at')
-        status = c.get('status', 'new_appointment')
-        if status not in ('closed', 'submitted', 'work_approved'):
+        created_at_str = c.get('created_at') or c.get('saved_at') or c.get('email_received_date')
+        status = str(c.get('status', 'new_appointment')).lower()
+        if status not in ('closed', 'submitted', 'report_submitted', 'work_approved'):
             try:
-                created_dt = datetime.fromisoformat(created_at_str) if created_at_str else now
+                if isinstance(created_at_str, datetime):
+                    created_dt = created_at_str
+                else:
+                    created_dt = datetime.fromisoformat(str(created_at_str).replace('Z', '')) if created_at_str else now
                 age_days = (now - created_dt).days
                 if age_days >= 7:
                     pending_7day_count += 1
@@ -4743,14 +4828,26 @@ def claims_register():
     if request.method == 'GET':
         status = request.args.get('status') or None
         month = request.args.get('month') or None
+        date_range = request.args.get('range') or None
+        from_date = request.args.get('from_date') or None
+        to_date = request.args.get('to_date') or None
         insurer = request.args.get('insurer') or None
         page = request.args.get('page', 1, type=int)
         page_size = request.args.get('page_size', 50, type=int)
         query = request.args.get('q', request.args.get('query', ''))
         filter_user_id = request.args.get('user_id') or None
+        kwargs = {
+            'status': status, 'month': month, 'insurer': insurer,
+            'user_id': filter_user_id or current_user.id, 'role': current_user.role
+        }
+        if date_range is not None:
+            kwargs['date_range'] = date_range
+        if from_date is not None:
+            kwargs['from_date'] = from_date
+        if to_date is not None:
+            kwargs['to_date'] = to_date
         return jsonify(sheets_db.get_workspace_reports_page(
-            workspace_admin_id, query, page, page_size, status=status, month=month, insurer=insurer,
-            user_id=filter_user_id or current_user.id, role=current_user.role))
+            workspace_admin_id, query, page, page_size, **kwargs))
 
     data = request.get_json() or {}
     claim_no = str(data.get('claim_no', '')).strip()
