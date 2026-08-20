@@ -2537,7 +2537,6 @@ class PostgresDB:
                       payment_reference, payment_remarks, json.dumps(bd),
                       bill_id, workspace_admin_id, workspace_admin_id))
                 res = cur.fetchone()
-                self.conn.commit()
                 return res is not None
         except Exception as e:
             try:
@@ -2546,6 +2545,23 @@ class PostgresDB:
                 pass
             print(f"Error updating fee bill payment: {e}")
             return False
+
+    def add_audit_log(self, action, user_id, details=None, ip_address=None, workspace_admin_id=None):
+        """Records an operational action in the audit logs table."""
+        try:
+            if not self.conn:
+                self.connect()
+            if self.conn:
+                with self.conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO audit_logs (workspace_admin_id, user_id, action, details, ip_address)
+                        VALUES (%s, %s, %s, %s, %s);
+                    """, (workspace_admin_id, str(user_id) if user_id else None, str(action), details, ip_address))
+                    return True
+        except Exception as e:
+            print(f"Audit log warning (non-fatal): {e}")
+            return False
+        return False
 
     def delete_fee_bill(self, bill_id, user_id, workspace_admin_id=None):
         if hasattr(self, '_memory_fee_bills'):
