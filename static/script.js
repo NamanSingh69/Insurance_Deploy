@@ -4021,6 +4021,15 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('fee-gst-pc')?.addEventListener('input', updateLiveFeeSummary);
         document.getElementById('fee-include-signature')?.addEventListener('change', updateLiveFeeSummary);
         document.getElementById('fee-pdf-preview-btn')?.addEventListener('click', handleDownloadFeePdfPreview);
+        document.getElementById('fee-register-form')?.addEventListener('submit', saveFee);
+        document.getElementById('fee-pdf-browse-btn')?.addEventListener('click', () => {
+            document.getElementById('fee-pdf-file')?.click();
+        });
+        document.getElementById('fee-pdf-file')?.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                handleFeePdfUpload(e.target.files[0]);
+            }
+        });
 
         // Dashboard In-Place Drilldown Listeners
         document.getElementById('dashboard-drilldown-search')?.addEventListener('input', () => {
@@ -4413,7 +4422,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function collectFeeBillPayload() {
+    function collectLegacyFeeBillPayload() {
         calculateFeeBillAmounts();
         return {
             insurer_name: fbInsurerName?.value.trim() || '',
@@ -4433,7 +4442,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnSaveFeeBill) {
         btnSaveFeeBill.addEventListener('click', async () => {
-            const payload = collectFeeBillPayload();
+            const payload = collectLegacyFeeBillPayload();
             if (!payload.insurer_name || !payload.insured_name) {
                 showStatus("Please enter Insurance Company and Insured Name.", "error", true);
                 return;
@@ -4460,7 +4469,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnGenerateFeePdf) {
         btnGenerateFeePdf.addEventListener('click', async () => {
-            const payload = collectFeeBillPayload();
+            const payload = collectLegacyFeeBillPayload();
             if (!payload.insurer_name || !payload.insured_name) {
                 showStatus("Please enter Insurance Company and Insured Name.", "error", true);
                 return;

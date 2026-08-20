@@ -409,6 +409,38 @@ def test_send_reminder_work_order_and_docs_pending_dual_contacts(client, mock_sh
     assert 'Maximum 3 reminders' in res_max.get_json()['error']
 
 
+def test_generate_fee_pdf_endpoint_with_itemized_breakdown(client, mock_sheets_db):
+    """Test generating a fee bill PDF with 8 item breakdown and datetime handling."""
+    _auth(client, mock_sheets_db, role='admin')
+    payload = {
+        'invoice_no': 'BILL-2026-001',
+        'invoice_date': '2026-08-20',
+        'insurer_name': 'National Insurance Co. Ltd.',
+        'insurer_gst': '19AAACN2026P1Z1',
+        'insurer_address': 'Kolkata Regional Office',
+        'insured_name': 'Subrata Ghosh',
+        'policy_no': 'POL-9999',
+        'claim_no': 'CLM-8888',
+        'vehicle_no': 'WB02AB1234',
+        'date_of_accident': '2026-08-15',
+        'fee_items': [
+            {'name': '1. Final Survey Fees :', 'amount': 4500.0},
+            {'name': '2. Conveyance Expenses : (50 x 2 =100 km @ Rs. 10/-)', 'amount': 1000.0},
+            {'name': '8. Other charges: (postal charges)', 'amount': 250.0}
+        ],
+        'taxable_amount': 5750.0,
+        'gst_pc': 18.0,
+        'gst_amount': 1035.0,
+        'total_amount': 6785.0,
+        'include_signature': True
+    }
+    res = client.post('/generate_fee_pdf', json=payload)
+    assert res.status_code == 200
+    assert res.content_type == 'application/pdf'
+    assert len(res.data) > 100
+
+
+
 
 
 
