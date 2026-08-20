@@ -137,11 +137,15 @@ r_emp_ins = s_emp.get(f"{BASE_URL}/api/insurers")
 print(f"Employee Insurers access ({r_emp_ins.status_code}): {len(r_emp_ins.json().get('insurers', []))} insurers visible")
 assert r_emp_ins.status_code == 200
 
-# Verify employee cannot see financial summaries on dashboard
-r_emp_dash = s_emp.get(f"{BASE_URL}/api/workspace_dashboard")
+# Verify employee cannot see financial summaries on dashboard (keys are completely redacted)
+r_emp_dash = s_emp.get(f"{BASE_URL}/api/dashboard")
+print(f"Employee Dashboard Status ({r_emp_dash.status_code})")
+assert r_emp_dash.status_code == 200
 dash = r_emp_dash.json()
-print(f"Employee Dashboard Total Invoiced (should be 0 or redacted): {dash.get('total_invoiced')}")
-assert dash.get('total_invoiced') == 0
+print(f"Employee Dashboard Total Invoiced (should be None/redacted): {dash.get('total_invoiced')}")
+assert 'total_invoiced' not in dash
+assert 'amount_received' not in dash
+assert 'outstanding_fees' not in dash
 
 print("\n============================================================")
 print(">>> ALL PRODUCTION VERIFICATION CHECKS PASSED FLAWLESSLY! <<<")
