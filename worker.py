@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from db import db
 from modules.assets import get_owned_asset_content, store_private_bytes
-from modules.credentials import get_user_gemini_key
+from modules.credentials import get_user_gemini_key, resolve_gemini_api_key
 from modules.drive import DriveAuthorizationError, is_drive_connected, upload_report_to_personal_drive
 from modules.gemini import execute_gemini_task
 from modules.pdf import render_report
@@ -79,7 +79,7 @@ def _run_process_pdf(job, payload, user_data):
         raise ValueError("The processing job has no valid PDF input.")
 
     # 2. Setup Gemini Credentials
-    api_key = get_user_gemini_key(user_data) or os.getenv("GEMINI_API_KEY")
+    api_key = resolve_gemini_api_key(user_data, _database())
     user_model = user_data.get('gemini_model')
 
     # 3. Execute Gemini Task

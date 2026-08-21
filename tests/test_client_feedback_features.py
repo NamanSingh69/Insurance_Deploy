@@ -202,8 +202,8 @@ def test_dynamic_insurer_prefix_invoice_numbers(client, mock_sheets_db):
     assert res_ogi.get_json()['next_invoice_no'] == 'OGI-1'
 
 
-def test_employee_can_access_invoice_numbering_and_create_insurer_master_but_cannot_delete(client, mock_sheets_db):
-    """Test employee can generate next invoice numbers and add masters, but cannot delete."""
+def test_employee_can_access_invoice_numbering_and_manage_insurer_master(client, mock_sheets_db):
+    """Test employee can generate next invoice numbers, add masters, and delete masters within their workspace."""
     _auth(client, mock_sheets_db, role='employee')
 
     mock_sheets_db.get_next_insurer_invoice_number.return_value = 'NIC-1'
@@ -220,10 +220,10 @@ def test_employee_can_access_invoice_numbering_and_create_insurer_master_but_can
     assert res_post.status_code == 201
     assert res_post.get_json()['id'] == 5
 
-    # 3. Employee CANNOT delete insurer master (Admin only)
+    # 3. Employee can delete insurer master within workspace
     res_del = client.delete('/api/insurers/5')
-    assert res_del.status_code == 403
-    assert 'Admin permission required' in res_del.get_json()['error']
+    assert res_del.status_code == 200
+    assert res_del.get_json()['success'] is True
 
 
 def test_user_file_segregation_in_claims_and_reports(client, mock_sheets_db):

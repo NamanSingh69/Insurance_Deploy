@@ -490,3 +490,106 @@ def execute_gemini_task(api_key, pdf_part, user_model=None, is_invoice=False):
         return parse_invoice_gemini_response(response_text)
     else:
         return parse_gemini_response(response_text)
+
+
+def build_intimation_gemini_prompt():
+    """Creates prompt for extracting motor claim intimation / surveyor appointment details."""
+    return """
+    You are an expert data extraction assistant specializing in Indian motor insurance claim intimation emails, appointment letters, and surveyor work orders.
+    Analyze the provided PDF document and extract the key claim intimation fields accurately.
+
+    Return the extracted data STRICTLY in JSON format with the following schema:
+    {
+      "claim_no": "...",
+      "policy_no": "...",
+      "insured_name": "...",
+      "insured_contact_no": "...",
+      "insured_email": "...",
+      "claim_manager_email": "...",
+      "claim_manager_phone": "...",
+      "vehicle_no": "...",
+      "vehicle_type": "...", // e.g. "Private Car", "Two-Wheeler", "GCV (Goods Carrying)", "PCCV (Passenger Carrying)", "Miscellaneous"
+      "insurer": "...", // e.g. "The New India Assurance Co. Ltd.", "National Insurance Co. Ltd.", "United India Insurance Co. Ltd.", "The Oriental Insurance Co. Ltd."
+      "insurer_branch": "...", // e.g. "Berhampore DO", "Kolkata Hub DO"
+      "workshop_name": "...", // e.g. "GEEKAY AUTO PVT LTD"
+      "workshop_phone": "...",
+      "date_of_loss": "...", // Format YYYY-MM-DD or DD.MM.YYYY
+      "survey_type": "..." // "spot" or "final"
+    }
+
+    Rules:
+    1. If a field is not found in the document, use an empty string "". Do NOT fabricate information.
+    2. Normalize dates to YYYY-MM-DD format if possible.
+    3. Output pure JSON only, without commentary.
+    """
+
+
+def parse_intimation_gemini_response(response_text):
+    """Parse JSON string from Gemini intimation response."""
+    try:
+        clean_text = response_text.strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[3:]
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3]
+        clean_text = clean_text.strip()
+
+        data = json.loads(clean_text)
+        return {
+            "claim_no": str(data.get("claim_no", "")).strip(),
+            "policy_no": str(data.get("policy_no", "")).strip(),
+            "insured_name": str(data.get("insured_name", "")).strip(),
+            "insured_contact_no": str(data.get("insured_contact_no", "")).strip(),
+            "insured_email": str(data.get("insured_email", "")).strip(),
+            "claim_manager_email": str(data.get("claim_manager_email", "")).strip(),
+            "claim_manager_phone": str(data.get("claim_manager_phone", "")).strip(),
+            "vehicle_no": str(data.get("vehicle_no", "")).strip(),
+            "vehicle_type": str(data.get("vehicle_type", "Private Car")).strip() or "Private Car",
+            "insurer": str(data.get("insurer", "")).strip(),
+            "insurer_branch": str(data.get("insurer_branch", "")).strip(),
+            "workshop_name": str(data.get("workshop_name", "")).strip(),
+            "workshop_phone": str(data.get("workshop_phone", "")).strip(),
+            "date_of_loss": str(data.get("date_of_loss", "")).strip(),
+            "survey_type": str(data.get("survey_type", "final")).strip().lower() or "final",
+        }
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse JSON from intimation AI response: {e}")
+    except Exception as e:
+        raise ValueError(f"Unexpected error parsing intimation response: {e}")
+
+
+def execute_intimation_extraction(api_key, pdf_bytes, user_model=None):
+    """Execute Gemini extraction on an appointment / intimation PDF document."""
+    client, primary, secondary = get_client_and_models(api_key, user_model)
+    prompt = build_intimation_gemini_prompt()
+    prompt_part = types.Part.from_text(text=prompt)
+    input_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+
+    config = types.GenerateContentConfig(
+        temperature=0.2,
+        top_p=0.95,
+        max_output_tokens=4096,
+        response_mime_type="application/json",
+    )
+
+    response = None
+    try:
+        response = client.models.generate_content(
+            model=primary,
+            contents=[prompt_part, input_part],
+            config=config
+        )
+    except Exception as e:
+        print(f"Primary model ({primary}) intimation extraction failed: {e}. Trying {secondary}.")
+        response = client.models.generate_content(
+            model=secondary,
+            contents=[prompt_part, input_part],
+            config=config
+        )
+
+    if not response or not response.text:
+        raise ValueError("Received an empty response from Gemini API for intimation extraction.")
+
+    return parse_intimation_gemini_response(response.text)

@@ -2676,7 +2676,10 @@ class PostgresDB:
         if not self.conn: return False
         try:
             with self.conn.cursor() as cur:
-                cur.execute("DELETE FROM insurer_master WHERE id = %s RETURNING id;", (insurer_id,))
+                cur.execute(
+                    "DELETE FROM insurer_master WHERE id = %s AND workspace_admin_id = %s RETURNING id;",
+                    (insurer_id, workspace_admin_id)
+                )
                 return cur.fetchone() is not None
         except Exception as e:
             print(f"Error deleting insurer master: {e}")

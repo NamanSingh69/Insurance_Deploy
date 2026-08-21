@@ -89,6 +89,43 @@ def get_user_gemini_key(user_data: dict[str, Any] | None) -> str | None:
         return None
     encrypted_value = user_data.get("encrypted_gemini_api_key")
     if encrypted_value:
-        return decrypt_text(encrypted_value)
+        try:
+            return decrypt_text(encrypted_value)
+        except Exception:
+            pass
     legacy_value = user_data.get("gemini_api_key")
     return legacy_value if isinstance(legacy_value, str) and legacy_value else None
+
+
+def resolve_gemini_api_key(user_data: dict[str, Any] | None, db_adapter: Any = None) -> str | None:
+    """Resolve the Gemini API key hierarchy:
+    1. User's own encrypted key (or legacy raw key) if configured.
+    2. If missing or user is an employee with admin_id, look up the Workspace Admin's encrypted key.
+    3. Fallback to system environment variable GEMINI_API_KEY.
+    """
+    key = get_user_gemini_key(user_data)
+    if key and isinstance(key, str) and key.strip():
+        return key.strip()
+
+    # If user is an employee, look up their workspace admin's key
+    if isinstance(user_data, dict):
+        admin_id = user_data.get('admin_id') or user_data.get('workspace_admin_id')
+        user_id = user_data.get('id')
+        if admin_id and str(admin_id) != str(user_id):
+            if db_adapter is None:
+                try:
+                    from db import db as default_db
+                    db_adapter = default_db
+                except ImportError:
+                    db_adapter = None
+            if db_adapter and hasattr(db_adapter, 'get_user_by_id'):
+                try:
+                    admin_data = db_adapter.get_user_by_id(admin_id)
+                    admin_key = get_user_gemini_key(admin_data)
+                    if admin_key and isinstance(admin_key, str) and admin_key.strip():
+                        return admin_key.strip()
+                except Exception:
+                    pass
+
+    env_key = os.getenv("GEMINI_API_KEY")
+    return env_key.strip() if env_key else None

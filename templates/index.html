@@ -183,8 +183,24 @@
                     <h2><i class="fas fa-clipboard-list"></i> Claim Register</h2>
                     <p class="workspace-subtitle">Shared operational register for your survey team.</p>
                 </div>
-                <button type="button" id="toggle-new-claim" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Claim</button>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input type="file" id="claim-intimation-pdf-file" accept=".pdf" style="display: none;">
+                    <button type="button" id="claim-intimation-upload-btn" class="btn btn-secondary btn-sm"><i class="fas fa-file-upload"></i> Upload Intimation PDF</button>
+                    <button type="button" id="toggle-new-claim" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Claim</button>
+                </div>
             </div>
+
+            <div id="claim-intimation-dropzone" style="background: rgba(255,255,255,0.03); padding: 0.75rem; border-radius: 6px; margin-bottom: 0.75rem; border: 1px dashed var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+                <div>
+                    <strong style="font-size: 0.9rem;"><i class="fas fa-envelope-open-text" style="color: #3b82f6;"></i> Auto-Fill from Appointment Letter / Intimation Mail (PDF)</strong>
+                    <p style="font-size: 0.8rem; color: #888; margin: 0;">Upload surveyor appointment PDF or Gmail mail printout to instantly extract Claim No, Insured, Vehicle & Workshop.</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button type="button" id="claim-intimation-browse-btn" class="btn btn-secondary btn-sm"><i class="fas fa-folder-open"></i> Browse PDF</button>
+                    <span id="claim-intimation-file-name" style="font-size: 0.8rem; color: var(--text-secondary);"></span>
+                </div>
+            </div>
+
             <form id="new-claim-form" class="compact-form hidden" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.5rem;">
                 <input id="claim-input-no" type="text" placeholder="Claim No. *" required>
                 <input id="claim-input-insured" type="text" placeholder="Insured name *">

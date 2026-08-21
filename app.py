@@ -39,6 +39,7 @@ from modules.credentials import (
     encrypt_json,
     encrypt_text,
     get_user_gemini_key,
+    resolve_gemini_api_key,
     validate_credential_encryption_config,
 )
 from modules.drive import (
@@ -4838,7 +4839,7 @@ def claims_register():
         filter_user_id = request.args.get('user_id') or None
         kwargs = {
             'status': status, 'month': month, 'insurer': insurer,
-            'user_id': filter_user_id or current_user.id, 'role': current_user.role
+            'user_id': filter_user_id or str(current_user.id), 'role': current_user.role
         }
         if date_range is not None:
             kwargs['date_range'] = date_range
@@ -4907,6 +4908,48 @@ def update_claim(report_id):
     return jsonify({'success': True, 'status': status})
 
 
+@app.route('/api/claims/extract_intimation', methods=['POST'])
+@login_required
+@limiter.limit("60/hour")
+def extract_claim_intimation():
+    workspace_admin_id = workspace_admin_id_for(current_user)
+    if not workspace_admin_id:
+        return jsonify({'error': 'Your account is not assigned to an admin workspace.'}), 403
+
+    file = request.files.get('intimation_pdf') or request.files.get('file') or request.files.get('pdf_file')
+    if not file or not file.filename:
+        return jsonify({'error': 'Please select a valid PDF file.'}), 400
+
+    filename = secure_filename(file.filename)
+    if not filename.lower().endswith('.pdf'):
+        return jsonify({'error': 'Only PDF files are supported for claim intimation extraction.'}), 400
+
+    pdf_bytes = file.read()
+    if not pdf_bytes:
+        return jsonify({'error': 'The uploaded PDF file is empty.'}), 400
+
+    user_data = sheets_db.get_user_by_id(current_user.id) or {}
+    api_key = resolve_gemini_api_key(user_data, sheets_db)
+    if not api_key:
+        return jsonify({'error': 'Gemini API Key is not configured. Please set your API key in Settings.'}), 400
+
+    user_model = user_data.get('gemini_model')
+    try:
+        from modules.gemini import execute_intimation_extraction
+        extracted = execute_intimation_extraction(api_key, pdf_bytes, user_model=user_model)
+        sheets_db.add_audit_log(
+            action='claim_intimation_extracted',
+            user_id=current_user.id,
+            details=f"Extracted claim intimation for Claim No: {extracted.get('claim_no') or 'Unknown'} from {filename}",
+            ip_address=request.remote_addr,
+            workspace_admin_id=workspace_admin_id
+        )
+        return jsonify({'success': True, 'data': extracted})
+    except Exception as e:
+        app.logger.error(f"[INTIMATION-EXTRACT-FAILED] User {current_user.id}: {e}", exc_info=True)
+        return jsonify({'error': f'Failed to extract intimation details from PDF: {str(e)}'}), 500
+
+
 # --- Insurer Master API Endpoints ---
 @app.route('/api/insurers', methods=['GET', 'POST'])
 @login_required
@@ -4940,11 +4983,9 @@ def get_or_delete_insurer(insurer_id):
             return jsonify({'error': 'Insurer not found.'}), 404
         return jsonify({'success': True, 'insurer': item})
 
-    if not is_admin_user(current_user):
-        return jsonify({'error': 'Admin permission required.'}), 403
     success = sheets_db.delete_insurer_master(insurer_id, workspace_admin_id)
     if not success:
-        return jsonify({'error': 'Failed to delete Insurer Master.'}), 500
+        return jsonify({'error': 'Failed to delete Insurer Master or record not found.'}), 404
     return jsonify({'success': True})
 
 

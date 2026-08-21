@@ -2790,7 +2790,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 showStatus('Insurer Master deleted.', 'success', true);
                 loadInsurerMasters();
             } else {
-                showStatus('Could not delete Insurer Master.', 'error', true);
+                const data = await res.json().catch(() => ({}));
+                showStatus(data.error || 'Could not delete Insurer Master.', 'error', true);
             }
         } catch (err) { showStatus(err.message, 'error', true); }
     }
@@ -3220,12 +3221,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const payload = {
             claim_no: document.getElementById('claim-input-no')?.value.trim(),
             insured_name: document.getElementById('claim-input-insured')?.value.trim(),
+            insured_contact_no: document.getElementById('claim-input-insured-contact')?.value.trim() || undefined,
+            insured_email: document.getElementById('claim-input-insured-email')?.value.trim() || undefined,
+            claim_manager_email: document.getElementById('claim-input-cm-email')?.value.trim() || undefined,
+            claim_manager_phone: document.getElementById('claim-input-cm-phone')?.value.trim() || undefined,
             vehicle_no: document.getElementById('claim-input-vehicle')?.value.trim(),
+            vehicle_type: document.getElementById('claim-input-vehicle-type')?.value || 'Private Car',
             policy_no: document.getElementById('claim-input-policy')?.value.trim(),
             insurer: document.getElementById('claim-input-insurer')?.value.trim(),
+            insurer_branch: document.getElementById('claim-input-branch')?.value.trim() || undefined,
+            workshop_name: document.getElementById('claim-input-workshop')?.value.trim() || undefined,
+            workshop_phone: document.getElementById('claim-input-workshop-phone')?.value.trim() || undefined,
             date_of_loss: document.getElementById('claim-input-loss-date')?.value,
-            survey_type: document.getElementById('claim-input-type')?.value,
-            status: document.getElementById('claim-input-status')?.value
+            survey_type: document.getElementById('claim-input-type')?.value || 'final',
+            status: document.getElementById('claim-input-status')?.value || 'new_appointment'
         };
         try {
             const res = await fetch('/api/claims', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -3418,7 +3427,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>${statusBadge}</td>
                     <td style="white-space: nowrap;">
                         <button type="button" class="btn btn-secondary btn-sm preview-saved-fee-pdf-btn" data-bill-id="${escapeHtml(bill.id)}" title="Preview PDF"><i class="fas fa-eye"></i> PDF</button>
-                        <button type="button" class="btn btn-primary btn-sm open-fee-payment-btn" data-bill-id="${escapeHtml(bill.id)}" title="Update Payment" style="margin-left: 4px;"><i class="fas fa-credit-card"></i> Payment</button>
+                        <button type="button" class="btn btn-primary btn-sm edit-fee-bill-btn" data-bill-id="${escapeHtml(bill.id)}" title="Edit Fee Bill" style="margin-left: 4px;"><i class="fas fa-edit"></i> Edit</button>
+                        <button type="button" class="btn btn-info btn-sm open-fee-payment-btn" data-bill-id="${escapeHtml(bill.id)}" title="Update Payment" style="margin-left: 4px;"><i class="fas fa-credit-card"></i> Payment</button>
                         ${deleteBtnHtml}
                     </td>
                 </tr>`;
@@ -3436,6 +3446,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     window.open(pdfUrl, '_blank');
                 }
+            }));
+
+            tbody.querySelectorAll('.edit-fee-bill-btn').forEach(btn => btn.addEventListener('click', () => {
+                const billId = btn.dataset.billId;
+                editFeeBill(billId);
             }));
 
             tbody.querySelectorAll('.open-fee-payment-btn').forEach(btn => btn.addEventListener('click', () => {
@@ -3457,6 +3472,152 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (e) { showStatus(e.message, 'error', true); }
             }));
         } catch (error) { tbody.innerHTML = '<tr><td colspan="9">Could not load fee register.</td></tr>'; }
+    }
+
+    function editFeeBill(billId) {
+        const bill = currentFeeBillsList.find(b => String(b.id) === String(billId));
+        if (!bill) {
+            showStatus('Could not find fee bill record.', 'error', true);
+            return;
+        }
+
+        // 1. Set ID and links
+        const idInput = document.getElementById('fee-bill-id');
+        if (idInput) idInput.value = bill.id || '';
+        const reportSelect = document.getElementById('fee-report-id');
+        if (reportSelect) reportSelect.value = bill.report_id || '';
+        const reportNoInput = document.getElementById('fee-report-no');
+        if (reportNoInput) reportNoInput.value = bill.report_no || '';
+        const invNoInput = document.getElementById('fee-invoice-no');
+        if (invNoInput) invNoInput.value = bill.invoice_no || '';
+        const invDateInput = document.getElementById('fee-invoice-date');
+        if (invDateInput) invDateInput.value = bill.invoice_date || new Date().toISOString().split('T')[0];
+
+        // 2. Insurer details
+        const insInput = document.getElementById('fee-insurer');
+        if (insInput) insInput.value = bill.insurer_name || '';
+        const gstInput = document.getElementById('fee-insurer-gst');
+        if (gstInput) gstInput.value = bill.insurer_gst || '';
+        const codeInput = document.getElementById('fee-surveyor-code');
+        if (codeInput) codeInput.value = bill.surveyor_code || '';
+        const addrInput = document.getElementById('fee-insurer-address');
+        if (addrInput) addrInput.value = bill.insurer_address || '';
+
+        // 3. Claim particulars
+        const polInput = document.getElementById('fee-policy-no');
+        if (polInput) polInput.value = bill.policy_no || '';
+        const clmInput = document.getElementById('fee-claim-no');
+        if (clmInput) clmInput.value = bill.claim_no || '';
+        const vehInput = document.getElementById('fee-vehicle-no');
+        if (vehInput) vehInput.value = bill.vehicle_no || '';
+        const nameInput = document.getElementById('fee-insured');
+        if (nameInput) nameInput.value = bill.insured_name || '';
+        const accInput = document.getElementById('fee-date-of-accident');
+        if (accInput) accInput.value = bill.date_of_accident || '';
+
+        // 4. Reset checkboxes first
+        for (let i = 1; i <= 8; i++) {
+            const cb = document.getElementById(`cb-fee-item-${i}`);
+            if (cb) cb.checked = false;
+            const val = document.getElementById(`val-fee-item-${i}`);
+            if (val) val.value = '';
+        }
+
+        // 5. Populate fee items
+        let feeItems = [];
+        if (Array.isArray(bill.fee_items)) {
+            feeItems = bill.fee_items;
+        } else if (typeof bill.fee_items === 'string') {
+            try { feeItems = JSON.parse(bill.fee_items); } catch (_) { feeItems = []; }
+        }
+
+        if (feeItems.length > 0) {
+            feeItems.forEach(item => {
+                const name = (item.name || '').toLowerCase();
+                const amt = item.amount ?? item.value ?? 0;
+                if (name.includes('1.') || name.includes('final survey')) {
+                    const cb = document.getElementById('cb-fee-item-1');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-1');
+                    if (val) val.value = amt;
+                } else if (name.includes('2.') || (name.includes('conveyance') && !name.includes('2nd') && !name.includes('5.'))) {
+                    const cb = document.getElementById('cb-fee-item-2');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-2');
+                    if (val) val.value = amt;
+                    const route = document.getElementById('route-fee-item-2');
+                    if (route && item.route) route.value = item.route;
+                } else if (name.includes('3.') || name.includes('2nd visited')) {
+                    const cb = document.getElementById('cb-fee-item-3');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-3');
+                    if (val) val.value = amt;
+                    const route = document.getElementById('route-fee-item-3');
+                    if (route && item.route) route.value = item.route;
+                } else if (name.includes('4.') || name.includes('re-inspection')) {
+                    const cb = document.getElementById('cb-fee-item-4');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-4');
+                    if (val) val.value = amt;
+                } else if (name.includes('5.')) {
+                    const cb = document.getElementById('cb-fee-item-5');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-5');
+                    if (val) val.value = amt;
+                } else if (name.includes('6.') || name.includes('photos') || name.includes('photo')) {
+                    const cb = document.getElementById('cb-fee-item-6');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-6');
+                    if (val) val.value = amt;
+                } else if (name.includes('7.') || name.includes('halting')) {
+                    const cb = document.getElementById('cb-fee-item-7');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-7');
+                    if (val) val.value = amt;
+                } else if (name.includes('8.') || name.includes('other')) {
+                    const cb = document.getElementById('cb-fee-item-8');
+                    if (cb) cb.checked = true;
+                    const val = document.getElementById('val-fee-item-8');
+                    if (val) val.value = amt;
+                    const desc = document.getElementById('desc-fee-item-8');
+                    if (desc && item.description) desc.value = item.description;
+                }
+            });
+        } else {
+            // Fallback to individual column values
+            if (bill.professional_fee) {
+                const cb = document.getElementById('cb-fee-item-1');
+                if (cb) cb.checked = true;
+                const val = document.getElementById('val-fee-item-1');
+                if (val) val.value = bill.professional_fee;
+            }
+            if (bill.conveyance_charges) {
+                const cb = document.getElementById('cb-fee-item-2');
+                if (cb) cb.checked = true;
+                const val = document.getElementById('val-fee-item-2');
+                if (val) val.value = bill.conveyance_charges;
+            }
+            if (bill.photocopy_charges) {
+                const cb = document.getElementById('cb-fee-item-6');
+                if (cb) cb.checked = true;
+                const val = document.getElementById('val-fee-item-6');
+                if (val) val.value = bill.photocopy_charges;
+            }
+        }
+
+        // 6. GST, Signature, Status
+        const gstPc = document.getElementById('fee-gst-pc');
+        if (gstPc) gstPc.value = bill.gst_rate ?? bill.gst_percentage ?? 18;
+        const sigCb = document.getElementById('fee-include-signature');
+        if (sigCb) sigCb.checked = bill.include_signature ?? true;
+        const paySt = document.getElementById('fee-payment-status');
+        if (paySt) paySt.value = bill.payment_status || 'unpaid';
+        const invSt = document.getElementById('fee-invoice-status');
+        if (invSt) invSt.value = bill.invoice_status || 'draft';
+
+        updateLiveFeeSummary();
+        document.getElementById('fee-register-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        showStatus(`Loaded Fee Bill ${bill.invoice_no || ''} for editing.`, 'info', true);
     }
 
     function openFeePaymentModal(billId) {
@@ -3512,6 +3673,59 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             showStatus(error.message, 'error', true);
+        }
+    }
+
+    async function handleClaimIntimationPdfUpload(file) {
+        if (!file) return;
+        const nameSpan = document.getElementById('claim-intimation-file-name');
+        if (nameSpan) nameSpan.textContent = file.name;
+        showStatus('Extracting claim intimation / appointment details...', 'info', true);
+        try {
+            const formData = new FormData();
+            formData.append('intimation_pdf', file);
+            const res = await fetch('/api/claims/extract_intimation', { method: 'POST', body: formData });
+            const result = await res.json();
+            if (!res.ok || !result.success) throw new Error(result.error || 'Failed to extract claim intimation from PDF');
+
+            const ext = result.data || {};
+            const form = document.getElementById('new-claim-form');
+            if (form) {
+                form.classList.remove('hidden');
+                form.style.display = 'grid';
+            }
+
+            if (ext.claim_no) document.getElementById('claim-input-no').value = ext.claim_no;
+            if (ext.insured_name) document.getElementById('claim-input-insured').value = ext.insured_name;
+            if (ext.insured_contact_no) document.getElementById('claim-input-insured-contact').value = ext.insured_contact_no;
+            if (ext.insured_email) document.getElementById('claim-input-insured-email').value = ext.insured_email;
+            if (ext.claim_manager_email) document.getElementById('claim-input-cm-email').value = ext.claim_manager_email;
+            if (ext.claim_manager_phone) document.getElementById('claim-input-cm-phone').value = ext.claim_manager_phone;
+            if (ext.vehicle_no) document.getElementById('claim-input-vehicle').value = ext.vehicle_no;
+            if (ext.vehicle_type) document.getElementById('claim-input-vehicle-type').value = ext.vehicle_type;
+            if (ext.policy_no) document.getElementById('claim-input-policy').value = ext.policy_no;
+            if (ext.insurer) {
+                document.getElementById('claim-input-insurer').value = ext.insurer;
+                const insSelect = document.getElementById('claim-input-insurer-select');
+                if (insSelect) {
+                    for (let opt of insSelect.options) {
+                        if (opt.text.toLowerCase().includes(ext.insurer.toLowerCase()) || ext.insurer.toLowerCase().includes(opt.text.toLowerCase())) {
+                            insSelect.value = opt.value;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (ext.insurer_branch) document.getElementById('claim-input-branch').value = ext.insurer_branch;
+            if (ext.workshop_name) document.getElementById('claim-input-workshop').value = ext.workshop_name;
+            if (ext.workshop_phone) document.getElementById('claim-input-workshop-phone').value = ext.workshop_phone;
+            if (ext.date_of_loss) document.getElementById('claim-input-loss-date').value = ext.date_of_loss;
+            if (ext.survey_type) document.getElementById('claim-input-type').value = ext.survey_type;
+
+            form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            showStatus('Intimation details extracted successfully! Please review and click Create Claim.', 'success', true);
+        } catch (error) {
+            showStatus(error.message || 'Error extracting intimation PDF', 'error', true);
         }
     }
 
@@ -4092,6 +4306,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleFeePdfUpload(e.target.files[0]);
             }
         });
+
+        // Claim Intimation PDF Upload Listeners (Auto-Fill New Claim)
+        document.getElementById('claim-intimation-upload-btn')?.addEventListener('click', () => {
+            document.getElementById('claim-intimation-pdf-file')?.click();
+        });
+        document.getElementById('claim-intimation-browse-btn')?.addEventListener('click', () => {
+            document.getElementById('claim-intimation-pdf-file')?.click();
+        });
+        document.getElementById('claim-intimation-pdf-file')?.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                handleClaimIntimationPdfUpload(e.target.files[0]);
+            }
+        });
+        const claimDropzone = document.getElementById('claim-intimation-dropzone');
+        if (claimDropzone) {
+            ['dragenter', 'dragover'].forEach(eventName => {
+                claimDropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    claimDropzone.style.borderColor = 'var(--primary-color, #3b82f6)';
+                    claimDropzone.style.background = 'rgba(59, 130, 246, 0.08)';
+                }, false);
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                claimDropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    claimDropzone.style.borderColor = 'var(--border-color)';
+                    claimDropzone.style.background = 'rgba(255,255,255,0.03)';
+                }, false);
+            });
+            claimDropzone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                if (files && files.length > 0) {
+                    handleClaimIntimationPdfUpload(files[0]);
+                }
+            }, false);
+        }
 
         // Dashboard In-Place Drilldown Listeners
         document.getElementById('dashboard-drilldown-search')?.addEventListener('input', () => {
