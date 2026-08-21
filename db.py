@@ -1214,9 +1214,9 @@ class PostgresDB:
         pattern = f"%{(search_query or '').strip()}%"
         filters = ["(workspace_admin_id = %s OR (workspace_admin_id IS NULL AND user_id = %s))", "(%s = '' OR report_no ILIKE %s OR insured_name ILIKE %s OR vehicle_no ILIKE %s OR claim_no ILIKE %s OR policy_no ILIKE %s)"]
         params = [workspace_admin_id, user_id or workspace_admin_id, (search_query or '').strip(), pattern, pattern, pattern, pattern, pattern]
-        if role == 'employee' and user_id:
-            filters.append("(user_id = %s OR created_by = %s)")
-            params.extend([user_id, user_id])
+        if role == 'employee' and user_id and str(user_id) != str(workspace_admin_id):
+            filters.append("(workspace_admin_id = %s OR user_id = %s OR created_by = %s)")
+            params.extend([workspace_admin_id, user_id, user_id])
 
         if status:
             norm_status = str(status).strip().lower().replace(' ', '_')
@@ -1451,12 +1451,12 @@ class PostgresDB:
                 cur.execute("""
                     INSERT INTO reports (
                         id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no,
-                        claim_no, policy_no, saved_at, updated_at, updated_by, status, survey_type,
+                        claim_no, policy_no, saved_at, updated_at, created_by, updated_by, status, survey_type,
                         gmail_message_id, email_received_date, include_in_consolidated, report_data_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s::jsonb)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s::jsonb)
                     RETURNING id;
                 """, (report_id, user_id, workspace_admin_id, report_no, insured_name, vehicle_no,
-                      claim_no, policy_no, now, now, user_id, status, survey_type,
+                      claim_no, policy_no, now, now, user_id, user_id, status, survey_type,
                       gmail_message_id, email_received_date, payload))
                 return cur.fetchone()[0]
         except Exception as e:
