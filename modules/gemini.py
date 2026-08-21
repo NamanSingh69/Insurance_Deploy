@@ -475,12 +475,30 @@ def execute_gemini_task(api_key, pdf_part, user_model=None, is_invoice=False):
             config=config
         )
     except Exception as e:
-        print(f"Primary model ({primary}) generation failed: {e}. Trying secondary model ({secondary}).")
-        response = client.models.generate_content(
-            model=secondary,
-            contents=[prompt_part, input_part],
-            config=config
-        )
+        err_str = str(e)
+        if ('API_KEY_INVALID' in err_str or 'API key not valid' in err_str) and os.getenv("GEMINI_API_KEY") and api_key != os.getenv("GEMINI_API_KEY"):
+            print("[GEMINI-FALLBACK] Primary API key invalid, attempting failover to environment GEMINI_API_KEY.")
+            try:
+                fb_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+                response = fb_client.models.generate_content(
+                    model=primary,
+                    contents=[prompt_part, input_part],
+                    config=config
+                )
+            except Exception as fb_err:
+                raise ValueError("Gemini API key is invalid or not configured. Please check your AI API key in Settings.") from fb_err
+        else:
+            print(f"Primary model ({primary}) generation failed: {e}. Trying secondary model ({secondary}).")
+            try:
+                response = client.models.generate_content(
+                    model=secondary,
+                    contents=[prompt_part, input_part],
+                    config=config
+                )
+            except Exception as sec_err:
+                if 'API_KEY_INVALID' in str(sec_err) or 'API key not valid' in str(sec_err):
+                    raise ValueError("Gemini API key is invalid or not configured. Please check your AI API key in Settings.") from sec_err
+                raise
 
     if not response or not response.text:
         raise ValueError("Received an empty or invalid response from the Gemini API.")
@@ -582,12 +600,30 @@ def execute_intimation_extraction(api_key, pdf_bytes, user_model=None):
             config=config
         )
     except Exception as e:
-        print(f"Primary model ({primary}) intimation extraction failed: {e}. Trying {secondary}.")
-        response = client.models.generate_content(
-            model=secondary,
-            contents=[prompt_part, input_part],
-            config=config
-        )
+        err_str = str(e)
+        if ('API_KEY_INVALID' in err_str or 'API key not valid' in err_str) and os.getenv("GEMINI_API_KEY") and api_key != os.getenv("GEMINI_API_KEY"):
+            print("[INTIMATION-FALLBACK] Primary key invalid, attempting failover to environment GEMINI_API_KEY.")
+            try:
+                fb_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+                response = fb_client.models.generate_content(
+                    model=primary,
+                    contents=[prompt_part, input_part],
+                    config=config
+                )
+            except Exception as fb_err:
+                raise ValueError("Gemini API key is invalid or not configured. Please check your AI API key in Settings.") from fb_err
+        else:
+            print(f"Primary model ({primary}) intimation extraction failed: {e}. Trying {secondary}.")
+            try:
+                response = client.models.generate_content(
+                    model=secondary,
+                    contents=[prompt_part, input_part],
+                    config=config
+                )
+            except Exception as sec_err:
+                if 'API_KEY_INVALID' in str(sec_err) or 'API key not valid' in str(sec_err):
+                    raise ValueError("Gemini API key is invalid or not configured. Please check your AI API key in Settings.") from sec_err
+                raise
 
     if not response or not response.text:
         raise ValueError("Received an empty response from Gemini API for intimation extraction.")

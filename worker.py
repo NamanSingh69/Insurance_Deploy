@@ -179,7 +179,12 @@ def run_job(job):
         print(f"[JOB-COMPLETED] Job {job_id} finished successfully.")
     except Exception as e:
         logger.exception("Job %s (%s) failed", job_id, job.get('kind'))
-        handle_job_failure(job, f"The background task could not be completed: {e}")
+        err_msg = str(e)
+        if 'API_KEY_INVALID' in err_msg or 'API key not valid' in err_msg or '400 INVALID_ARGUMENT' in err_msg:
+            user_msg = "Gemini API key is invalid or expired. Please verify your Gemini API key in Settings or contact your administrator."
+        else:
+            user_msg = f"The background task could not be completed: {e}"
+        handle_job_failure(job, user_msg)
 
 def main():
     print(f"[WORKER-STARTUP] Worker ID: {WORKER_ID}. Initializing DB connection pool.")
