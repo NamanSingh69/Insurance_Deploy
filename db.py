@@ -1103,7 +1103,7 @@ class PostgresDB:
             return {'items': [], 'page': page, 'page_size': page_size, 'total': 0}
 
     def reserve_report_number(self, user_id, prefix, report_year):
-        """Reserve a report sequence atomically; unused reservations intentionally leave gaps."""
+        """Reserve a report sequence atomically; auto-aligns with highest existing number in reports."""
         if not self.conn:
             self.connect()
         if not self.conn:
@@ -1117,7 +1117,27 @@ class PostgresDB:
                     DO UPDATE SET next_sequence = report_number_counters.next_sequence + 1
                     RETURNING next_sequence - 1 AS sequence;
                 """, (user_id, prefix, report_year))
-                return int(cur.fetchone()['sequence'])
+                seq = int(cur.fetchone()['sequence'])
+
+                # Ensure sequence is strictly greater than any existing report_no in workspace
+                cur.execute("""
+                    SELECT report_no FROM reports 
+                    WHERE (workspace_admin_id = %s OR user_id = %s)
+                      AND report_no LIKE %s;
+                """, (user_id, user_id, f"{prefix}/{report_year}/%"))
+                existing_seqs = []
+                for r in cur.fetchall():
+                    parts = (r.get('report_no') or '').split('/')
+                    if len(parts) >= 3 and parts[2].split('-')[0].isdigit():
+                        existing_seqs.append(int(parts[2].split('-')[0]))
+                if existing_seqs and max(existing_seqs) >= seq:
+                    seq = max(existing_seqs) + 1
+                    cur.execute("""
+                        UPDATE report_number_counters
+                        SET next_sequence = %s
+                        WHERE user_id = %s AND prefix = %s AND report_year = %s;
+                    """, (seq + 1, user_id, prefix, report_year))
+                return seq
         except Exception as e:
             print(f"Error reserving report number: {e}")
             return None
