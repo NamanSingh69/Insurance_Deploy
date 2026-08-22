@@ -193,3 +193,100 @@ def test_r5_employee_gemini_key_resolution_hierarchy(mock_sheets_db, monkeypatch
     
     resolved_key = resolve_gemini_api_key(employee_user, db_adapter=mock_sheets_db)
     assert resolved_key == 'AIzaSyAdminKey12345'
+
+
+def test_r2_employee_cannot_delete_foreign_workspace_insurer(client, mock_sheets_db):
+    """R2 Security: Verify that employees cannot delete insurer masters belonging to another workspace."""
+    mock_sheets_db.get_user_by_id.return_value = {
+        'id': 1,
+        'username': 'USER',
+        'role': 'employee',
+        'workspace_admin_id': 3,
+        'admin_id': 3,
+        'is_locked': False,
+    }
+    # Database returns False because record belongs to workspace 4, not 3
+    mock_sheets_db.delete_insurer_master.return_value = False
+
+    with client.session_transaction() as sess:
+        sess['_user_id'] = '1'
+
+    res = client.delete('/api/insurers/99')
+    assert res.status_code == 404
+    mock_sheets_db.delete_insurer_master.assert_called_with(99, 3)
+
+
+def test_r3_claim_creation_missing_claim_no(client, mock_sheets_db):
+    """R3 Validation: Creating a claim without claim_no must return 400."""
+    mock_sheets_db.get_user_by_id.return_value = {
+        'id': 1,
+        'username': 'USER',
+        'role': 'employee',
+        'workspace_admin_id': 3,
+        'admin_id': 3,
+        'is_locked': False,
+    }
+    with client.session_transaction() as sess:
+        sess['_user_id'] = '1'
+
+    res = client.post('/api/claims', json={'insured_name': 'Test Insured'})
+    assert res.status_code == 400
+    assert 'Claim number is required' in res.get_json()['error']
+
+
+def test_r4_intimation_rejects_non_pdf_file(client, mock_sheets_db):
+    """R4 Validation: Uploading non-PDF file returns 400 error."""
+    mock_sheets_db.get_user_by_id.return_value = {
+        'id': 1,
+        'username': 'USER',
+        'role': 'employee',
+        'workspace_admin_id': 3,
+        'admin_id': 3,
+        'is_locked': False,
+    }
+    with client.session_transaction() as sess:
+        sess['_user_id'] = '1'
+
+    from io import BytesIO
+    data = {'intimation_pdf': (BytesIO(b'not a pdf'), 'document.docx')}
+    res = client.post('/api/claims/extract_intimation', data=data, content_type='multipart/form-data')
+    assert res.status_code == 400
+    assert 'Only PDF files are supported' in res.get_json()['error']
+
+
+def test_r5_env_fallback_when_no_user_or_admin_key(mock_sheets_db, monkeypatch):
+    """R5: When neither employee nor admin has stored keys, fallback to env GEMINI_API_KEY."""
+    monkeypatch.setenv("GEMINI_API_KEY", "env-server-key-xyz999")
+    from modules.credentials import resolve_gemini_api_key
+
+    employee_user = {'id': 1, 'admin_id': 3, 'encrypted_gemini_api_key': None}
+    admin_user = {'id': 3, 'encrypted_gemini_api_key': None}
+    mock_sheets_db.get_user_by_id.side_effect = lambda uid: admin_user if uid == 3 else employee_user
+
+    resolved_key = resolve_gemini_api_key(employee_user, db_adapter=mock_sheets_db)
+    assert resolved_key == "env-server-key-xyz999"
+
+
+def test_r5_sanitized_gemini_api_error_response(client, mock_sheets_db, monkeypatch):
+    """R5: Verify that Gemini API 400 / invalid key errors return sanitized error message."""
+    mock_sheets_db.get_user_by_id.return_value = {
+        'id': 1,
+        'username': 'USER',
+        'role': 'employee',
+        'workspace_admin_id': 3,
+        'admin_id': 3,
+        'is_locked': False,
+        'gemini_api_key': 'invalid_key',
+    }
+    with client.session_transaction() as sess:
+        sess['_user_id'] = '1'
+
+    def fake_extract(*args, **kwargs):
+        raise ValueError("Gemini API key is invalid or not configured. Please check your AI API key in Settings.")
+
+    with patch('modules.gemini.execute_intimation_extraction', side_effect=fake_extract):
+        from io import BytesIO
+        data = {'intimation_pdf': (BytesIO(b'%PDF-1.4 dummy'), 'intimation.pdf')}
+        res = client.post('/api/claims/extract_intimation', data=data, content_type='multipart/form-data')
+        assert res.status_code == 500
+        assert 'Gemini API key is invalid or not configured' in res.get_json()['error']
